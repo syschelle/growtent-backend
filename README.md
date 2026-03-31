@@ -23,9 +23,10 @@ In short: it is the operational backend/UI layer between your GrowTent devices a
 
 ### Monitoring
 - Live tent status from controller `/api/state`
-- Historical charts for temperature, humidity, VPD, external temp, and power
+- Historical charts for temperature, humidity, VPD, external temp, alpha, and power
 - CSV export endpoint (`/api/export`)
 - Relative and explicit timestamps to evaluate data freshness
+- Warmup overlays in history charts while initial points are still building
 
 ### Shelly integration
 - Direct Shelly reads for configured devices (`state`, `W`, `Wh`)
@@ -47,6 +48,7 @@ In short: it is the operational backend/UI layer between your GrowTent devices a
 - Docker Compose deployment
 - Health endpoint: `GET /health`
 - Changelog and versioned release workflow
+- Startup resilience: last known values are preserved when controller payloads are temporarily incomplete/null
 
 ---
 
@@ -87,6 +89,25 @@ Persistence is PostgreSQL; service stack runs via Docker Compose.
 ```bash
 cd growtent-backend-poc
 docker compose up -d --build
+```
+
+## Updating from GitHub (production)
+
+If your production folder is already connected to this repository:
+
+```bash
+git pull origin main
+docker compose up -d --build api
+```
+
+If your folder exists but is not connected to Git yet (one-time setup):
+
+```bash
+cd /path/to/growtent-backend
+git init
+git remote add origin git@github.com:syschelle/growtent-backend.git
+git fetch origin
+git reset --hard origin/main
 ```
 
 Verify:

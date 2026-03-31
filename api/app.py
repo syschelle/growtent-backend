@@ -26,7 +26,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.170"
+APP_VERSION = "v0.181"
 
 app = FastAPI(title="GrowTent Backend PoC")
 
@@ -477,28 +477,79 @@ def _sensor_values_valid(temp_c: float | None, humidity_pct: float | None, vpd_k
     return True
 
 
+def _get_last_payload(tent_id: int):
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT payload
+                    FROM tent_state
+                    WHERE tent_id=%s
+                    ORDER BY captured_at DESC
+                    LIMIT 1
+                    """,
+                    (tent_id,),
+                )
+                row = cur.fetchone()
+                return (row[0] or {}) if row else {}
+    except Exception:
+        return {}
+
+
 def save_state(tent_id: int, payload: dict):
     captured_at = datetime.now(timezone.utc)
 
-    # Keep raw values untouched and store explicit raw/smoothed channels.
-    raw_t = _to_float((payload or {}).get("sensors.cur.temperatureC"))
-    raw_h = _to_float((payload or {}).get("sensors.cur.humidityPct"))
-    leaf_offset = _to_float((payload or {}).get("settings.grow.offsetLeafTemperature")) or 0.0
-    raw_vpd = _calc_vpd_kpa(raw_t, leaf_offset, raw_h)
+    # Source of truth: controller-provided channels.
+    # Keep explicit raw and smoothed values if provided by firmware.
+    d = dict(payload or {})
 
-    # Startup guard + sanity filter: invalid samples are ignored completely.
+    raw_t = _to_float(d.get("sensors.cur.temperatureRawC"))
+    raw_h = _to_float(d.get("sensors.cur.humidityRawPct"))
+    if raw_t is None:
+        raw_t = _to_float(d.get("sensors.raw.temperatureC"))
+    if raw_h is None:
+        raw_h = _to_float(d.get("sensors.raw.humidityPct"))
+
+    leaf_offset = _to_float(d.get("settings.grow.offsetLeafTemperature")) or 0.0
+    raw_vpd = _to_float(d.get("sensors.raw.vpdKpa"))
+    if raw_vpd is None:
+        raw_vpd = _calc_vpd_kpa(raw_t, leaf_offset, raw_h)
+
+    # If current sample is incomplete/invalid, reuse last known values for continuity.
     if not _sensor_values_valid(raw_t, raw_h, raw_vpd):
-        return
+        prev = _get_last_payload(tent_id)
+        if raw_t is None:
+            raw_t = _to_float(prev.get("sensors.raw.temperatureC"))
+        if raw_h is None:
+            raw_h = _to_float(prev.get("sensors.raw.humidityPct"))
+        if raw_vpd is None:
+            raw_vpd = _to_float(prev.get("sensors.raw.vpdKpa"))
+        if raw_vpd is None:
+            raw_vpd = _calc_vpd_kpa(raw_t, leaf_offset, raw_h)
 
     # Mark tent sensor initialization as valid from first accepted sample.
     if not SENSOR_INIT.get(tent_id):
         SENSOR_INIT[tent_id] = True
 
-    st = EMA_STATE.get(tent_id) or {"temp": None, "hum": None}
-    sm_t = _ema_next(st.get("temp"), raw_t, EMA_ALPHA)
-    sm_h = _ema_next(st.get("hum"), raw_h, EMA_ALPHA)
-    sm_vpd = _calc_vpd_kpa(sm_t, leaf_offset, sm_h)
-    EMA_STATE[tent_id] = {"temp": sm_t, "hum": sm_h}
+    sm_t = _to_float(d.get("sensors.smoothed.temperatureC"))
+    sm_h = _to_float(d.get("sensors.smoothed.humidityPct"))
+    if sm_t is None:
+        sm_t = _to_float(d.get("sensors.cur.temperatureC"))
+    if sm_h is None:
+        sm_h = _to_float(d.get("sensors.cur.humidityPct"))
+    sm_vpd = _to_float(d.get("sensors.smoothed.vpdKpa"))
+    if sm_t is None or sm_h is None:
+        prev = _get_last_payload(tent_id)
+        if sm_t is None:
+            sm_t = _to_float(prev.get("sensors.smoothed.temperatureC"))
+        if sm_h is None:
+            sm_h = _to_float(prev.get("sensors.smoothed.humidityPct"))
+    if sm_vpd is None:
+        sm_vpd = _calc_vpd_kpa(sm_t, leaf_offset, sm_h)
+    if sm_vpd is None:
+        prev = _get_last_payload(tent_id)
+        sm_vpd = _to_float(prev.get("sensors.smoothed.vpdKpa"))
 
     payload = dict(payload or {})
     payload["sensors.raw.temperatureC"] = raw_t
@@ -507,6 +558,20 @@ def save_state(tent_id: int, payload: dict):
     payload["sensors.smoothed.temperatureC"] = sm_t
     payload["sensors.smoothed.humidityPct"] = sm_h
     payload["sensors.smoothed.vpdKpa"] = sm_vpd
+
+    # Keep UI-facing cur keys populated for continuity when controller sends nulls.
+    if _to_float(payload.get("sensors.cur.temperatureC")) is None:
+        payload["sensors.cur.temperatureC"] = sm_t
+    if _to_float(payload.get("sensors.cur.humidityPct")) is None:
+        payload["sensors.cur.humidityPct"] = sm_h
+    if _to_float(payload.get("sensors.cur.vpdKpa")) is None:
+        payload["sensors.cur.vpdKpa"] = sm_vpd
+    if _to_float(payload.get("sensors.cur.temperatureRawC")) is None:
+        payload["sensors.cur.temperatureRawC"] = raw_t
+    if _to_float(payload.get("sensors.cur.humidityRawPct")) is None:
+        payload["sensors.cur.humidityRawPct"] = raw_h
+    if _to_float(payload.get("sensors.cur.vpdRawKpa")) is None:
+        payload["sensors.cur.vpdRawKpa"] = raw_vpd
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -1780,13 +1845,15 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
     for ts, payload in rows:
         d = payload or {}
         leaf_offset = _to_float(d.get("settings.grow.offsetLeafTemperature")) or 0.0
-        temp_raw = _to_float(d.get("sensors.raw.temperatureC"))
-        hum_raw = _to_float(d.get("sensors.raw.humidityPct"))
-        vpd_raw = _to_float(d.get("sensors.raw.vpdKpa"))
+        temp_raw = _to_float(d.get("sensors.cur.temperatureRawC"))
+        hum_raw = _to_float(d.get("sensors.cur.humidityRawPct"))
+        vpd_raw = _to_float(d.get("sensors.cur.vpdRawKpa"))
         if temp_raw is None:
-            temp_raw = _to_float(d.get("sensors.cur.temperatureC"))
+            temp_raw = _to_float(d.get("sensors.raw.temperatureC"))
         if hum_raw is None:
-            hum_raw = _to_float(d.get("sensors.cur.humidityPct"))
+            hum_raw = _to_float(d.get("sensors.raw.humidityPct"))
+        if vpd_raw is None:
+            vpd_raw = _to_float(d.get("sensors.raw.vpdKpa"))
         if vpd_raw is None:
             vpd_raw = _calc_vpd_kpa(temp_raw, leaf_offset, hum_raw)
 
@@ -1813,20 +1880,19 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
             }
         )
 
-    # Ensure smoothed values exist and are derived from raw series only.
-    temp_sm = [_to_float(p.get("temperature_smoothed")) for p in points]
-    hum_sm = [_to_float(p.get("humidity_smoothed")) for p in points]
-    need_calc = any(v is None for v in temp_sm) or any(v is None for v in hum_sm)
-    if need_calc:
-        prev_t = None
-        prev_h = None
-        temp_sm = []
-        hum_sm = []
-        for p in points:
-            prev_t = _ema_next(prev_t, _to_float(p.get("temperature_raw")), EMA_ALPHA)
-            prev_h = _ema_next(prev_h, _to_float(p.get("humidity_raw")), EMA_ALPHA)
-            temp_sm.append(prev_t)
-            hum_sm.append(prev_h)
+    # Ensure smoothed values exist from controller channels.
+    # Fallback chain: smoothed -> current -> raw (no backend EMA re-smoothing).
+    temp_sm = []
+    hum_sm = []
+    for p in points:
+        tsm = _to_float(p.get("temperature_smoothed"))
+        hsm = _to_float(p.get("humidity_smoothed"))
+        if tsm is None:
+            tsm = _to_float(p.get("temperature_raw"))
+        if hsm is None:
+            hsm = _to_float(p.get("humidity_raw"))
+        temp_sm.append(tsm)
+        hum_sm.append(hsm)
 
     vpd_sm = []
     for i, p in enumerate(points):
@@ -1907,18 +1973,21 @@ def export_history_csv(tent_id: int, range_key: str = "24h"):
     vpd_raw = []
     alpha_temp = []
     alpha_hum = []
+    payloads_kept = []
 
     for ts, payload in rows:
         d = payload or {}
         leaf = _to_float(d.get("settings.grow.offsetLeafTemperature")) or 0.0
 
-        tr = _to_float(d.get("sensors.raw.temperatureC"))
-        hr = _to_float(d.get("sensors.raw.humidityPct"))
-        vr = _to_float(d.get("sensors.raw.vpdKpa"))
+        tr = _to_float(d.get("sensors.cur.temperatureRawC"))
+        hr = _to_float(d.get("sensors.cur.humidityRawPct"))
+        vr = _to_float(d.get("sensors.cur.vpdRawKpa"))
         if tr is None:
-            tr = _to_float(d.get("sensors.cur.temperatureC"))
+            tr = _to_float(d.get("sensors.raw.temperatureC"))
         if hr is None:
-            hr = _to_float(d.get("sensors.cur.humidityPct"))
+            hr = _to_float(d.get("sensors.raw.humidityPct"))
+        if vr is None:
+            vr = _to_float(d.get("sensors.raw.vpdKpa"))
         if vr is None:
             vr = _calc_vpd_kpa(tr, leaf, hr)
 
@@ -1933,19 +2002,33 @@ def export_history_csv(tent_id: int, range_key: str = "24h"):
         vpd_raw.append(vr)
         alpha_temp.append(_to_float(d.get("sensors.cur.effectiveAlfaTempC")))
         alpha_hum.append(_to_float(d.get("sensors.cur.effectiveAlfaHumPct")))
+        payloads_kept.append(d)
 
-    # Smoothed channels derived from raw only (EMA).
+    # Smoothed channels from source payload (no backend EMA re-smoothing).
     temp_sm = []
     hum_sm = []
-    prev_t = None
-    prev_h = None
     for i in range(len(timestamps)):
-        prev_t = _ema_next(prev_t, temp_raw[i], EMA_ALPHA)
-        prev_h = _ema_next(prev_h, hum_raw[i], EMA_ALPHA)
-        temp_sm.append(prev_t)
-        hum_sm.append(prev_h)
+        d = payloads_kept[i] or {}
+        tsm = _to_float(d.get("sensors.smoothed.temperatureC"))
+        hsm = _to_float(d.get("sensors.smoothed.humidityPct"))
+        if tsm is None:
+            tsm = _to_float(d.get("sensors.cur.temperatureC"))
+        if hsm is None:
+            hsm = _to_float(d.get("sensors.cur.humidityPct"))
+        if tsm is None:
+            tsm = temp_raw[i]
+        if hsm is None:
+            hsm = hum_raw[i]
+        temp_sm.append(tsm)
+        hum_sm.append(hsm)
 
-    vpd_sm = [_calc_vpd_kpa(temp_sm[i], leaf_offsets[i], hum_sm[i]) for i in range(len(timestamps))]
+    vpd_sm = []
+    for i in range(len(timestamps)):
+        d = payloads_kept[i] or {}
+        vv = _to_float(d.get("sensors.smoothed.vpdKpa"))
+        if vv is None:
+            vv = _calc_vpd_kpa(temp_sm[i], leaf_offsets[i], hum_sm[i])
+        vpd_sm.append(vv)
 
     out = io.StringIO()
     w = csv.writer(out)
@@ -3909,6 +3992,13 @@ def dashboard_page(request: Request):
           .status-meta { color:var(--muted); font-size:.92rem; font-weight:500; margin-left:8px; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
+          .history-card { position:relative; }
+          .history-overlay {
+            position:absolute; inset:0; display:none;
+            align-items:center; justify-content:center;
+            pointer-events:none; text-align:center; padding:16px;
+            color:#ef4444; font-weight:700; font-size:1rem;
+          }
         </style>
       </head>
       <body>
@@ -4039,34 +4129,40 @@ def dashboard_page(request: Request):
           <div id=\"shellyDevices\" class=\"grid\"></div>
         </div>
 
-        <div class=\"card\">
+        <div class=\"card history-card\">
           <div class=\"label\" id=\"lblTempHistory\">Temperature History</div>
           <canvas id=\"tempChart\"></canvas>
+          <div id=\"historyOverlayTemp\" class=\"history-overlay\"></div>
         </div>
 
-        <div class=\"card\">
+        <div class=\"card history-card\">
           <div class=\"label\" id=\"lblHumHistory\">Humidity History</div>
           <canvas id=\"humChart\"></canvas>
+          <div id=\"historyOverlayHum\" class=\"history-overlay\"></div>
         </div>
 
-        <div class=\"card\">
+        <div class=\"card history-card\">
           <div class=\"label\" id=\"lblVpdHistory\">VPD History</div>
           <canvas id=\"vpdChart\"></canvas>
+          <div id=\"historyOverlayVpd\" class=\"history-overlay\"></div>
         </div>
 
-        <div class=\"card\">
-          <div class=\"label\" id=\"lblAlphaHistory\">Alpha History</div>
-          <canvas id=\"alphaChart\"></canvas>
-        </div>
-
-        <div class=\"card\">
+        <div class=\"card history-card\">
           <div class=\"label\" id=\"lblExtTempHistory\">DS18B20 History</div>
           <canvas id=\"extTempChart\"></canvas>
+          <div id=\"historyOverlayExtTemp\" class=\"history-overlay\"></div>
         </div>
 
-        <div class=\"card\">
+        <div class=\"card history-card\">
+          <div class=\"label\" id=\"lblAlphaHistory\">Alpha History</div>
+          <canvas id=\"alphaChart\"></canvas>
+          <div id=\"historyOverlayAlpha\" class=\"history-overlay\"></div>
+        </div>
+
+        <div class=\"card history-card\">
           <div class=\"label\" id=\"lblMainWHistory\">Total consumption</div>
           <canvas id=\"mainWChart\"></canvas>
+          <div id=\"historyOverlayMainW\" class=\"history-overlay\"></div>
         </div>
 
         <div id=\"dbIrPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1200; align-items:center; justify-content:center; padding:16px;\">
@@ -4620,6 +4716,24 @@ def dashboard_page(request: Request):
             else if (a <= 0.20) el.classList.add('alpha-led-yellow');
             else el.classList.add('alpha-led-red');
             el.title = `α: ${a.toFixed(2)}`;
+          }
+
+          function setHistoryOverlays(message){
+            const ids = [
+              'historyOverlayTemp', 'historyOverlayHum', 'historyOverlayVpd',
+              'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW'
+            ];
+            ids.forEach((id) => {
+              const el = document.getElementById(id);
+              if (!el) return;
+              if (message) {
+                el.textContent = message;
+                el.style.display = 'flex';
+              } else {
+                el.textContent = '';
+                el.style.display = 'none';
+              }
+            });
           }
 
           function arcPath(cx, cy, r){
@@ -5333,7 +5447,7 @@ def dashboard_page(request: Request):
           let lastGoodLatestPayload = null;
           let lastGoodCapturedAt = null;
 
-          function buildSingleChart(canvasId, labels, datasetLabel, values, color, unitLabel){
+          function buildSingleChart(canvasId, labels, datasetLabel, values, color, unitLabel, lineTension = 0.25){
             const ctx = document.getElementById(canvasId);
             if (!ctx || typeof Chart === 'undefined') return null;
 
@@ -5342,8 +5456,8 @@ def dashboard_page(request: Request):
               data: {
                 labels,
                 datasets: [
-                  { label: datasetLabel, data: values, borderColor: color, tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
-                  { label: '', data: values, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' }
+                  { label: datasetLabel, data: values, borderColor: color, tension: lineTension, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
+                  { label: '', data: values, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: lineTension, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' }
                 ]
               },
               options: {
@@ -5516,8 +5630,8 @@ def dashboard_page(request: Request):
                 data: {
                   labels,
                   datasets: [
-                    { label: 'α Temp', data: alphaTemp, borderColor: '#84cc16', tension: 0.25, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
-                    { label: 'α Hum', data: alphaHum, borderColor: '#eab308', tension: 0.25, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'yR' }
+                    { label: 'α Temp', data: alphaTemp, borderColor: '#84cc16', tension: 0, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
+                    { label: 'α Hum', data: alphaHum, borderColor: '#eab308', tension: 0, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'yR' }
                   ]
                 },
                 options: {
@@ -5534,7 +5648,7 @@ def dashboard_page(request: Request):
               });
             }
             extTempChart = buildSingleChart('extTempChart', labels, `${extTempLabelBase()} ${tempUnitLabel}`, extTemp, '#10b981', tempUnitLabel);
-            mainWChart = buildSingleChart('mainWChart', labels, `${tr('totalConsumption')} W`, mainW, '#ef4444', 'W');
+            mainWChart = buildSingleChart('mainWChart', labels, `${tr('totalConsumption')} W`, mainW, '#ef4444', 'W', 0);
           }
 
           async function loadLatest(){
@@ -5548,19 +5662,25 @@ def dashboard_page(request: Request):
               if (!j?.captured_at && lastGoodCapturedAt) j.captured_at = lastGoodCapturedAt;
             }
 
-            // Read all configured Shelly devices directly and overlay stale /api/state values.
-            try {
-              const dr = await fetch(`/tents/${currentTentId}/shelly/direct-all`, { cache:'no-store' });
-              const dj = await dr.json().catch(() => ({}));
-              if (dr.ok && dj?.ok && dj?.states) {
-                Object.entries(dj.states).forEach(([k, st]) => {
-                  d[`cur.shelly.${k}.isOn`] = st?.isOn;
-                  if (Number.isFinite(Number(st?.Watt))) d[`cur.shelly.${k}.Watt`] = st.Watt;
-                  if (Number.isFinite(Number(st?.Wh))) d[`cur.shelly.${k}.Wh`] = st.Wh;
-                });
-                if (dj?.states?.main) shellyMainDirectTs = dj?.checked_at || new Date().toISOString();
-              }
-            } catch {}
+            // Read configured Shelly devices directly, but do not block initial UI render.
+            // Slow/unreachable Shelly calls must not delay first values on page load.
+            (async () => {
+              try {
+                const ctrl = new AbortController();
+                const to = setTimeout(() => ctrl.abort(), 1200);
+                const dr = await fetch(`/tents/${currentTentId}/shelly/direct-all`, { cache:'no-store', signal: ctrl.signal });
+                clearTimeout(to);
+                const dj = await dr.json().catch(() => ({}));
+                if (dr.ok && dj?.ok && dj?.states) {
+                  Object.entries(dj.states).forEach(([k, st]) => {
+                    d[`cur.shelly.${k}.isOn`] = st?.isOn;
+                    if (Number.isFinite(Number(st?.Watt))) d[`cur.shelly.${k}.Watt`] = st.Watt;
+                    if (Number.isFinite(Number(st?.Wh))) d[`cur.shelly.${k}.Wh`] = st.Wh;
+                  });
+                  if (dj?.states?.main) shellyMainDirectTs = dj?.checked_at || new Date().toISOString();
+                }
+              } catch {}
+            })();
 
             renderStream(j.rtsp_url, j.webrtc_url, j.player_url, j.preview_url);
             txt('status', '');
@@ -5591,8 +5711,8 @@ def dashboard_page(request: Request):
             const extTempRaw = firstNum(d, ['sensors.cur.extTempC']);
             const alphaTemp = firstNum(d, ['sensors.cur.effectiveAlfaTempC']);
             const alphaHum = firstNum(d, ['sensors.cur.effectiveAlfaHumPct']);
-            const tempRaw = firstNum(d, ['sensors.raw.temperatureC', 'sensors.cur.temperatureC', 'curTemperature']);
-            const humRaw = firstNum(d, ['sensors.raw.humidityPct', 'sensors.cur.humidityPct', 'curHumidity']);
+            const tempRaw = firstNum(d, ['sensors.cur.temperatureRawC', 'sensors.raw.temperatureC', 'sensors.cur.temperatureC', 'curTemperature']);
+            const humRaw = firstNum(d, ['sensors.cur.humidityRawPct', 'sensors.raw.humidityPct', 'sensors.cur.humidityPct', 'curHumidity']);
 
             const tempNow = convertTempFromC(tempCur);
             const tempRawNow = convertTempFromC(tempRaw);
@@ -5867,13 +5987,20 @@ def dashboard_page(request: Request):
 
             if (!points.length) {
               txt('status', currentLang === 'de' ? 'Keine Verlaufsdaten verfügbar.' : 'No history data available.');
+              setHistoryOverlays('');
               buildCharts([], [], [], [], [], [], [], [], [], []);
               return;
             }
             const historyWarmup = points.length < 30;
             if (historyWarmup) {
-              txt('status', tr('historyBuilding'));
+              txt('status', '');
+              const remaining = Math.max(0, 30 - points.length);
+              const warmupMsg = currentLang === 'de'
+                ? `${tr('historyBuilding')} (${remaining} Messpunkt${remaining === 1 ? '' : 'e'} verbleibend)`
+                : `${tr('historyBuilding')} (${remaining} data point${remaining === 1 ? '' : 's'} remaining)`;
+              setHistoryOverlays(warmupMsg);
             } else {
+              setHistoryOverlays('');
               txt('status', usedMinutes !== minutes ? (currentLang === 'de' ? 'Keine aktuellen Daten im gewählten Zeitraum, zeige letzte verfügbare Daten.' : 'No recent data in selected range, showing last available data.') : '');
             }
 

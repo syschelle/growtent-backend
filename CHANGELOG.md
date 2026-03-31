@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.181
+
+### Chart order tweak (local)
+Moved DS18B20 history chart above Alpha history chart in dashboard order.
+
+
+## v0.180
+
+### Chart rendering (local)
+Removed visual line smoothing for Alpha History and Total Consumption charts.
+
+### Changes
+- Alpha chart datasets now use `tension: 0`.
+- Total consumption chart (`mainWChart`) now uses `tension: 0`.
+- Data values are unchanged; only curve interpolation is removed.
+
+
 ## v0.179
 
 ### Deployment note (docs)
