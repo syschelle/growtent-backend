@@ -1,0 +1,47 @@
+services:
+  db:
+    restart: unless-stopped
+    image: postgres:16-alpine
+    container_name: gt_db
+    environment:
+      POSTGRES_DB: growtent
+      POSTGRES_USER: growtent
+      POSTGRES_PASSWORD: growtent
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U growtent -d growtent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    restart: unless-stopped
+    build: ./api
+    container_name: gt_api
+    environment:
+      DATABASE_URL: postgresql://growtent:growtent@db:5432/growtent
+      POLL_INTERVAL_SECONDS: 10
+      RETENTION_DAYS: 7
+      GO2RTC_BASE_URL: http://go2rtc:1984
+      PROJECT_ROOT: /project
+    volumes:
+      - ./:/project:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      go2rtc:
+        condition: service_started
+    ports:
+      - "8088:8080"
+
+  go2rtc:
+    restart: unless-stopped
+    image: alexxit/go2rtc:latest
+    container_name: gt_go2rtc
+    ports:
+      - "1984:1984"
+      - "8554:8554"
+
+volumes:
+  db_data:

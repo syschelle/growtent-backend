@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local runtime/temp
+*.log
+*.tmp
+*.swp
+
+# Data/export artifacts
+*.sqlite
+*.db
+*.sql
+*.dump
+*.bak
+exports/
+
+# Bytecode in subdirs
+**/__pycache__/
