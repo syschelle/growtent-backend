@@ -1,5 +1,87 @@
 # Changelog
 
+## v0.179
+
+### Deployment note (docs)
+Added guidance for running updates directly from the GitHub repository.
+
+### Recommended compose options
+- Prefer registry image updates when available (`image:` + `pull_policy: always`).
+- Alternative: build directly from GitHub source (`build.context: https://github.com/syschelle/growtent-backend.git#main:api`).
+- Typical update commands:
+  - `docker compose pull api && docker compose up -d api` (image flow)
+  - `docker compose build --no-cache api && docker compose up -d api` (git-build flow)
+
+
+## v0.178
+
+### Warmup counter wording (local)
+Added translated unit text after counter value in history warmup overlay.
+
+### Changes
+- DE: `(<X> Messpunkt(e) verbleibend)`
+- EN: `(<X> data point(s) remaining)`
+
+
+## v0.177
+
+### History warmup counter (local)
+Warmup overlay now includes remaining point count until charts are considered built.
+
+### Changes
+- During warmup (`points < 30`) overlay shows remaining counter:
+  - DE: `Historie wird noch aufgebaut… (noch X)`
+  - EN: `History is still building up… (X remaining)`
+
+
+## v0.176
+
+### History warmup message placement (local)
+Moved "History is still building up…" from top status area into each history chart card center as red overlay text.
+
+### Changes
+- Added centered per-chart overlay placeholders for all history cards.
+- Added `setHistoryOverlays(message)` helper.
+- During warmup (`points < 30`) show overlay text in chart centers.
+- Removed warmup text from top status line.
+
+
+## v0.175
+
+### Startup responsiveness fix (local)
+Initial dashboard render no longer waits on slow Shelly direct-all calls.
+
+### Changes
+- `loadLatest()` now fetches `/shelly/direct-all` in background (non-blocking).
+- Added 1200ms abort timeout for direct-all fetch.
+- Prevents delayed first paint of stream/value cards on page refresh.
+
+
+## v0.174
+
+### Poll continuity / online state fix (local)
+When controller temporarily delivers null sensor values, backend now keeps continuity from last known sample instead of dropping the poll.
+
+### Changes
+- Added `_get_last_payload(tent_id)` helper.
+- `save_state()` no longer discards incomplete samples immediately.
+- For missing raw/smoothed channels, backend backfills from last stored payload.
+- New poll samples are persisted, keeping `captured_at` fresh and preventing false offline state.
+
+
+## v0.173
+
+### Raw/smoothed key alignment (local)
+Aligned backend and UI to controller key semantics:
+- `sensors.cur.temperatureC` / `sensors.cur.humidityPct` = smoothed/current
+- `sensors.cur.temperatureRawC` / `sensors.cur.humidityRawPct` = raw
+
+### Changes
+- save/history/export now prefer raw keys from `sensors.cur.*Raw*`.
+- Raw fallback compatibility kept for legacy `sensors.raw.*`.
+- UI raw value cards now prefer `sensors.cur.temperatureRawC` and `sensors.cur.humidityRawPct`.
+
+
 ## Permanente Systembeschreibung
 
 ### Projektziel
@@ -84,6 +166,29 @@ Current focus:
 - `gt_go2rtc` auf Ports `1984` und `8554`
 
 ---
+
+## v0.171
+
+### Climate pipeline simplification (local)
+Backend Adaptive/EMA re-smoothing removed from persistence/history/export path.
+
+### Changes
+- `save_state()` now trusts controller channels as source of truth:
+  - raw from `sensors.raw.*` (fallback `sensors.cur.*`)
+  - smoothed from `sensors.smoothed.*` (fallback `sensors.cur.*`, then raw)
+- `/tents/{tent_id}/history` no longer recomputes EMA smoothed values.
+- `/api/export` no longer recomputes EMA smoothed values.
+- Existing raw/smoothed/alpha fields remain for compatibility.
+
+## v0.172
+
+### Climate channel semantics fix (local)
+Aligned channel usage with controller semantics: `raw` is real sensor data, `cur` is smoothed.
+
+### Changes
+- Removed fallback from `sensors.raw.*` to `sensors.cur.*` in save/history/export paths.
+- Backend now treats missing raw as missing raw (no implicit substitution with smoothed values).
+- Smoothed fallback remains `sensors.smoothed.* -> sensors.cur.*`.
 
 ## v0.170 (rollback)
 
