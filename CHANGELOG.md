@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.183
+
+### UI color alignment (local)
+Current value cards now use the same colors as their history chart lines.
+
+### Changes
+- Temp current value color -> `#22d3ee`
+- Hum current value color -> `#a78bfa`
+- VPD current value color -> `#f59e0b`
+- External sensor current value color -> `#10b981`
+
+
 ## v0.182
 
 ### Chart.js reliability fix

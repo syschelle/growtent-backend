@@ -27,7 +27,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.182"
+APP_VERSION = "v0.183"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -3992,6 +3992,11 @@ def dashboard_page(request: Request):
           .alpha-led-red { background:#ef4444; }
           .alpha-led-off { background:#64748b; opacity:.55; }
           .status-meta { color:var(--muted); font-size:.92rem; font-weight:500; margin-left:8px; }
+          /* Current value colors aligned with history line colors */
+          #temp { color:#22d3ee; }
+          #hum { color:#a78bfa; }
+          #vpd { color:#f59e0b; }
+          #extTemp { color:#10b981; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
           .history-card { position:relative; }
