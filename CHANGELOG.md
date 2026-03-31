@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.182
+
+### Chart.js reliability fix
+Removed external CDN dependency for charts.
+
+### Changes
+- Added local static asset: `api/static/chart.umd.js`.
+- Mounted `/static` in FastAPI.
+- Dashboard now loads Chart.js from `/static/chart.umd.js`.
+
+### Effect
+- Charts work in restricted/offline environments where jsDelivr is blocked.
+
+
 ## v0.181
 
 ### Chart order tweak (local)

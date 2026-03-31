@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 import app as legacy
 from routes.auth import router as auth_router
@@ -7,6 +8,7 @@ from routes.sensors import router as sensors_router
 from routes.system import router as system_router
 
 app = FastAPI(title="GrowTent Backend PoC")
+app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 # Keep legacy middleware behavior.
 app.middleware("http")(legacy.auth_middleware)

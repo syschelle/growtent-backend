@@ -49,6 +49,7 @@ In short: it is the operational backend/UI layer between your GrowTent devices a
 - Health endpoint: `GET /health`
 - Changelog and versioned release workflow
 - Startup resilience: last known values are preserved when controller payloads are temporarily incomplete/null
+- Chart rendering is served from a local bundled Chart.js asset (no external CDN required)
 
 ---
 

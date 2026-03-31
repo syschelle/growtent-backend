@@ -18,6 +18,7 @@ import httpx
 import psycopg2
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://growtent:growtent@db:5432/growtent")
@@ -26,9 +27,10 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.181"
+APP_VERSION = "v0.182"
 
 app = FastAPI(title="GrowTent Backend PoC")
+app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 SESSIONS: dict[str, dict] = {}
 TWOFA_ENROLL: dict[str, dict] = {}
@@ -3820,7 +3822,7 @@ def dashboard_page(request: Request):
       <head>
         <title>GrowTent Dashboard</title>
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-        <script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>
+        <script src=\"/static/chart.umd.js\"></script>
         <style>
           :root {
             --bg:#0f172a;
