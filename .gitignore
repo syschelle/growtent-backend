@@ -32,5 +32,9 @@ Thumbs.db
 *.bak
 exports/
 
+# Local project notes / screenshots (never push)
+Aufgabe.md
+sshot-135.png
+
 # Bytecode in subdirs
 **/__pycache__/
