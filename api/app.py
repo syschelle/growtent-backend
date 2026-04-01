@@ -27,7 +27,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.193"
+APP_VERSION = "v0.194"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -5943,7 +5943,7 @@ def dashboard_page(request: Request):
           }
 
           async function loadHistory(){
-            const minutes = Number(localStorage.getItem('gt_range_minutes') || '1440');
+            const minutes = Number(localStorage.getItem('gt_range_minutes') || '60');
 
             const fetchHistory = async (m) => {
               const r = await fetch(`/tents/${currentTentId}/history?minutes=${m}`, { cache:'no-store' });
@@ -6176,7 +6176,7 @@ def dashboard_page(request: Request):
           };
           if (rangeLiveEl) {
             // Always start dashboard history on 24h at page load.
-            let activeRange = '1440';
+            let activeRange = '60';
             localStorage.setItem('gt_range_minutes', activeRange);
             rangeLiveEl.value = activeRange;
             rangeLiveEl.addEventListener('change', async (ev) => {
@@ -6218,7 +6218,7 @@ def dashboard_page(request: Request):
           const exportBtnEl = document.getElementById('exportCsvBtn');
           if (exportBtnEl) {
             exportBtnEl.addEventListener('click', () => {
-              const mins = Number(localStorage.getItem('gt_range_minutes') || '1440');
+              const mins = Number(localStorage.getItem('gt_range_minutes') || '60');
               let rangeKey = String(mins);
               if (mins === 1440) rangeKey = '24h';
               if (mins === 10080) rangeKey = '7d';

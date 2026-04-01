@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.194
+
+### Default dashboard history range
+- On page reload, history charts now default to `1h` instead of `24h`.
+- Updated related range defaults used by dashboard load and export flow.
+
 ## v0.193
 
 ### About/Changelog fallback for API-only deployments
