@@ -27,7 +27,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.192"
+APP_VERSION = "v0.193"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -3478,12 +3478,27 @@ def download_project_zip():
 
 @app.get("/changelog", response_class=HTMLResponse)
 def changelog_page():
-    changelog_path = os.path.join(PROJECT_ROOT, "CHANGELOG.md")
-    try:
-        with open(changelog_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception:
-        content = "# Changelog\n\nKeine Changelog-Datei gefunden."
+    changelog_candidates = [
+        os.path.join(PROJECT_ROOT, "CHANGELOG.md"),
+        "/app/CHANGELOG.md",
+    ]
+    content = ""
+    for changelog_path in changelog_candidates:
+        try:
+            with open(changelog_path, "r", encoding="utf-8") as f:
+                content = (f.read() or "").strip()
+            if content:
+                break
+        except Exception:
+            continue
+
+    if not content:
+        content = (
+            "# Changelog\n\n"
+            "No local changelog file found in this deployment.\n\n"
+            "- GitHub: https://github.com/syschelle/growtent-backend\n"
+            "- Releases/Tags: https://github.com/syschelle/growtent-backend/tags\n"
+        )
 
     def esc(x: str) -> str:
         return x.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

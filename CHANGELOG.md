@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.193
+
+### About/Changelog fallback for API-only deployments
+- Added resilient changelog loading from multiple locations.
+- Added bundled `api/CHANGELOG.md` so About/Changelog is never empty in API-only builds.
+- Keeps GitHub and ZIP links available in About.
+
+
 ## v0.192
 
 ### Hotfix
