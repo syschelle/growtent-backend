@@ -27,7 +27,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.183"
+APP_VERSION = "v0.189"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -2566,13 +2566,8 @@ def setup_page(request: Request):
                 <option value=\"F\">°F</option>
               </select>
 
-              <div id=\"labelRange\" style=\"margin-bottom:8px;\">Range</div>
-              <select id=\"rangeSelectCfg\" style=\"margin-bottom:10px;\">
-                <option value=\"60\">1h</option>
-                <option value=\"360\">6h</option>
-                <option value=\"1440\">24h</option>
-                <option value=\"10080\">7d</option>
-              </select>
+              <!-- history range moved to dashboard -->
+              <!-- removed from setup -->
 
               <div>
                 <button id=\"saveBtn\">Save</button>
@@ -2722,7 +2717,6 @@ def setup_page(request: Request):
           const sel = document.getElementById('themeSelect');
           const langSel = document.getElementById('langSelect');
           const unitSel = document.getElementById('tempUnitSelect');
-          const rangeSel = document.getElementById('rangeSelectCfg');
           const msg = document.getElementById('msg');
           const authEnabledEl = document.getElementById('authEnabled');
           const authUsernameEl = document.getElementById('authUsername');
@@ -2857,7 +2851,6 @@ def setup_page(request: Request):
             set('labelTheme', tSetup('theme'));
             set('labelLanguage', tSetup('language'));
             set('labelTempUnit', tSetup('tempUnit'));
-            set('labelRange', tSetup('range'));
             set('tentsTitle', tSetup('tents'));
             set('saveBtn', tSetup('save'));
             set('accessTitle', tSetup('access'));
@@ -2901,12 +2894,10 @@ def setup_page(request: Request):
           const initialTheme = (localStorage.getItem('gt_theme') || 'dark');
           const initialLang = (localStorage.getItem('gt_lang') || 'en');
           const initialUnit = (localStorage.getItem('gt_temp_unit') || 'C');
-          const initialRange = (localStorage.getItem('gt_range_minutes') || '1440');
 
           sel.value = initialTheme;
           langSel.value = (initialLang === 'de') ? 'de' : 'en';
           unitSel.value = (initialUnit === 'F') ? 'F' : 'C';
-          rangeSel.value = ['60','360','1440','10080'].includes(initialRange) ? initialRange : '1440';
           applyTheme(initialTheme);
           applySetupI18n();
 
@@ -3066,11 +3057,9 @@ def setup_page(request: Request):
             const theme = sel.value === 'light' ? 'light' : 'dark';
             const lang = langSel.value === 'de' ? 'de' : 'en';
             const unit = unitSel.value === 'F' ? 'F' : 'C';
-            const range = ['60','360','1440','10080'].includes(rangeSel.value) ? rangeSel.value : '1440';
             localStorage.setItem('gt_theme', theme);
             localStorage.setItem('gt_lang', lang);
             localStorage.setItem('gt_temp_unit', unit);
-            localStorage.setItem('gt_range_minutes', range);
             applyTheme(theme);
             msg.textContent = 'Saved.';
           });
@@ -4006,6 +3995,7 @@ def dashboard_page(request: Request):
             pointer-events:none; text-align:center; padding:16px;
             color:#ef4444; font-weight:700; font-size:1rem;
           }
+          .range-hint-error { color:#ef4444; font-weight:400; }
         </style>
       </head>
       <body>
@@ -4029,7 +4019,6 @@ def dashboard_page(request: Request):
         </div>
         <div class=\"small\" id=\"sourceText\">Source: -</div>
         <!-- language moved to setup -->
-        <!-- range moved to setup -->
         <!-- temperature unit moved to setup -->
         <div id=\"status\" class=\"small\">Loading…</div>
 
@@ -4134,6 +4123,16 @@ def dashboard_page(request: Request):
         <div class=\"card\">
           <div class=\"label\" id=\"lblShelly\">Shelly Devices</div>
           <div id=\"shellyDevices\" class=\"grid\"></div>
+        </div>
+
+        <div class=\"small\" style=\"margin:4px 0 8px 0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;\">
+          <span id=\"rangeLabelLive\">Range for history:</span>
+          <select id=\"rangeSelectLive\" style=\"padding:4px 8px; border-radius:8px;\">
+            <option value=\"60\">1h</option>
+            <option value=\"1440\">24h</option>
+            <option value=\"2880\">48h</option>
+          </select>
+          <span id=\"rangeHintLive\"></span>
         </div>
 
         <div class=\"card history-card\">
@@ -4523,6 +4522,8 @@ def dashboard_page(request: Request):
             txt('navSetup', tr('setup'));
             txt('langLabel', tr('language'));
             txt('rangeLabel', tr('range'));
+            txt('rangeLabelLive', currentLang === 'de' ? 'Zeitraum für Verläufe:' : 'Range for history:');
+            txt('rangeHintLive', '');
             txt('tempUnitLabel', tr('tempUnit'));
             txt('lblTemp', tr('temperature'));
             txt('lblHum', tr('humidity'));
@@ -6141,7 +6142,45 @@ def dashboard_page(request: Request):
             });
           }
 
-          // range selector moved to setup
+          const rangeLiveEl = document.getElementById('rangeSelectLive');
+          const rangeHintLiveEl = document.getElementById('rangeHintLive');
+          const setRangeHint = (msg = '') => {
+            if (!rangeHintLiveEl) return;
+            rangeHintLiveEl.textContent = msg;
+            if (msg) rangeHintLiveEl.classList.add('range-hint-error');
+            else rangeHintLiveEl.classList.remove('range-hint-error');
+          };
+          if (rangeLiveEl) {
+            // Always start dashboard history on 24h at page load.
+            let activeRange = '1440';
+            localStorage.setItem('gt_range_minutes', activeRange);
+            rangeLiveEl.value = activeRange;
+            rangeLiveEl.addEventListener('change', async (ev) => {
+              const nextRange = ['60','1440','2880'].includes(ev.target.value) ? ev.target.value : '1440';
+              try {
+                const r = await fetch(`/tents/${currentTentId}/history?minutes=${encodeURIComponent(nextRange)}&filter_spikes=1`, { cache:'no-store' });
+                const j = await r.json().catch(() => ({}));
+                const pts = Array.isArray(j?.points) ? j.points : [];
+                if (!pts.length) {
+                  setRangeHint(currentLang === 'de'
+                    ? 'Keine Daten im gewählten Zeitraum verfügbar.'
+                    : 'No data available in selected range.');
+                  rangeLiveEl.value = activeRange;
+                  return;
+                }
+              } catch {
+                setRangeHint(currentLang === 'de'
+                  ? 'Zeitraumwechsel fehlgeschlagen.'
+                  : 'Range switch failed.');
+                rangeLiveEl.value = activeRange;
+                return;
+              }
+              setRangeHint('');
+              activeRange = nextRange;
+              localStorage.setItem('gt_range_minutes', nextRange);
+              await loadHistory();
+            });
+          }
 
           const viewModeBtnEl = document.getElementById('viewModeBtn');
           if (viewModeBtnEl) {
@@ -6156,8 +6195,9 @@ def dashboard_page(request: Request):
           if (exportBtnEl) {
             exportBtnEl.addEventListener('click', () => {
               const mins = Number(localStorage.getItem('gt_range_minutes') || '1440');
-              let rangeKey = '24h';
-              if (mins >= 10080) rangeKey = '7d';
+              let rangeKey = String(mins);
+              if (mins === 1440) rangeKey = '24h';
+              if (mins === 10080) rangeKey = '7d';
               if (mins > 10080) rangeKey = 'all';
               const url = `/api/export?tent_id=${encodeURIComponent(String(currentTentId))}&range=${encodeURIComponent(rangeKey)}`;
               window.location.href = url;

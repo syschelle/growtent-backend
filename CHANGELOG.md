@@ -1,5 +1,68 @@
 # Changelog
 
+## v0.189
+
+### Range control cleanup
+- Removed history-range selector from Setup page.
+- Dashboard range control remains the single source for history range changes.
+- Dashboard now initializes history range to 24h on every page load.
+
+
+## v0.188
+
+### Dashboard range UX polish
+Range error feedback moved to the range control row (not top status), shown in red and only when needed.
+
+### Changes
+- Label text changed to translated:
+  - DE: `Zeitraum für Verläufe:`
+  - EN: `Range for history:`
+- Removed permanent helper text from range row.
+- Range validation errors now appear inline in red next to selector.
+
+
+## v0.187
+
+### Live range selector validation
+When changing range on dashboard, app now validates that selected range actually has history points.
+
+### Changes
+- On range change, fetch selected history window first.
+- If no points exist (e.g., tent offline), selector reverts to previous range.
+- Shows translated status hint instead of switching to empty range.
+
+
+## v0.186
+
+### Dashboard range control placement
+Moved live history range selector to a one-line control directly above the first history chart, including a translated hint.
+
+
+## v0.185
+
+### Live range selector on status page
+Added a direct history-range selector to the dashboard/status page (no Setup save required).
+
+### Changes
+- New dashboard selector with presets: `1h`, `24h`, `48h`.
+- Selection updates chart range immediately via `loadHistory()`.
+- Selection is stored in localStorage (`gt_range_minutes`) and persists per browser.
+
+
+## v0.184
+
+### Setup range presets update
+History range options in Setup are now focused on live tent status usage.
+
+### Changes
+- Setup range presets changed to:
+  - `1h` (`60`)
+  - `24h` (`1440`)
+  - `48h` (`2880`)
+- Removed `6h` and `7d` from Setup selector.
+- CSV export now forwards custom minute ranges (e.g., `2880`) correctly.
+
+
 ## v0.183
 
 ### UI color alignment (local)
