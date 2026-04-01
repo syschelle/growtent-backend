@@ -27,7 +27,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.189"
+APP_VERSION = "v0.192"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -2539,7 +2539,7 @@ def setup_page(request: Request):
             <div id=\"setupNavTitle\" style=\"font-size:.8rem; color:#94a3b8; margin-bottom:10px;\">Navigation</div>
             <div id=\"tentNavSetup\"></div>
             <a class=\"navlink active\" href=\"/app?page=setup\" id=\"setupNavSetup\">Setup</a>
-            <a class=\"navlink\" href=\"/app?page=changelog\" id=\"setupNavChangelog\">Changelog</a>
+            <a class=\"navlink\" href=\"/app?page=changelog\" id=\"setupNavChangelog\">About</a>
             <!-- sidebar image removed -->
           </aside>
           <main class=\"content setup-content\">
@@ -3570,7 +3570,7 @@ def changelog_page():
     return f"""
     <html>
       <head>
-        <title>GrowTent Changelog</title>
+        <title>GrowTent About</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -3614,10 +3614,11 @@ def changelog_page():
             <div style="font-size:.8rem; color:#94a3b8; margin-bottom:10px;">Navigation</div>
             {tent_links_html}
             <a class="navlink" href="/app?page=setup">Setup</a>
-            <a class="navlink active" href="/app?page=changelog">Changelog</a>
+            <a class="navlink active" href="/app?page=changelog">About</a>
           </aside>
           <main class="content">
-            <h1>Changelog</h1>
+            <h1>About</h1>
+            <a class="navlink active download" href="https://github.com/syschelle/growtent-backend" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
             <a class="navlink active download" href="/download/project.zip">Projekt herunterladen (ZIP)</a>
             <div class="md-root">{rendered_cards}</div>
           </main>
@@ -3697,7 +3698,7 @@ def app_shell_page():
             <div class="muted" id="navTitle">Navigation</div>
             <div id="tentNav"></div>
             <a class="navlink" data-page="setup" href="/app?page=setup">Setup</a>
-            <a class="navlink" data-page="changelog" href="/app?page=changelog">Changelog</a>
+            <a class="navlink" data-page="changelog" href="/app?page=changelog">About</a>
           </aside>
           <main class="content">
             <iframe id="contentFrame" class="frame" src="/dashboard?embed=1"></iframe>
@@ -4005,7 +4006,7 @@ def dashboard_page(request: Request):
             <div class=\"label\" style=\"margin-bottom:10px;\" id=\"navTitle\">Navigation</div>
             <div id=\"tentNav\"></div>
             <a class=\"navlink\" href=\"/app?page=setup\" id=\"navSetup\">Setup</a>
-            <a class=\"navlink\" href=\"/app?page=changelog\" id=\"navChangelog\">Changelog</a>
+            <a class=\"navlink\" href=\"/app?page=changelog\" id=\"navChangelog\">About</a>
           </aside>
           <main class=\"content\">
         <div class=\"title-row\">
@@ -4160,7 +4161,7 @@ def dashboard_page(request: Request):
         </div>
 
         <div class=\"card history-card\">
-          <div class=\"label\" id=\"lblAlphaHistory\">Alpha History</div>
+          <div class=\"label\" id=\"lblAlphaHistory\"><span id=\"lblAlphaHistoryText\">Alpha History</span> <span id=\"alphaHistoryHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"alphaChart\"></canvas>
           <div id=\"historyOverlayAlpha\" class=\"history-overlay\"></div>
         </div>
@@ -4262,6 +4263,7 @@ def dashboard_page(request: Request):
               humHistory: 'Humidity History',
               vpdHistory: 'VPD History',
               alphaHistory: 'Alpha History',
+              alphaHint: 'Adaptive alpha of smoothing: lower α = stronger smoothing (slower), higher α = faster reaction (more sensitive). α Temp applies to temperature smoothing, α Hum to humidity smoothing.',
               extTempHistory: 'Tank Temperature History',
               totalConsumption: 'Total consumption',
               totalConsumptionHistory: 'Total consumption history',
@@ -4381,6 +4383,7 @@ def dashboard_page(request: Request):
               humHistory: 'Luftfeuchteverlauf',
               vpdHistory: 'VPD-Verlauf',
               alphaHistory: 'Alpha-Verlauf',
+              alphaHint: 'Adaptives Alpha der Glättung: kleineres α = stärkere Glättung (träge), größeres α = schnellere Reaktion (empfindlicher). α Temp gilt für Temperatur-Glättung, α Hum für Luftfeuchte-Glättung.',
               extTempHistory: 'Wassertank-Temperaturverlauf',
               totalConsumption: 'Gesamtverbrauch',
               totalConsumptionHistory: 'Gesamtverbrauchsverlauf',
@@ -4543,7 +4546,13 @@ def dashboard_page(request: Request):
             txt('lblTempHistory', tr('tempHistory'));
             txt('lblHumHistory', tr('humHistory'));
             txt('lblVpdHistory', tr('vpdHistory'));
-            txt('lblAlphaHistory', tr('alphaHistory'));
+            txt('lblAlphaHistoryText', tr('alphaHistory'));
+            const alphaHintEl = document.getElementById('alphaHistoryHint');
+            if (alphaHintEl) {
+              const hint = tr('alphaHint');
+              alphaHintEl.title = hint;
+              alphaHintEl.setAttribute('aria-label', hint);
+            }
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
             txt('lblMainWHistory', tr('totalConsumptionHistory'));
             txt('lblStream', tr('cameraStream'));

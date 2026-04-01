@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.192
+
+### Hotfix
+Fixed broken About link markup in app shell sidebar (missing closing `>`), which could break page behavior and navigation rendering.
+
+
+## v0.191
+
+### HoverHint convention + About page update
+- Adopted `HoverHint` convention for UI explanation tooltips (`ℹ️`) with DE/EN translation.
+- Navigation label changed from `Changelog` to `About`.
+- About page now includes GitHub repository link opening in a new tab.
+
+
+## v0.190
+
+### Alpha history tooltip
+Added a hover hint (`ℹ️`) to the Alpha History label with translated explanation (DE/EN).
+
+### Changes
+- New hint icon in Alpha History title.
+- Tooltip text follows selected UI language.
+- Includes explanation of α meaning (lower/higher alpha behavior) for temp/humidity smoothing.
+
+
 ## v0.189
 
 ### Range control cleanup
