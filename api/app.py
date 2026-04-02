@@ -29,7 +29,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.202"
+APP_VERSION = "v0.203"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1993,7 +1993,7 @@ def _iso_utc_z(ts: str | None):
         return None
 
 
-def api_history_for_device(device_id: str | None, hours: int | None):
+def api_history_for_device(device_id: str | None):
     if not device_id or not str(device_id).strip():
         LOGGER.warning("/api/history rejected: missing deviceId")
         raise HTTPException(status_code=400, detail="deviceId is required")
@@ -2002,21 +2002,15 @@ def api_history_for_device(device_id: str | None, hours: int | None):
     if not bool(cfg.get("history_api_enabled", True)):
         raise HTTPException(status_code=403, detail="API history access disabled")
 
-    try:
-        range_hours = int(hours) if hours is not None else 12
-    except Exception:
-        range_hours = 12
-    range_hours = max(1, min(range_hours, 168))
-
     tid = _resolve_tent_id_by_device_id(str(device_id))
     if tid is None:
         LOGGER.info("/api/history no matching deviceId=%s", device_id)
-        return {"deviceId": str(device_id), "rangeHours": range_hours, "points": []}
+        return {"deviceId": str(device_id), "limit": 50, "points": []}
 
     try:
-        hist = history_state(tid, minutes=range_hours * 60, filter_spikes=0)
+        hist = history_state(tid, minutes=24 * 365 * 60, filter_spikes=0)
         points = []
-        for p in (hist.get("points") or []):
+        for p in (hist.get("points") or [])[-50:]:
             points.append({
                 "timestamp": _iso_utc_z(p.get("t")),
                 "temperature": p.get("temperature"),
@@ -2031,8 +2025,8 @@ def api_history_for_device(device_id: str | None, hours: int | None):
                 "effectiveAlphaTemp": p.get("effectiveAlfaTempC"),
                 "effectiveAlphaHumidity": p.get("effectiveAlfaHumPct"),
             })
-        LOGGER.info("/api/history ok: deviceId=%s tent_id=%s hours=%s count=%s", device_id, tid, range_hours, len(points))
-        return {"deviceId": str(device_id), "rangeHours": range_hours, "points": points}
+        LOGGER.info("/api/history ok: deviceId=%s tent_id=%s limit=%s count=%s", device_id, tid, 50, len(points))
+        return {"deviceId": str(device_id), "limit": 50, "points": points}
     except HTTPException:
         raise
     except Exception:
@@ -2759,7 +2753,7 @@ def setup_page(request: Request):
               </label>
               <button type=\"button\" id=\"saveApiAccessBtn\" style=\"margin-bottom:10px;\">Save API access</button>
               <div id=\"apiHistoryExampleLabel\" class=\"muted\">Example call:</div>
-              <div id=\"apiHistoryExampleValue\" class=\"muted\" style=\"font-family:monospace; word-break:break-all;\">/api/history?deviceId=1&hours=12</div>
+              <div id=\"apiHistoryExampleValue\" class=\"muted\" style=\"font-family:monospace; word-break:break-all;\">/api/history?deviceId=1</div>
             </div>
 
             <!-- rubricSecurity removed -->
@@ -3005,7 +2999,7 @@ def setup_page(request: Request):
             set('saveApiAccessBtn', tSetup('saveApiAccess'));
             set('apiHistoryExampleLabel', tSetup('apiHistoryExampleLabel'));
             const ex = document.getElementById('apiHistoryExampleValue');
-            if (ex) ex.textContent = '/api/history?deviceId=1&hours=12';
+            if (ex) ex.textContent = '/api/history?deviceId=1';
             set('auth2faEnabledLabel', tSetup('twofa'));
             set('regenRecoveryCodesLabel', tSetup('regenRecovery'));
             set('recoveryTitle', tSetup('recoveryTitle'));
@@ -3141,7 +3135,7 @@ def setup_page(request: Request):
                   <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
                   <span style="opacity:.85">Shelly Main Auth: ${t.shelly_main_user ? 'set' : '-'}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
-                  <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}&hours=12</span><br>
+                  <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">Edit</button>
                   <button data-plan-tent="${t.id}" style="margin-top:6px; margin-left:6px;">${tSetup('irrigationPlan')}</button>
                   <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">Delete</button>

@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.203
+
+### API history response constraints
+- `/api/history` now returns at most 50 rows (`limit: 50`).
+- Removed `hours` usage from `/api/history`; endpoint now uses `deviceId` only.
+- Updated setup examples to `/api/history?deviceId=<id>`.
+
 ## v0.202
 
 ### API history endpoint enable/disable in Setup
