@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.207"
+APP_VERSION = "v0.208"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1666,12 +1666,11 @@ def update_exhaust_vpd_plan(tent_id: int, payload: dict):
             cur.execute(
                 """
                 UPDATE tents
-                SET exhaust_vpd_plan_json=%s,
-                    exhaust_vpd_triggered=CASE WHEN %s THEN exhaust_vpd_triggered ELSE FALSE END
+                SET exhaust_vpd_plan_json=%s
                 WHERE id=%s
                 RETURNING id
                 """,
-                (plan_json, enabled, tent_id),
+                (plan_json, tent_id),
             )
             row = cur.fetchone()
             if not row:

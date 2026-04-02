@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.208
+
+### Exhaust VPD disable behavior
+- Disabling minimum VPD monitoring no longer resets `exhaust_vpd_triggered`.
+- This prevents automatic forced-off side effects when the VPD monitor is disabled.
+
 ## v0.207
 
 ### JSON export opens in browser tab
