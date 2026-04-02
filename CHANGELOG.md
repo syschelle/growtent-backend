@@ -2,6 +2,20 @@
 
 All entries are maintained in English only.
 
+## v0.211
+
+### DE label wording update
+- Changed DE label text for `off_extra_kpa` field to:
+  `Buffer fürs Ausschaltautomatic (kPa)`.
+
+## v0.210
+
+### Configurable OFF extra for min-VPD monitoring
+- Added configurable `off_extra_kpa` to exhaust min-VPD plan.
+- UI now includes editable field in min-VPD modal (DE/EN labels).
+- OFF threshold now uses: `min_vpd_kpa + hysteresis_kpa + off_extra_kpa`.
+- Default `off_extra_kpa` is `0.05` for existing/new plans.
+
 ## v0.209
 
 ### Exhaust min-VPD OFF threshold tuning

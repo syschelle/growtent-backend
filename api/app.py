@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.209"
+APP_VERSION = "v0.211"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -390,7 +390,7 @@ def init_db():
                     shelly_main_password TEXT,
                     irrigation_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}',
                     irrigation_last_run_date DATE,
-                    exhaust_vpd_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"min_vpd_kpa":0.6,"hysteresis_kpa":0.05}',
+                    exhaust_vpd_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"min_vpd_kpa":0.6,"hysteresis_kpa":0.05,"off_extra_kpa":0.05}',
                     exhaust_vpd_triggered BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
@@ -401,7 +401,7 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS shelly_main_password TEXT;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"every_n_days\":1,\"offset_after_light_on_min\":0}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_last_run_date DATE;")
-            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS exhaust_vpd_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"min_vpd_kpa\":0.6,\"hysteresis_kpa\":0.05}';")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS exhaust_vpd_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"min_vpd_kpa\":0.6,\"hysteresis_kpa\":0.05,\"off_extra_kpa\":0.05}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS exhaust_vpd_triggered BOOLEAN NOT NULL DEFAULT FALSE;")
             cur.execute(
                 """
@@ -819,6 +819,7 @@ def _try_run_exhaust_vpd_control(tent: dict, payload: dict):
     try:
         min_vpd = max(0.1, float(plan.get("min_vpd_kpa", 0.6) or 0.6))
         hysteresis = max(0.0, float(plan.get("hysteresis_kpa", 0.05) or 0.05))
+        off_extra = max(0.0, float(plan.get("off_extra_kpa", 0.05) or 0.05))
     except Exception:
         return
 
@@ -835,8 +836,8 @@ def _try_run_exhaust_vpd_control(tent: dict, payload: dict):
 
     # Hysteresis control:
     # - ON threshold:  VPD < min_vpd
-    # - OFF threshold: VPD >= min_vpd + hysteresis + 0.05
-    off_threshold = min_vpd + hysteresis + 0.05
+    # - OFF threshold: VPD >= min_vpd + hysteresis + off_extra
+    off_threshold = min_vpd + hysteresis + off_extra
     if is_on:
         should_be_on = cur_vpd < off_threshold
     else:
@@ -845,7 +846,7 @@ def _try_run_exhaust_vpd_control(tent: dict, payload: dict):
     if should_be_on != is_on:
         ok = _set_exhaust_shelly_output(payload, should_be_on, tent)
         if not ok:
-            print(f"[exhaust-vpd] tent #{tent.get('id')} direct set failed (vpd={cur_vpd:.2f}, min={min_vpd:.2f}, hyst={hysteresis:.2f}, off={off_threshold:.2f}, is_on={is_on}, should_on={should_be_on})")
+            print(f"[exhaust-vpd] tent #{tent.get('id')} direct set failed (vpd={cur_vpd:.2f}, min={min_vpd:.2f}, hyst={hysteresis:.2f}, extra={off_extra:.2f}, off={off_threshold:.2f}, is_on={is_on}, should_on={should_be_on})")
             return
 
     with get_conn() as conn:
@@ -1458,7 +1459,7 @@ def import_config_backup(payload: dict):
                         (str(t.get("shelly_main_password")).strip() if t.get("shelly_main_password") else None),
                         str(t.get("irrigation_plan_json") or '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}'),
                         t.get("irrigation_last_run_date"),
-                        str(t.get("exhaust_vpd_plan_json") or '{"enabled":false,"min_vpd_kpa":0.6,"hysteresis_kpa":0.05}'),
+                        str(t.get("exhaust_vpd_plan_json") or '{"enabled":false,"min_vpd_kpa":0.6,"hysteresis_kpa":0.05,"off_extra_kpa":0.05}'),
                         bool(t.get("exhaust_vpd_triggered", False)),
                         t.get("created_at"),
                     ),
@@ -1638,6 +1639,7 @@ def get_exhaust_vpd_plan(tent_id: int):
                     "enabled": bool(plan.get("enabled", False)),
                     "min_vpd_kpa": max(0.1, float(plan.get("min_vpd_kpa", 0.6) or 0.6)),
                     "hysteresis_kpa": max(0.0, float(plan.get("hysteresis_kpa", 0.05) or 0.05)),
+                    "off_extra_kpa": max(0.0, float(plan.get("off_extra_kpa", 0.05) or 0.05)),
                 },
                 "triggered": bool(row[1]),
             }
@@ -1660,7 +1662,14 @@ def update_exhaust_vpd_plan(tent_id: int, payload: dict):
     except Exception:
         raise HTTPException(status_code=400, detail="invalid hysteresis_kpa")
 
-    plan_json = json.dumps({"enabled": enabled, "min_vpd_kpa": min_vpd_kpa, "hysteresis_kpa": hysteresis_kpa})
+    try:
+        off_extra_kpa = float(payload.get("off_extra_kpa", 0.05))
+        if off_extra_kpa < 0.0:
+            off_extra_kpa = 0.0
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid off_extra_kpa")
+
+    plan_json = json.dumps({"enabled": enabled, "min_vpd_kpa": min_vpd_kpa, "hysteresis_kpa": hysteresis_kpa, "off_extra_kpa": off_extra_kpa})
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -1677,7 +1686,7 @@ def update_exhaust_vpd_plan(tent_id: int, payload: dict):
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
 
-    return {"ok": True, "tent_id": tent_id, "plan": {"enabled": enabled, "min_vpd_kpa": min_vpd_kpa, "hysteresis_kpa": hysteresis_kpa}}
+    return {"ok": True, "tent_id": tent_id, "plan": {"enabled": enabled, "min_vpd_kpa": min_vpd_kpa, "hysteresis_kpa": hysteresis_kpa, "off_extra_kpa": off_extra_kpa}}
 
 
 @app.get("/tents/{tent_id}/latest")
@@ -4271,6 +4280,8 @@ def dashboard_page(request: Request):
             <input id=\"dbExhPlanMinVpd\" type=\"number\" min=\"0.1\" step=\"0.05\" style=\"padding:8px 10px; border-radius:8px; width:160px; margin-bottom:10px;\" />
             <div id=\"dbExhPlanHystLabel\" style=\"margin-bottom:6px;\">Hysteresis (kPa)</div>
             <input id=\"dbExhPlanHyst\" type=\"number\" min=\"0\" step=\"0.01\" style=\"padding:8px 10px; border-radius:8px; width:160px; margin-bottom:10px;\" />
+            <div id=\"dbExhPlanOffExtraLabel\" style=\"margin-bottom:6px;\">Off extra (kPa)</div>
+            <input id=\"dbExhPlanOffExtra\" type=\"number\" min=\"0\" step=\"0.01\" style=\"padding:8px 10px; border-radius:8px; width:160px; margin-bottom:10px;\" />
             <div style=\"display:flex; gap:8px; justify-content:flex-end;\">
               <button type=\"button\" id=\"dbExhPlanSaveBtn\">Save plan</button>
               <button type=\"button\" id=\"dbExhPlanCancelBtn\">Cancel</button>
@@ -4374,6 +4385,7 @@ def dashboard_page(request: Request):
               minVpd: 'Min VPD',
               minShort: 'min',
               hysteresis: 'Hysteresis (kPa)',
+              offExtra: 'Off extra (kPa)',
               leafOffset: 'Leaf offset',
               irrigationCard: 'Irrigation',
               irNextRun: 'Next',
@@ -4494,6 +4506,7 @@ def dashboard_page(request: Request):
               minVpd: 'Min. VPD',
               minShort: 'min',
               hysteresis: 'Hysterese (kPa)',
+              offExtra: 'Buffer fürs Ausschaltautomatic (kPa)',
               leafOffset: 'Blatt-Offset',
               irrigationCard: 'Bewässerung',
               irNextRun: 'Nächste',
@@ -4641,6 +4654,7 @@ def dashboard_page(request: Request):
             txt('dbExhPlanEnabledLabel', tr('active'));
             txt('dbExhPlanMinVpdLabel', tr('minVpd'));
             txt('dbExhPlanHystLabel', tr('hysteresis'));
+            txt('dbExhPlanOffExtraLabel', tr('offExtra'));
             txt('dbExhPlanSaveBtn', tr('savePlan'));
             txt('dbExhPlanCancelBtn', tr('cancel'));
             const irActiveBadge = document.getElementById('irActiveBadge');
@@ -5122,7 +5136,8 @@ def dashboard_page(request: Request):
             const enabledEl = document.getElementById('dbExhPlanEnabled');
             const minVpdEl = document.getElementById('dbExhPlanMinVpd');
             const hystEl = document.getElementById('dbExhPlanHyst');
-            if (!modal || !enabledEl || !minVpdEl || !hystEl || !currentTentId) return;
+            const offExtraEl = document.getElementById('dbExhPlanOffExtra');
+            if (!modal || !enabledEl || !minVpdEl || !hystEl || !offExtraEl || !currentTentId) return;
 
             if (title) title.textContent = `#${currentTentId}`;
             if (msg) msg.textContent = '';
@@ -5135,10 +5150,12 @@ def dashboard_page(request: Request):
               enabledEl.checked = !!p.enabled;
               minVpdEl.value = Number(p.min_vpd_kpa || 0.6).toFixed(2);
               hystEl.value = Number(p.hysteresis_kpa ?? 0.05).toFixed(2);
+              offExtraEl.value = Number(p.off_extra_kpa ?? 0.05).toFixed(2);
             } catch {
               enabledEl.checked = false;
               minVpdEl.value = '0.60';
               hystEl.value = '0.05';
+              offExtraEl.value = '0.05';
               if (msg) msg.textContent = tr('loadFailed');
             }
           }
@@ -5148,12 +5165,14 @@ def dashboard_page(request: Request):
             const enabledEl = document.getElementById('dbExhPlanEnabled');
             const minVpdEl = document.getElementById('dbExhPlanMinVpd');
             const hystEl = document.getElementById('dbExhPlanHyst');
-            if (!currentTentId || !enabledEl || !minVpdEl || !hystEl) return;
+            const offExtraEl = document.getElementById('dbExhPlanOffExtra');
+            if (!currentTentId || !enabledEl || !minVpdEl || !hystEl || !offExtraEl) return;
 
             const payload = {
               enabled: !!enabledEl.checked,
               min_vpd_kpa: Math.max(0.1, Number(minVpdEl.value || 0.6)),
               hysteresis_kpa: Math.max(0, Number(hystEl.value || 0.05)),
+              off_extra_kpa: Math.max(0, Number(offExtraEl.value || 0.05)),
             };
 
             try {
