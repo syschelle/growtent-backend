@@ -2,6 +2,22 @@
 
 All entries are maintained in English only.
 
+## v0.202
+
+### API history endpoint enable/disable in Setup
+- Added toggle in API card to enable/disable `/api/history` endpoint.
+- Added dedicated save button in API card.
+- `/api/history` now returns `403` when API access is disabled.
+- Stored flag in auth config (`history_api_enabled`) and included in backup export/import.
+
+## v0.201
+
+### API history password removed
+- Removed API history password input from Setup.
+- Renamed API card labels to requested wording (`API-Zugriff`, `Passwort` no longer shown).
+- Updated all API history examples to omit password parameter.
+- `/api/history` now uses only `deviceId` and optional `hours`.
+
 ## v0.200
 
 ### Setup API card labeling and save action

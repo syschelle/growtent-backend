@@ -29,7 +29,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.200"
+APP_VERSION = "v0.202"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -298,10 +298,10 @@ def get_conn():
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password FROM app_auth_config WHERE id=1")
+            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled FROM app_auth_config WHERE id=1")
             row = cur.fetchone()
             if not row:
-                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": ""}
+                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True}
             return {
                 "enabled": bool(row[0]),
                 "username": row[1],
@@ -317,6 +317,7 @@ def load_auth_config():
                 "pushover_app_token": row[11] or "",
                 "pushover_user_key": row[12] or "",
                 "gromate_api_password": row[13] or "",
+                "history_api_enabled": bool(row[14]) if row[14] is not None else True,
             }
 
 
@@ -437,6 +438,7 @@ def init_db():
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_app_token TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_user_key TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
+            cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS history_api_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tent_state_tent_time ON tent_state(tent_id, captured_at DESC);")
             cur.execute(
                 """
@@ -1041,6 +1043,7 @@ def get_auth_config():
         "pushover_app_token": cfg.get("pushover_app_token") or "",
         "pushover_user_key": cfg.get("pushover_user_key") or "",
         "gromate_api_password": cfg.get("gromate_api_password") or "",
+        "history_api_enabled": bool(cfg.get("history_api_enabled", True)),
         "otpauth_url": otpauth_url,
         "qr_png_url": qr_png_url,
     }
@@ -1064,6 +1067,7 @@ class AuthConfigPayload(BaseModel):
     pushover_app_token: str | None = None
     pushover_user_key: str | None = None
     gromate_api_password: str | None = None
+    history_api_enabled: bool | None = None
 
 
 class TwoFAVerifyPayload(BaseModel):
@@ -1091,8 +1095,8 @@ def set_auth_config(payload: AuthConfigPayload):
     password = payload.password
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password FROM app_auth_config WHERE id=1")
-            row = cur.fetchone() or (None, None, False, False, None, None, None, "", "", "", "")
+            cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled FROM app_auth_config WHERE id=1")
+            row = cur.fetchone() or (None, None, False, False, None, None, None, "", "", "", "", True)
             current_hash = row[1]
             is_twofa_enabled = bool(row[2])
             current_guest_enabled = bool(row[3])
@@ -1101,6 +1105,7 @@ def set_auth_config(payload: AuthConfigPayload):
             current_pushover_app_token = (row[8] or "")
             current_pushover_user_key = (row[9] or "")
             current_gromate_api_password = (row[10] or "")
+            current_history_api_enabled = bool(row[11]) if row[11] is not None else True
             want_twofa = is_twofa_enabled if payload.twofa_enabled is None else as_bool(payload.twofa_enabled)
 
             if enabled and not username:
@@ -1127,6 +1132,7 @@ def set_auth_config(payload: AuthConfigPayload):
             pushover_app_token = current_pushover_app_token if payload.pushover_app_token is None else str(payload.pushover_app_token or "").strip()
             pushover_user_key = current_pushover_user_key if payload.pushover_user_key is None else str(payload.pushover_user_key or "").strip()
             gromate_api_password = current_gromate_api_password if payload.gromate_api_password is None else str(payload.gromate_api_password or "").strip()
+            history_api_enabled = current_history_api_enabled if payload.history_api_enabled is None else as_bool(payload.history_api_enabled)
             if guest_enabled:
                 if not guest_username:
                     raise HTTPException(status_code=400, detail="guest username required when guest mode is enabled")
@@ -1144,8 +1150,8 @@ def set_auth_config(payload: AuthConfigPayload):
             # Persist base auth settings first.
             cur.execute(
                 """
-                INSERT INTO app_auth_config(id, enabled, username, password_hash, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, updated_at)
-                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO app_auth_config(id, enabled, username, password_hash, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, updated_at)
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (id)
                 DO UPDATE SET enabled=EXCLUDED.enabled, username=EXCLUDED.username, password_hash=EXCLUDED.password_hash,
                               guest_enabled=EXCLUDED.guest_enabled, guest_username=EXCLUDED.guest_username,
@@ -1154,9 +1160,10 @@ def set_auth_config(payload: AuthConfigPayload):
                               pushover_app_token=EXCLUDED.pushover_app_token,
                               pushover_user_key=EXCLUDED.pushover_user_key,
                               gromate_api_password=EXCLUDED.gromate_api_password,
+                              history_api_enabled=EXCLUDED.history_api_enabled,
                               updated_at=NOW()
                 """,
-                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None, gromate_api_password or None),
+                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None, gromate_api_password or None, history_api_enabled),
             )
 
             # Explicit 2FA disable request
@@ -1211,6 +1218,7 @@ def set_auth_config(payload: AuthConfigPayload):
         "pushover_app_token": cfg.get("pushover_app_token") or "",
         "pushover_user_key": cfg.get("pushover_user_key") or "",
         "gromate_api_password": cfg.get("gromate_api_password") or "",
+        "history_api_enabled": bool(cfg.get("history_api_enabled", True)),
         "otpauth_url": None,
         "qr_png_url": None,
         "recovery_codes": [],
@@ -1355,7 +1363,7 @@ def export_config_backup():
 
             cur.execute(
                 """
-                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, updated_at
+                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, updated_at
                 FROM app_auth_config
                 WHERE id=1
                 """
@@ -1393,7 +1401,8 @@ def export_config_backup():
             "pushover_app_token": auth_row[7] or "",
             "pushover_user_key": auth_row[8] or "",
             "gromate_api_password": auth_row[9] or "",
-            "updated_at": auth_row[10].isoformat() if auth_row[10] else None,
+            "history_api_enabled": bool(auth_row[10]) if auth_row[10] is not None else True,
+            "updated_at": auth_row[11].isoformat() if auth_row[11] else None,
         }
 
     backup = {
@@ -1471,6 +1480,7 @@ def import_config_backup(payload: dict):
                         pushover_app_token=%s,
                         pushover_user_key=%s,
                         gromate_api_password=%s,
+                        history_api_enabled=%s,
                         updated_at=NOW()
                     WHERE id=1
                     """,
@@ -1485,6 +1495,7 @@ def import_config_backup(payload: dict):
                         (str(auth.get("pushover_app_token")).strip() if auth.get("pushover_app_token") else None),
                         (str(auth.get("pushover_user_key")).strip() if auth.get("pushover_user_key") else None),
                         (str(auth.get("gromate_api_password")).strip() if auth.get("gromate_api_password") else None),
+                        bool(auth.get("history_api_enabled", True)),
                     ),
                 )
 
@@ -1982,16 +1993,14 @@ def _iso_utc_z(ts: str | None):
         return None
 
 
-def api_history_for_device(device_id: str | None, hours: int | None, password: str | None):
+def api_history_for_device(device_id: str | None, hours: int | None):
     if not device_id or not str(device_id).strip():
         LOGGER.warning("/api/history rejected: missing deviceId")
         raise HTTPException(status_code=400, detail="deviceId is required")
 
     cfg = load_auth_config()
-    configured_pw = (cfg.get("gromate_api_password") or GROMATE_API_PASSWORD or "").strip()
-    if not password or not configured_pw or str(password) != configured_pw:
-        LOGGER.warning("/api/history rejected: unauthorized for deviceId=%s", device_id)
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not bool(cfg.get("history_api_enabled", True)):
+        raise HTTPException(status_code=403, detail="API history access disabled")
 
     try:
         range_hours = int(hours) if hours is not None else 12
@@ -2744,11 +2753,13 @@ def setup_page(request: Request):
 
             <div class=\"card\" id=\"apiHistoryCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"apiHistoryTitle\">API Access</strong></div>
-              <div id=\"gromateApiPasswordLabel\" style=\"margin-bottom:6px;\">Password</div>
-              <input id=\"gromateApiPassword\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-bottom:10px;\" />
-              <button type=\"button\" id=\"saveApiHistoryBtn\" style=\"margin-bottom:10px;\">Save API access</button>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
+                <input type=\"checkbox\" id=\"historyApiEnabled\" checked />
+                <span id=\"historyApiEnabledLabel\">Enable /api/history endpoint</span>
+              </label>
+              <button type=\"button\" id=\"saveApiAccessBtn\" style=\"margin-bottom:10px;\">Save API access</button>
               <div id=\"apiHistoryExampleLabel\" class=\"muted\">Example call:</div>
-              <div id=\"apiHistoryExampleValue\" class=\"muted\" style=\"font-family:monospace; word-break:break-all;\">/api/history?deviceId=1&hours=12&password=YOUR_PASSWORD</div>
+              <div id=\"apiHistoryExampleValue\" class=\"muted\" style=\"font-family:monospace; word-break:break-all;\">/api/history?deviceId=1&hours=12</div>
             </div>
 
             <!-- rubricSecurity removed -->
@@ -2849,7 +2860,7 @@ def setup_page(request: Request):
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
-          const gromateApiPasswordEl = document.getElementById('gromateApiPassword');
+          const historyApiEnabledEl = document.getElementById('historyApiEnabled');
           let pending2faToken = '';
           let currentPlanTentId = 0;
 
@@ -2900,7 +2911,7 @@ def setup_page(request: Request):
               rubricDevices: 'Tents',
               pushoverTitle: 'Pushover status notifications',
               apiHistoryTitle: 'API Access',
-              gromateApiPassword: 'Password',
+              historyApiEnabled: 'Enable /api/history endpoint',
               saveApiAccess: 'Save API access',
               apiHistoryExampleLabel: 'Example call:',
               apiHistoryPerTent: 'API History'
@@ -2951,7 +2962,7 @@ def setup_page(request: Request):
               rubricDevices: 'Zelte',
               pushoverTitle: 'Pushover-Statusmeldungen',
               apiHistoryTitle: 'API-Zugriff',
-              gromateApiPassword: 'Passwort',
+              historyApiEnabled: '/api/history-Schnittstelle aktivieren',
               saveApiAccess: 'API-Zugriff speichern',
               apiHistoryExampleLabel: 'Beispielaufruf:',
               apiHistoryPerTent: 'API-History'
@@ -2990,13 +3001,11 @@ def setup_page(request: Request):
             set('pushoverUserKeyLabel', tSetup('pushoverUserKey'));
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
             set('apiHistoryTitle', tSetup('apiHistoryTitle'));
-            set('gromateApiPasswordLabel', tSetup('gromateApiPassword'));
-            set('saveApiHistoryBtn', tSetup('saveApiAccess'));
+            set('historyApiEnabledLabel', tSetup('historyApiEnabled'));
+            set('saveApiAccessBtn', tSetup('saveApiAccess'));
             set('apiHistoryExampleLabel', tSetup('apiHistoryExampleLabel'));
             const ex = document.getElementById('apiHistoryExampleValue');
-            if (ex) ex.textContent = (langSel?.value === 'de')
-              ? '/api/history?deviceId=1&hours=12&password=<API-History-Passwort>'
-              : '/api/history?deviceId=1&hours=12&password=YOUR_PASSWORD';
+            if (ex) ex.textContent = '/api/history?deviceId=1&hours=12';
             set('auth2faEnabledLabel', tSetup('twofa'));
             set('regenRecoveryCodesLabel', tSetup('regenRecovery'));
             set('recoveryTitle', tSetup('recoveryTitle'));
@@ -3132,7 +3141,7 @@ def setup_page(request: Request):
                   <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
                   <span style="opacity:.85">Shelly Main Auth: ${t.shelly_main_user ? 'set' : '-'}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
-                  <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}&hours=12&password=${(langSel?.value === 'de') ? '<API-History-Passwort>' : 'YOUR_PASSWORD'}</span><br>
+                  <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}&hours=12</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">Edit</button>
                   <button data-plan-tent="${t.id}" style="margin-top:6px; margin-left:6px;">${tSetup('irrigationPlan')}</button>
                   <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">Delete</button>
@@ -3249,7 +3258,7 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = cfg.pushover_app_token || '';
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = cfg.pushover_user_key || '';
               if (pushoverDeviceEl) pushoverDeviceEl.value = cfg.pushover_device || '';
-              if (gromateApiPasswordEl) gromateApiPasswordEl.value = cfg.gromate_api_password || '';
+              if (historyApiEnabledEl) historyApiEnabledEl.checked = (cfg.history_api_enabled !== false);
               authUsernameEl.classList.remove('input-missing');
               authPasswordEl?.classList.remove('input-missing');
               if (twofaInfoEl) {
@@ -3399,7 +3408,7 @@ def setup_page(request: Request):
             document.getElementById('saveAuthBtn')?.click();
           });
 
-          document.getElementById('saveApiHistoryBtn')?.addEventListener('click', async () => {
+          document.getElementById('saveApiAccessBtn')?.addEventListener('click', async () => {
             document.getElementById('saveAuthBtn')?.click();
           });
 
@@ -3443,7 +3452,7 @@ def setup_page(request: Request):
                   pushover_app_token: (pushoverAppTokenEl?.value || '').trim(),
                   pushover_user_key: (pushoverUserKeyEl?.value || '').trim(),
                   pushover_device: (pushoverDeviceEl?.value || '').trim(),
-                  gromate_api_password: (gromateApiPasswordEl?.value || '').trim()
+                  history_api_enabled: !!historyApiEnabledEl?.checked
                 })
               });
               const body = await res.json().catch(() => ({}));
@@ -3465,7 +3474,7 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = body?.pushover_app_token || pushoverAppTokenEl.value;
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = body?.pushover_user_key || pushoverUserKeyEl.value;
               if (pushoverDeviceEl) pushoverDeviceEl.value = body?.pushover_device || pushoverDeviceEl.value;
-              if (gromateApiPasswordEl) gromateApiPasswordEl.value = body?.gromate_api_password || gromateApiPasswordEl.value;
+              if (historyApiEnabledEl && typeof body?.history_api_enabled !== 'undefined') historyApiEnabledEl.checked = !!body.history_api_enabled;
               if (regenRecoveryCodesEl) regenRecoveryCodesEl.checked = false;
 
               if (auth2faInfoEl) {
