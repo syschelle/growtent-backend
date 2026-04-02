@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.195
+
+### History axis synchronization
+- Fixed left/right Y-axis range mismatch for Temperature, Humidity, and VPD history charts.
+- Both sides now use identical computed min/max bounds per chart.
+
 ## v0.194
 
 ### Default dashboard history range

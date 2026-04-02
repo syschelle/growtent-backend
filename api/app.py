@@ -27,7 +27,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.194"
+APP_VERSION = "v0.195"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -5559,6 +5559,26 @@ def dashboard_page(request: Request):
             };
           }
 
+          function axisBounds(seriesList, padRatio = 0.08){
+            const vals = [];
+            (seriesList || []).forEach((s) => {
+              (Array.isArray(s) ? s : []).forEach((v) => {
+                const n = Number(v);
+                if (Number.isFinite(n)) vals.push(n);
+              });
+            });
+            if (!vals.length) return { min: undefined, max: undefined };
+            let min = Math.min(...vals);
+            let max = Math.max(...vals);
+            if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: undefined, max: undefined };
+            if (min === max) {
+              const d = Math.max(0.1, Math.abs(min) * 0.05);
+              return { min: min - d, max: max + d };
+            }
+            const pad = (max - min) * padRatio;
+            return { min: min - pad, max: max + pad };
+          }
+
           function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
@@ -5577,6 +5597,7 @@ def dashboard_page(request: Request):
             if (tempCtx) {
               const tTarget = Number.isFinite(targetTempCChart) ? convertTempFromC(targetTempCChart) : null;
               const tempTargetLine = labels.map(() => (Number.isFinite(tTarget) ? Number(tTarget.toFixed(1)) : null));
+              const tempBounds = axisBounds([temp, tempRawSeries, tempTargetLine], 0.08);
               tempChart = new Chart(tempCtx, {
                 type: 'line',
                 data: {
@@ -5594,8 +5615,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', ticks:{ color:'#22d3ee' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', ticks:{ color:'#22d3ee' }, grid:{ drawOnChartArea:false }, title: { display:true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { position:'left', min: tempBounds.min, max: tempBounds.max, ticks:{ color:'#22d3ee' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { position:'right', min: tempBounds.min, max: tempBounds.max, ticks:{ color:'#22d3ee' }, grid:{ drawOnChartArea:false }, title: { display:true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
@@ -5604,6 +5625,7 @@ def dashboard_page(request: Request):
 
             const humCtx = document.getElementById('humChart');
             if (humCtx) {
+              const humBounds = axisBounds([hum, humRawSeries], 0.08);
               humChart = new Chart(humCtx, {
                 type: 'line',
                 data: {
@@ -5620,8 +5642,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', ticks:{ color:'#a78bfa' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', ticks:{ color:'#a78bfa' }, grid:{ drawOnChartArea:false }, title: { display:true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { position:'left', min: humBounds.min, max: humBounds.max, ticks:{ color:'#a78bfa' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { position:'right', min: humBounds.min, max: humBounds.max, ticks:{ color:'#a78bfa' }, grid:{ drawOnChartArea:false }, title: { display:true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
@@ -5631,6 +5653,7 @@ def dashboard_page(request: Request):
             const vpdCtx = document.getElementById('vpdChart');
             if (vpdCtx) {
               const vpdTargetLine = labels.map(() => (Number.isFinite(targetVpdChart) ? Number(targetVpdChart.toFixed(2)) : null));
+              const vpdBounds = axisBounds([vpd, vpdTargetLine], 0.1);
               vpdChart = new Chart(vpdCtx, {
                 type: 'line',
                 data: {
@@ -5647,8 +5670,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', ticks:{ color:'#f59e0b' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', ticks:{ color:'#f59e0b' }, grid:{ drawOnChartArea:false }, title: { display:true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { position:'left', min: vpdBounds.min, max: vpdBounds.max, ticks:{ color:'#f59e0b' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { position:'right', min: vpdBounds.min, max: vpdBounds.max, ticks:{ color:'#f59e0b' }, grid:{ drawOnChartArea:false }, title: { display:true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
