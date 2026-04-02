@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Query
 from fastapi.responses import HTMLResponse
 
 import app as legacy
@@ -52,8 +52,14 @@ def api_export(tent_id: int, range: str = '24h'):
 
 
 @router.get('/api/history')
-def api_history(deviceId: str | None = None):
-    return legacy.api_history_for_device(deviceId)
+def api_history(
+    deviceId: str | None = None,
+    hours: int | None = None,
+    limit: int | None = None,
+    from_ts: str | None = Query(default=None, alias='from'),
+    to: str | None = None,
+):
+    return legacy.api_history_for_device(deviceId, hours=hours, limit=limit, from_ts=from_ts, to_ts=to)
 
 
 @router.get('/config/backup/export')

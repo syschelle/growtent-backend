@@ -2,6 +2,14 @@
 
 All entries are maintained in English only.
 
+## v0.205
+
+### `/api/history` query and metadata upgrade
+- Added optional query parameters: `hours`, `limit`, `from`, `to`.
+- Added root metadata fields: `from`, `to`, `count`, `limit` (with existing `deviceId`, `points`).
+- Ensured `points` are chronologically ascending by `timestamp`.
+- Added JSON error responses in stable format: `{ "error": "..." }`.
+
 ## v0.204
 
 ### API history metadata improvements

@@ -29,7 +29,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.204"
+APP_VERSION = "v0.205"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1993,26 +1993,75 @@ def _iso_utc_z(ts: str | None):
         return None
 
 
-def api_history_for_device(device_id: str | None):
+def api_history_for_device(device_id: str | None, hours: int | None = None, limit: int | None = None, from_ts: str | None = None, to_ts: str | None = None):
+    def _err(status: int, msg: str):
+        return JSONResponse(status_code=status, content={"error": msg})
+
+    def _parse_iso(v: str | None):
+        if not v:
+            return None
+        try:
+            s = str(v).strip()
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
+
     if not device_id or not str(device_id).strip():
         LOGGER.warning("/api/history rejected: missing deviceId")
-        raise HTTPException(status_code=400, detail="deviceId is required")
+        return _err(400, "missing deviceId")
 
     cfg = load_auth_config()
     if not bool(cfg.get("history_api_enabled", True)):
-        raise HTTPException(status_code=403, detail="API history access disabled")
+        return _err(403, "API history access disabled")
 
-    tid = _resolve_tent_id_by_device_id(str(device_id))
+    did = str(device_id).strip()
+    tid = _resolve_tent_id_by_device_id(did)
     if tid is None:
         LOGGER.info("/api/history no matching deviceId=%s", device_id)
-        return {"deviceId": str(device_id), "from": None, "to": None, "count": 0, "limit": 50, "points": []}
+        return _err(404, "device not found")
+
+    from_dt = _parse_iso(from_ts)
+    to_dt = _parse_iso(to_ts)
+    if (from_ts and not from_dt) or (to_ts and not to_dt):
+        return _err(400, "invalid time range")
+    if from_dt and to_dt and from_dt > to_dt:
+        return _err(400, "invalid time range")
+
+    now_utc = datetime.now(timezone.utc)
+    if from_dt is not None:
+        base_start = from_dt
+    elif isinstance(hours, int) and hours > 0:
+        base_start = now_utc - timedelta(hours=max(1, min(hours, 24 * 365 * 5)))
+    else:
+        base_start = now_utc - timedelta(days=365)
 
     try:
-        hist = history_state(tid, minutes=24 * 365 * 60, filter_spikes=0)
-        points = []
-        for p in (hist.get("points") or [])[-50:]:
-            points.append({
-                "timestamp": _iso_utc_z(p.get("t")),
+        minutes = int((now_utc - base_start).total_seconds() // 60) + 5
+    except Exception:
+        minutes = 24 * 60
+    minutes = max(5, min(minutes, 24 * 365 * 5 * 60))
+
+    use_limit = 50
+    if isinstance(limit, int):
+        use_limit = max(1, min(limit, 5000))
+
+    try:
+        hist = history_state(tid, minutes=minutes, filter_spikes=0)
+        all_points = []
+        for p in (hist.get("points") or []):
+            ts = _iso_utc_z(p.get("t"))
+            p_dt = _parse_iso(ts)
+            if from_dt and p_dt and p_dt < from_dt:
+                continue
+            if to_dt and p_dt and p_dt > to_dt:
+                continue
+            all_points.append({
+                "timestamp": ts,
                 "temperature": p.get("temperature"),
                 "humidity": p.get("humidity"),
                 "vpd": p.get("vpd"),
@@ -2025,17 +2074,20 @@ def api_history_for_device(device_id: str | None):
                 "effectiveAlphaTemp": p.get("effectiveAlfaTempC"),
                 "effectiveAlphaHumidity": p.get("effectiveAlfaHumPct"),
             })
+
+        all_points.sort(key=lambda x: x.get("timestamp") or "")
+        points = all_points[-use_limit:]
         points.sort(key=lambda x: x.get("timestamp") or "")
-        from_ts = points[0].get("timestamp") if points else None
-        to_ts = points[-1].get("timestamp") if points else None
+
+        out_from = points[0].get("timestamp") if points else None
+        out_to = points[-1].get("timestamp") if points else None
         count = len(points)
-        LOGGER.info("/api/history ok: deviceId=%s tent_id=%s limit=%s count=%s", device_id, tid, 50, count)
-        return {"deviceId": str(device_id), "from": from_ts, "to": to_ts, "count": count, "limit": 50, "points": points}
-    except HTTPException:
-        raise
+
+        LOGGER.info("/api/history ok: deviceId=%s tent_id=%s limit=%s count=%s", did, tid, use_limit, count)
+        return {"deviceId": did, "from": out_from, "to": out_to, "count": count, "limit": use_limit, "points": points}
     except Exception:
         LOGGER.exception("/api/history failed for deviceId=%s", device_id)
-        raise HTTPException(status_code=500, detail="Failed to read history")
+        return _err(500, "internal error")
 
 
 def export_history_csv(tent_id: int, range_key: str = "24h"):
