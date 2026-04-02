@@ -2,6 +2,44 @@
 
 All entries are maintained in English only.
 
+## v0.200
+
+### Setup API card labeling and save action
+- Renamed `API-History-Zugriff` to `API-Zugriff`.
+- Renamed password label to `Passwort`.
+- Added dedicated `Save API access` button in the API card.
+
+## v0.199
+
+### Setup tents: per-tent API history example
+- Added API history example URL into each tent row in Setup.
+- Uses that tent's id directly (`deviceId=<tent_id>`) for easier handoff.
+- Includes DE/EN translated helper label.
+
+## v0.198
+
+### API history example update
+- Setup example call now uses tent id (`deviceId=1`) instead of a name string.
+
+## v0.197
+
+### Setup UX: API History Password card
+- Renamed label to `API-History-Password`.
+- Moved API history password out of Pushover card into a dedicated card.
+- Added translated example call directly in that card.
+
+## v0.196
+
+### New secure JSON history endpoint
+- Added `GET /api/history` with query params:
+  - `deviceId` (required)
+  - `hours` (optional, default `12`)
+  - `password` (required)
+- Added password validation via env var `GROMATE_API_PASSWORD`.
+- Added device resolution by tent id / tent name / source_url fragment.
+- Added structured UTC ISO8601 (`Z`) output mapping with raw/smoothed/alpha fields.
+- Added API logging for access and errors.
+
 ## v0.194
 
 ### Default dashboard history range
