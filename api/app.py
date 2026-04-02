@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.208"
+APP_VERSION = "v0.209"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -835,16 +835,17 @@ def _try_run_exhaust_vpd_control(tent: dict, payload: dict):
 
     # Hysteresis control:
     # - ON threshold:  VPD < min_vpd
-    # - OFF threshold: VPD >= min_vpd + hysteresis
+    # - OFF threshold: VPD >= min_vpd + hysteresis + 0.05
+    off_threshold = min_vpd + hysteresis + 0.05
     if is_on:
-        should_be_on = cur_vpd < (min_vpd + hysteresis)
+        should_be_on = cur_vpd < off_threshold
     else:
         should_be_on = cur_vpd < min_vpd
 
     if should_be_on != is_on:
         ok = _set_exhaust_shelly_output(payload, should_be_on, tent)
         if not ok:
-            print(f"[exhaust-vpd] tent #{tent.get('id')} direct set failed (vpd={cur_vpd:.2f}, min={min_vpd:.2f}, hyst={hysteresis:.2f}, is_on={is_on}, should_on={should_be_on})")
+            print(f"[exhaust-vpd] tent #{tent.get('id')} direct set failed (vpd={cur_vpd:.2f}, min={min_vpd:.2f}, hyst={hysteresis:.2f}, off={off_threshold:.2f}, is_on={is_on}, should_on={should_be_on})")
             return
 
     with get_conn() as conn:

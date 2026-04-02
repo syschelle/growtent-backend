@@ -2,6 +2,15 @@
 
 All entries are maintained in English only.
 
+## v0.209
+
+### Exhaust min-VPD OFF threshold tuning
+- OFF threshold for min-VPD monitoring changed to:
+  `min_vpd_kpa + hysteresis_kpa + 0.05`.
+- ON threshold remains:
+  `min_vpd_kpa`.
+- Helps reduce VPD overshoot without using a large fixed +0.5 offset.
+
 ## v0.208
 
 ### Exhaust VPD disable behavior
