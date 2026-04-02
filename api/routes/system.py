@@ -51,6 +51,11 @@ def api_export(tent_id: int, range: str = '24h'):
     return legacy.export_history_csv(tent_id, range)
 
 
+@router.get('/api/history')
+def api_history(deviceId: str | None = None, hours: int = 12, password: str | None = None):
+    return legacy.api_history_for_device(deviceId, hours, password)
+
+
 @router.get('/config/backup/export')
 def config_backup_export():
     return legacy.export_config_backup()

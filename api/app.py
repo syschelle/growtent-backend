@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 import re
 import math
+import logging
 from datetime import datetime, timezone, date, timedelta
 from urllib.parse import quote_plus, urlsplit
 
@@ -27,7 +28,8 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
-APP_VERSION = "v0.195"
+GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
+APP_VERSION = "v0.200"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -38,6 +40,7 @@ SESSION_TTL_SECONDS = 60 * 60 * 12
 EMA_ALPHA = float(os.getenv("EMA_ALPHA", "0.3"))
 EMA_STATE: dict[int, dict] = {}
 SENSOR_INIT: dict[int, bool] = {}
+LOGGER = logging.getLogger("growtent.api")
 
 TEMP_MIN_C = float(os.getenv("SENSOR_TEMP_MIN_C", "-20"))
 TEMP_MAX_C = float(os.getenv("SENSOR_TEMP_MAX_C", "80"))
@@ -295,10 +298,10 @@ def get_conn():
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key FROM app_auth_config WHERE id=1")
+            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password FROM app_auth_config WHERE id=1")
             row = cur.fetchone()
             if not row:
-                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": ""}
+                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": ""}
             return {
                 "enabled": bool(row[0]),
                 "username": row[1],
@@ -313,6 +316,7 @@ def load_auth_config():
                 "pushover_device": row[10] or "",
                 "pushover_app_token": row[11] or "",
                 "pushover_user_key": row[12] or "",
+                "gromate_api_password": row[13] or "",
             }
 
 
@@ -338,6 +342,8 @@ def is_valid_session(token: str | None) -> bool:
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     exempt_prefixes = ("/health", "/favicon.svg", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/")
+    if path == "/api/history":
+        return await call_next(request)
     if path.startswith(exempt_prefixes):
         return await call_next(request)
 
@@ -430,6 +436,7 @@ def init_db():
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_device TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_app_token TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_user_key TEXT;")
+            cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tent_state_tent_time ON tent_state(tent_id, captured_at DESC);")
             cur.execute(
                 """
@@ -1033,6 +1040,7 @@ def get_auth_config():
         "pushover_device": cfg.get("pushover_device") or "",
         "pushover_app_token": cfg.get("pushover_app_token") or "",
         "pushover_user_key": cfg.get("pushover_user_key") or "",
+        "gromate_api_password": cfg.get("gromate_api_password") or "",
         "otpauth_url": otpauth_url,
         "qr_png_url": qr_png_url,
     }
@@ -1055,6 +1063,7 @@ class AuthConfigPayload(BaseModel):
     pushover_device: str | None = None
     pushover_app_token: str | None = None
     pushover_user_key: str | None = None
+    gromate_api_password: str | None = None
 
 
 class TwoFAVerifyPayload(BaseModel):
@@ -1082,8 +1091,8 @@ def set_auth_config(payload: AuthConfigPayload):
     password = payload.password
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key FROM app_auth_config WHERE id=1")
-            row = cur.fetchone() or (None, None, False, False, None, None, None, "", "", "")
+            cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password FROM app_auth_config WHERE id=1")
+            row = cur.fetchone() or (None, None, False, False, None, None, None, "", "", "", "")
             current_hash = row[1]
             is_twofa_enabled = bool(row[2])
             current_guest_enabled = bool(row[3])
@@ -1091,6 +1100,7 @@ def set_auth_config(payload: AuthConfigPayload):
             current_pushover_device = (row[7] or "")
             current_pushover_app_token = (row[8] or "")
             current_pushover_user_key = (row[9] or "")
+            current_gromate_api_password = (row[10] or "")
             want_twofa = is_twofa_enabled if payload.twofa_enabled is None else as_bool(payload.twofa_enabled)
 
             if enabled and not username:
@@ -1116,6 +1126,7 @@ def set_auth_config(payload: AuthConfigPayload):
             pushover_device = current_pushover_device if payload.pushover_device is None else str(payload.pushover_device or "").strip()
             pushover_app_token = current_pushover_app_token if payload.pushover_app_token is None else str(payload.pushover_app_token or "").strip()
             pushover_user_key = current_pushover_user_key if payload.pushover_user_key is None else str(payload.pushover_user_key or "").strip()
+            gromate_api_password = current_gromate_api_password if payload.gromate_api_password is None else str(payload.gromate_api_password or "").strip()
             if guest_enabled:
                 if not guest_username:
                     raise HTTPException(status_code=400, detail="guest username required when guest mode is enabled")
@@ -1133,8 +1144,8 @@ def set_auth_config(payload: AuthConfigPayload):
             # Persist base auth settings first.
             cur.execute(
                 """
-                INSERT INTO app_auth_config(id, enabled, username, password_hash, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, updated_at)
-                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO app_auth_config(id, enabled, username, password_hash, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, updated_at)
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (id)
                 DO UPDATE SET enabled=EXCLUDED.enabled, username=EXCLUDED.username, password_hash=EXCLUDED.password_hash,
                               guest_enabled=EXCLUDED.guest_enabled, guest_username=EXCLUDED.guest_username,
@@ -1142,9 +1153,10 @@ def set_auth_config(payload: AuthConfigPayload):
                               pushover_device=EXCLUDED.pushover_device,
                               pushover_app_token=EXCLUDED.pushover_app_token,
                               pushover_user_key=EXCLUDED.pushover_user_key,
+                              gromate_api_password=EXCLUDED.gromate_api_password,
                               updated_at=NOW()
                 """,
-                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None),
+                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None, gromate_api_password or None),
             )
 
             # Explicit 2FA disable request
@@ -1198,6 +1210,7 @@ def set_auth_config(payload: AuthConfigPayload):
         "pushover_device": cfg.get("pushover_device") or "",
         "pushover_app_token": cfg.get("pushover_app_token") or "",
         "pushover_user_key": cfg.get("pushover_user_key") or "",
+        "gromate_api_password": cfg.get("gromate_api_password") or "",
         "otpauth_url": None,
         "qr_png_url": None,
         "recovery_codes": [],
@@ -1342,7 +1355,7 @@ def export_config_backup():
 
             cur.execute(
                 """
-                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, updated_at
+                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, updated_at
                 FROM app_auth_config
                 WHERE id=1
                 """
@@ -1379,7 +1392,8 @@ def export_config_backup():
             "pushover_device": auth_row[6] or "",
             "pushover_app_token": auth_row[7] or "",
             "pushover_user_key": auth_row[8] or "",
-            "updated_at": auth_row[9].isoformat() if auth_row[9] else None,
+            "gromate_api_password": auth_row[9] or "",
+            "updated_at": auth_row[10].isoformat() if auth_row[10] else None,
         }
 
     backup = {
@@ -1456,6 +1470,7 @@ def import_config_backup(payload: dict):
                         pushover_device=%s,
                         pushover_app_token=%s,
                         pushover_user_key=%s,
+                        gromate_api_password=%s,
                         updated_at=NOW()
                     WHERE id=1
                     """,
@@ -1469,6 +1484,7 @@ def import_config_backup(payload: dict):
                         (str(auth.get("pushover_device")).strip() if auth.get("pushover_device") else None),
                         (str(auth.get("pushover_app_token")).strip() if auth.get("pushover_app_token") else None),
                         (str(auth.get("pushover_user_key")).strip() if auth.get("pushover_user_key") else None),
+                        (str(auth.get("gromate_api_password")).strip() if auth.get("gromate_api_password") else None),
                     ),
                 )
 
@@ -1925,6 +1941,94 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
         p["extTemp"] = ext_f[i]
 
     return {"tent_id": tent_id, "minutes": minutes, "points": points, "filter_spikes": bool(filter_spikes)}
+
+
+def _resolve_tent_id_by_device_id(device_id: str) -> int | None:
+    did = (device_id or "").strip()
+    if not did:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, source_url
+                FROM tents
+                ORDER BY id
+                """
+            )
+            rows = cur.fetchall()
+    for tid, name, source_url in rows:
+        if did == str(tid):
+            return int(tid)
+        if (name or "").strip() == did:
+            return int(tid)
+        if did and did in (source_url or ""):
+            return int(tid)
+    return None
+
+
+def _iso_utc_z(ts: str | None):
+    if not ts:
+        return None
+    try:
+        s = str(ts).strip()
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return None
+
+
+def api_history_for_device(device_id: str | None, hours: int | None, password: str | None):
+    if not device_id or not str(device_id).strip():
+        LOGGER.warning("/api/history rejected: missing deviceId")
+        raise HTTPException(status_code=400, detail="deviceId is required")
+
+    cfg = load_auth_config()
+    configured_pw = (cfg.get("gromate_api_password") or GROMATE_API_PASSWORD or "").strip()
+    if not password or not configured_pw or str(password) != configured_pw:
+        LOGGER.warning("/api/history rejected: unauthorized for deviceId=%s", device_id)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        range_hours = int(hours) if hours is not None else 12
+    except Exception:
+        range_hours = 12
+    range_hours = max(1, min(range_hours, 168))
+
+    tid = _resolve_tent_id_by_device_id(str(device_id))
+    if tid is None:
+        LOGGER.info("/api/history no matching deviceId=%s", device_id)
+        return {"deviceId": str(device_id), "rangeHours": range_hours, "points": []}
+
+    try:
+        hist = history_state(tid, minutes=range_hours * 60, filter_spikes=0)
+        points = []
+        for p in (hist.get("points") or []):
+            points.append({
+                "timestamp": _iso_utc_z(p.get("t")),
+                "temperature": p.get("temperature"),
+                "humidity": p.get("humidity"),
+                "vpd": p.get("vpd"),
+                "temperature_raw": p.get("temperature_raw"),
+                "humidity_raw": p.get("humidity_raw"),
+                "vpd_raw": p.get("vpd_raw"),
+                "temperature_smoothed": p.get("temperature_smoothed"),
+                "humidity_smoothed": p.get("humidity_smoothed"),
+                "vpd_smoothed": p.get("vpd_smoothed"),
+                "effectiveAlphaTemp": p.get("effectiveAlfaTempC"),
+                "effectiveAlphaHumidity": p.get("effectiveAlfaHumPct"),
+            })
+        LOGGER.info("/api/history ok: deviceId=%s tent_id=%s hours=%s count=%s", device_id, tid, range_hours, len(points))
+        return {"deviceId": str(device_id), "rangeHours": range_hours, "points": points}
+    except HTTPException:
+        raise
+    except Exception:
+        LOGGER.exception("/api/history failed for deviceId=%s", device_id)
+        raise HTTPException(status_code=500, detail="Failed to read history")
 
 
 def export_history_csv(tent_id: int, range_key: str = "24h"):
@@ -2638,6 +2742,15 @@ def setup_page(request: Request):
               <div class=\"muted\">Status messages for online/offline transitions from poller.</div>
             </div>
 
+            <div class=\"card\" id=\"apiHistoryCard\" style=\"margin-bottom:12px; max-width:540px;\">
+              <div style=\"margin-bottom:8px;\"><strong id=\"apiHistoryTitle\">API Access</strong></div>
+              <div id=\"gromateApiPasswordLabel\" style=\"margin-bottom:6px;\">Password</div>
+              <input id=\"gromateApiPassword\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-bottom:10px;\" />
+              <button type=\"button\" id=\"saveApiHistoryBtn\" style=\"margin-bottom:10px;\">Save API access</button>
+              <div id=\"apiHistoryExampleLabel\" class=\"muted\">Example call:</div>
+              <div id=\"apiHistoryExampleValue\" class=\"muted\" style=\"font-family:monospace; word-break:break-all;\">/api/history?deviceId=1&hours=12&password=YOUR_PASSWORD</div>
+            </div>
+
             <!-- rubricSecurity removed -->
             <div class=\"card\" id=\"twofaCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong>2FA (TOTP)</strong></div>
@@ -2736,6 +2849,7 @@ def setup_page(request: Request):
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
+          const gromateApiPasswordEl = document.getElementById('gromateApiPassword');
           let pending2faToken = '';
           let currentPlanTentId = 0;
 
@@ -2760,6 +2874,7 @@ def setup_page(request: Request):
               pushoverAppToken: 'Pushover app token',
               pushoverUserKey: 'Pushover user key',
               pushoverDevice: 'Pushover device (optional)',
+              gromateApiPassword: 'API-History-Password',
               twofa: 'Enable 2FA (TOTP)',
               regenRecovery: 'Regenerate recovery codes',
               recoveryTitle: 'Backup and Restore',
@@ -2783,7 +2898,12 @@ def setup_page(request: Request):
               rubricStatus: 'Status notifications',
               rubricBackup: 'Backup',
               rubricDevices: 'Tents',
-              pushoverTitle: 'Pushover status notifications'
+              pushoverTitle: 'Pushover status notifications',
+              apiHistoryTitle: 'API Access',
+              gromateApiPassword: 'Password',
+              saveApiAccess: 'Save API access',
+              apiHistoryExampleLabel: 'Example call:',
+              apiHistoryPerTent: 'API History'
             },
             de: {
               nav: 'Navigation',
@@ -2805,6 +2925,7 @@ def setup_page(request: Request):
               pushoverAppToken: 'Pushover App-Token',
               pushoverUserKey: 'Pushover User-Key',
               pushoverDevice: 'Pushover-Gerät (optional)',
+              gromateApiPassword: 'Passwort für Device-History-API',
               twofa: '2FA (TOTP) aktivieren',
               regenRecovery: 'Recovery-Codes neu erzeugen',
               recoveryTitle: 'Backup und Restore',
@@ -2828,7 +2949,12 @@ def setup_page(request: Request):
               rubricStatus: 'Statusmeldungen',
               rubricBackup: 'Backup',
               rubricDevices: 'Zelte',
-              pushoverTitle: 'Pushover-Statusmeldungen'
+              pushoverTitle: 'Pushover-Statusmeldungen',
+              apiHistoryTitle: 'API-Zugriff',
+              gromateApiPassword: 'Passwort',
+              saveApiAccess: 'API-Zugriff speichern',
+              apiHistoryExampleLabel: 'Beispielaufruf:',
+              apiHistoryPerTent: 'API-History'
             }
           };
 
@@ -2863,6 +2989,14 @@ def setup_page(request: Request):
             set('pushoverAppTokenLabel', tSetup('pushoverAppToken'));
             set('pushoverUserKeyLabel', tSetup('pushoverUserKey'));
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
+            set('apiHistoryTitle', tSetup('apiHistoryTitle'));
+            set('gromateApiPasswordLabel', tSetup('gromateApiPassword'));
+            set('saveApiHistoryBtn', tSetup('saveApiAccess'));
+            set('apiHistoryExampleLabel', tSetup('apiHistoryExampleLabel'));
+            const ex = document.getElementById('apiHistoryExampleValue');
+            if (ex) ex.textContent = (langSel?.value === 'de')
+              ? '/api/history?deviceId=1&hours=12&password=<API-History-Passwort>'
+              : '/api/history?deviceId=1&hours=12&password=YOUR_PASSWORD';
             set('auth2faEnabledLabel', tSetup('twofa'));
             set('regenRecoveryCodesLabel', tSetup('regenRecovery'));
             set('recoveryTitle', tSetup('recoveryTitle'));
@@ -2998,6 +3132,7 @@ def setup_page(request: Request):
                   <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
                   <span style="opacity:.85">Shelly Main Auth: ${t.shelly_main_user ? 'set' : '-'}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
+                  <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}&hours=12&password=${(langSel?.value === 'de') ? '<API-History-Passwort>' : 'YOUR_PASSWORD'}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">Edit</button>
                   <button data-plan-tent="${t.id}" style="margin-top:6px; margin-left:6px;">${tSetup('irrigationPlan')}</button>
                   <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">Delete</button>
@@ -3114,6 +3249,7 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = cfg.pushover_app_token || '';
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = cfg.pushover_user_key || '';
               if (pushoverDeviceEl) pushoverDeviceEl.value = cfg.pushover_device || '';
+              if (gromateApiPasswordEl) gromateApiPasswordEl.value = cfg.gromate_api_password || '';
               authUsernameEl.classList.remove('input-missing');
               authPasswordEl?.classList.remove('input-missing');
               if (twofaInfoEl) {
@@ -3263,6 +3399,10 @@ def setup_page(request: Request):
             document.getElementById('saveAuthBtn')?.click();
           });
 
+          document.getElementById('saveApiHistoryBtn')?.addEventListener('click', async () => {
+            document.getElementById('saveAuthBtn')?.click();
+          });
+
           document.getElementById('saveAuthBtn')?.addEventListener('click', async () => {
             if (!authEnabledEl || !authUsernameEl || !authPasswordEl) return;
 
@@ -3302,7 +3442,8 @@ def setup_page(request: Request):
                   guest_expires_at: guestExpiresIso,
                   pushover_app_token: (pushoverAppTokenEl?.value || '').trim(),
                   pushover_user_key: (pushoverUserKeyEl?.value || '').trim(),
-                  pushover_device: (pushoverDeviceEl?.value || '').trim()
+                  pushover_device: (pushoverDeviceEl?.value || '').trim(),
+                  gromate_api_password: (gromateApiPasswordEl?.value || '').trim()
                 })
               });
               const body = await res.json().catch(() => ({}));
@@ -3324,6 +3465,7 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = body?.pushover_app_token || pushoverAppTokenEl.value;
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = body?.pushover_user_key || pushoverUserKeyEl.value;
               if (pushoverDeviceEl) pushoverDeviceEl.value = body?.pushover_device || pushoverDeviceEl.value;
+              if (gromateApiPasswordEl) gromateApiPasswordEl.value = body?.gromate_api_password || gromateApiPasswordEl.value;
               if (regenRecoveryCodesEl) regenRecoveryCodesEl.checked = false;
 
               if (auth2faInfoEl) {
@@ -5559,26 +5701,6 @@ def dashboard_page(request: Request):
             };
           }
 
-          function axisBounds(seriesList, padRatio = 0.08){
-            const vals = [];
-            (seriesList || []).forEach((s) => {
-              (Array.isArray(s) ? s : []).forEach((v) => {
-                const n = Number(v);
-                if (Number.isFinite(n)) vals.push(n);
-              });
-            });
-            if (!vals.length) return { min: undefined, max: undefined };
-            let min = Math.min(...vals);
-            let max = Math.max(...vals);
-            if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: undefined, max: undefined };
-            if (min === max) {
-              const d = Math.max(0.1, Math.abs(min) * 0.05);
-              return { min: min - d, max: max + d };
-            }
-            const pad = (max - min) * padRatio;
-            return { min: min - pad, max: max + pad };
-          }
-
           function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
@@ -5597,7 +5719,6 @@ def dashboard_page(request: Request):
             if (tempCtx) {
               const tTarget = Number.isFinite(targetTempCChart) ? convertTempFromC(targetTempCChart) : null;
               const tempTargetLine = labels.map(() => (Number.isFinite(tTarget) ? Number(tTarget.toFixed(1)) : null));
-              const tempBounds = axisBounds([temp, tempRawSeries, tempTargetLine], 0.08);
               tempChart = new Chart(tempCtx, {
                 type: 'line',
                 data: {
@@ -5615,8 +5736,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', min: tempBounds.min, max: tempBounds.max, ticks:{ color:'#22d3ee' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', min: tempBounds.min, max: tempBounds.max, ticks:{ color:'#22d3ee' }, grid:{ drawOnChartArea:false }, title: { display:true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { position:'left', ticks:{ color:'#22d3ee' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { position:'right', ticks:{ color:'#22d3ee' }, grid:{ drawOnChartArea:false }, title: { display:true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
@@ -5625,7 +5746,6 @@ def dashboard_page(request: Request):
 
             const humCtx = document.getElementById('humChart');
             if (humCtx) {
-              const humBounds = axisBounds([hum, humRawSeries], 0.08);
               humChart = new Chart(humCtx, {
                 type: 'line',
                 data: {
@@ -5642,8 +5762,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', min: humBounds.min, max: humBounds.max, ticks:{ color:'#a78bfa' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', min: humBounds.min, max: humBounds.max, ticks:{ color:'#a78bfa' }, grid:{ drawOnChartArea:false }, title: { display:true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { position:'left', ticks:{ color:'#a78bfa' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { position:'right', ticks:{ color:'#a78bfa' }, grid:{ drawOnChartArea:false }, title: { display:true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
@@ -5653,7 +5773,6 @@ def dashboard_page(request: Request):
             const vpdCtx = document.getElementById('vpdChart');
             if (vpdCtx) {
               const vpdTargetLine = labels.map(() => (Number.isFinite(targetVpdChart) ? Number(targetVpdChart.toFixed(2)) : null));
-              const vpdBounds = axisBounds([vpd, vpdTargetLine], 0.1);
               vpdChart = new Chart(vpdCtx, {
                 type: 'line',
                 data: {
@@ -5670,8 +5789,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', min: vpdBounds.min, max: vpdBounds.max, ticks:{ color:'#f59e0b' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', min: vpdBounds.min, max: vpdBounds.max, ticks:{ color:'#f59e0b' }, grid:{ drawOnChartArea:false }, title: { display:true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { position:'left', ticks:{ color:'#f59e0b' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { position:'right', ticks:{ color:'#f59e0b' }, grid:{ drawOnChartArea:false }, title: { display:true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
