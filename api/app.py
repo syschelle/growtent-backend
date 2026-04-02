@@ -29,7 +29,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.203"
+APP_VERSION = "v0.204"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -2005,7 +2005,7 @@ def api_history_for_device(device_id: str | None):
     tid = _resolve_tent_id_by_device_id(str(device_id))
     if tid is None:
         LOGGER.info("/api/history no matching deviceId=%s", device_id)
-        return {"deviceId": str(device_id), "limit": 50, "points": []}
+        return {"deviceId": str(device_id), "from": None, "to": None, "count": 0, "limit": 50, "points": []}
 
     try:
         hist = history_state(tid, minutes=24 * 365 * 60, filter_spikes=0)
@@ -2025,8 +2025,12 @@ def api_history_for_device(device_id: str | None):
                 "effectiveAlphaTemp": p.get("effectiveAlfaTempC"),
                 "effectiveAlphaHumidity": p.get("effectiveAlfaHumPct"),
             })
-        LOGGER.info("/api/history ok: deviceId=%s tent_id=%s limit=%s count=%s", device_id, tid, 50, len(points))
-        return {"deviceId": str(device_id), "limit": 50, "points": points}
+        points.sort(key=lambda x: x.get("timestamp") or "")
+        from_ts = points[0].get("timestamp") if points else None
+        to_ts = points[-1].get("timestamp") if points else None
+        count = len(points)
+        LOGGER.info("/api/history ok: deviceId=%s tent_id=%s limit=%s count=%s", device_id, tid, 50, count)
+        return {"deviceId": str(device_id), "from": from_ts, "to": to_ts, "count": count, "limit": 50, "points": points}
     except HTTPException:
         raise
     except Exception:

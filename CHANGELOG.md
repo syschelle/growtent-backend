@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.204
+
+### API history metadata improvements
+- `/api/history` now includes root metadata: `deviceId`, `from`, `to`, `count`, `limit`, `points`.
+- `points` are returned in chronological ascending order.
+- Empty results now return `from: null`, `to: null`, `count: 0`.
+
 ## v0.203
 
 ### API history response constraints
