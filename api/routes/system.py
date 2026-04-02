@@ -55,11 +55,10 @@ def api_export(tent_id: int, range: str = '24h'):
 def api_history(
     deviceId: str | None = None,
     hours: int | None = None,
-    limit: int | None = None,
     from_ts: str | None = Query(default=None, alias='from'),
     to: str | None = None,
 ):
-    return legacy.api_history_for_device(deviceId, hours=hours, limit=limit, from_ts=from_ts, to_ts=to)
+    return legacy.api_history_for_device(deviceId, hours=hours, limit=50, from_ts=from_ts, to_ts=to)
 
 
 @router.get('/config/backup/export')

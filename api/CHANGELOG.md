@@ -2,6 +2,20 @@
 
 All entries are maintained in English only.
 
+## v0.207
+
+### JSON export opens in browser tab
+- Dashboard JSON export now opens in a new browser tab instead of replacing the current page.
+- `/api/export` response is inline JSON (no attachment download header).
+
+## v0.206
+
+### Auth-scoped history API and JSON export
+- `/api/history` is no longer public bypass; it follows normal auth/session rules.
+- Removed API access setup card (no manual enable/disable toggle anymore).
+- `/api/history` keeps metadata fields and now enforces a fixed `limit` of 50.
+- Dashboard export action switched from CSV export to JSON export (button text and file format).
+
 ## v0.205
 
 ### `/api/history` query and metadata upgrade

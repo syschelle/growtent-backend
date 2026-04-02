@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import io
-import csv
 import json
 import os
 import secrets
@@ -29,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.205"
+APP_VERSION = "v0.207"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -343,8 +342,6 @@ def is_valid_session(token: str | None) -> bool:
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     exempt_prefixes = ("/health", "/favicon.svg", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/")
-    if path == "/api/history":
-        return await call_next(request)
     if path.startswith(exempt_prefixes):
         return await call_next(request)
 
@@ -2015,10 +2012,6 @@ def api_history_for_device(device_id: str | None, hours: int | None = None, limi
         LOGGER.warning("/api/history rejected: missing deviceId")
         return _err(400, "missing deviceId")
 
-    cfg = load_auth_config()
-    if not bool(cfg.get("history_api_enabled", True)):
-        return _err(403, "API history access disabled")
-
     did = str(device_id).strip()
     tid = _resolve_tent_id_by_device_id(did)
     if tid is None:
@@ -2047,8 +2040,6 @@ def api_history_for_device(device_id: str | None, hours: int | None = None, limi
     minutes = max(5, min(minutes, 24 * 365 * 5 * 60))
 
     use_limit = 50
-    if isinstance(limit, int):
-        use_limit = max(1, min(limit, 5000))
 
     try:
         hist = history_state(tid, minutes=minutes, filter_spikes=0)
@@ -2091,148 +2082,35 @@ def api_history_for_device(device_id: str | None, hours: int | None = None, limi
 
 
 def export_history_csv(tent_id: int, range_key: str = "24h"):
-    range_key = (range_key or "24h").strip().lower()
-    minutes = None
-    if range_key in ("24h", "1d", "day"):
-        minutes = 24 * 60
-    elif range_key in ("7d", "7days", "week"):
-        minutes = 7 * 24 * 60
-    elif range_key in ("all", "full"):
-        minutes = None
-    else:
-        try:
-            m = int(range_key)
-            minutes = max(5, m)
-        except Exception:
-            minutes = 24 * 60
+    # Kept route/function name for compatibility; export format is JSON now.
+    hist = history_state(tent_id, minutes=24 * 365 * 60, filter_spikes=0)
+    points = []
+    for p in (hist.get("points") or [])[-50:]:
+        points.append({
+            "timestamp": _iso_utc_z(p.get("t")),
+            "temperature": p.get("temperature"),
+            "humidity": p.get("humidity"),
+            "vpd": p.get("vpd"),
+            "temperature_raw": p.get("temperature_raw"),
+            "humidity_raw": p.get("humidity_raw"),
+            "vpd_raw": p.get("vpd_raw"),
+            "temperature_smoothed": p.get("temperature_smoothed"),
+            "humidity_smoothed": p.get("humidity_smoothed"),
+            "vpd_smoothed": p.get("vpd_smoothed"),
+            "effectiveAlphaTemp": p.get("effectiveAlfaTempC"),
+            "effectiveAlphaHumidity": p.get("effectiveAlfaHumPct"),
+        })
+    points.sort(key=lambda x: x.get("timestamp") or "")
 
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            if minutes is None:
-                cur.execute(
-                    """
-                    SELECT captured_at, payload
-                    FROM tent_state
-                    WHERE tent_id=%s
-                    ORDER BY captured_at ASC
-                    """,
-                    (tent_id,),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT captured_at, payload
-                    FROM tent_state
-                    WHERE tent_id=%s
-                      AND captured_at >= NOW() - (%s || ' minutes')::interval
-                    ORDER BY captured_at ASC
-                    """,
-                    (tent_id, minutes),
-                )
-            rows = cur.fetchall()
-
-    timestamps = []
-    leaf_offsets = []
-    temp_raw = []
-    hum_raw = []
-    vpd_raw = []
-    alpha_temp = []
-    alpha_hum = []
-    payloads_kept = []
-
-    for ts, payload in rows:
-        d = payload or {}
-        leaf = _to_float(d.get("settings.grow.offsetLeafTemperature")) or 0.0
-
-        tr = _to_float(d.get("sensors.cur.temperatureRawC"))
-        hr = _to_float(d.get("sensors.cur.humidityRawPct"))
-        vr = _to_float(d.get("sensors.cur.vpdRawKpa"))
-        if tr is None:
-            tr = _to_float(d.get("sensors.raw.temperatureC"))
-        if hr is None:
-            hr = _to_float(d.get("sensors.raw.humidityPct"))
-        if vr is None:
-            vr = _to_float(d.get("sensors.raw.vpdKpa"))
-        if vr is None:
-            vr = _calc_vpd_kpa(tr, leaf, hr)
-
-        # Ignore invalid startup/noise samples in export pipeline.
-        if not _sensor_values_valid(tr, hr, vr):
-            continue
-
-        timestamps.append(ts.isoformat())
-        leaf_offsets.append(leaf)
-        temp_raw.append(tr)
-        hum_raw.append(hr)
-        vpd_raw.append(vr)
-        alpha_temp.append(_to_float(d.get("sensors.cur.effectiveAlfaTempC")))
-        alpha_hum.append(_to_float(d.get("sensors.cur.effectiveAlfaHumPct")))
-        payloads_kept.append(d)
-
-    # Smoothed channels from source payload (no backend EMA re-smoothing).
-    temp_sm = []
-    hum_sm = []
-    for i in range(len(timestamps)):
-        d = payloads_kept[i] or {}
-        tsm = _to_float(d.get("sensors.smoothed.temperatureC"))
-        hsm = _to_float(d.get("sensors.smoothed.humidityPct"))
-        if tsm is None:
-            tsm = _to_float(d.get("sensors.cur.temperatureC"))
-        if hsm is None:
-            hsm = _to_float(d.get("sensors.cur.humidityPct"))
-        if tsm is None:
-            tsm = temp_raw[i]
-        if hsm is None:
-            hsm = hum_raw[i]
-        temp_sm.append(tsm)
-        hum_sm.append(hsm)
-
-    vpd_sm = []
-    for i in range(len(timestamps)):
-        d = payloads_kept[i] or {}
-        vv = _to_float(d.get("sensors.smoothed.vpdKpa"))
-        if vv is None:
-            vv = _calc_vpd_kpa(temp_sm[i], leaf_offsets[i], hum_sm[i])
-        vpd_sm.append(vv)
-
-    out = io.StringIO()
-    w = csv.writer(out)
-    w.writerow([
-        "timestamp",
-        "temperature",
-        "humidity",
-        "vpd",
-        "temperature_raw",
-        "humidity_raw",
-        "vpd_raw",
-        "temperature_smoothed",
-        "humidity_smoothed",
-        "vpd_smoothed",
-        "effectiveAlfaTempC",
-        "effectiveAlfaHumPct",
-    ])
-    for i in range(len(timestamps)):
-        w.writerow([
-            timestamps[i],
-            temp_sm[i],
-            hum_sm[i],
-            vpd_sm[i],
-            temp_raw[i],
-            hum_raw[i],
-            vpd_raw[i],
-            temp_sm[i],
-            hum_sm[i],
-            vpd_sm[i],
-            alpha_temp[i],
-            alpha_hum[i],
-        ])
-
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"tent_{tent_id}_history_{range_key}_{stamp}.csv"
+    payload = {
+        "tentId": int(tent_id),
+        "count": len(points),
+        "limit": 50,
+        "points": points,
+    }
     return Response(
-        content=out.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json; charset=utf-8",
     )
 
 
@@ -2801,17 +2679,6 @@ def setup_page(request: Request):
               <div class=\"muted\">Status messages for online/offline transitions from poller.</div>
             </div>
 
-            <div class=\"card\" id=\"apiHistoryCard\" style=\"margin-bottom:12px; max-width:540px;\">
-              <div style=\"margin-bottom:8px;\"><strong id=\"apiHistoryTitle\">API Access</strong></div>
-              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
-                <input type=\"checkbox\" id=\"historyApiEnabled\" checked />
-                <span id=\"historyApiEnabledLabel\">Enable /api/history endpoint</span>
-              </label>
-              <button type=\"button\" id=\"saveApiAccessBtn\" style=\"margin-bottom:10px;\">Save API access</button>
-              <div id=\"apiHistoryExampleLabel\" class=\"muted\">Example call:</div>
-              <div id=\"apiHistoryExampleValue\" class=\"muted\" style=\"font-family:monospace; word-break:break-all;\">/api/history?deviceId=1</div>
-            </div>
-
             <!-- rubricSecurity removed -->
             <div class=\"card\" id=\"twofaCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong>2FA (TOTP)</strong></div>
@@ -2910,7 +2777,6 @@ def setup_page(request: Request):
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
-          const historyApiEnabledEl = document.getElementById('historyApiEnabled');
           let pending2faToken = '';
           let currentPlanTentId = 0;
 
@@ -2960,10 +2826,6 @@ def setup_page(request: Request):
               rubricBackup: 'Backup',
               rubricDevices: 'Tents',
               pushoverTitle: 'Pushover status notifications',
-              apiHistoryTitle: 'API Access',
-              historyApiEnabled: 'Enable /api/history endpoint',
-              saveApiAccess: 'Save API access',
-              apiHistoryExampleLabel: 'Example call:',
               apiHistoryPerTent: 'API History'
             },
             de: {
@@ -3011,10 +2873,6 @@ def setup_page(request: Request):
               rubricBackup: 'Backup',
               rubricDevices: 'Zelte',
               pushoverTitle: 'Pushover-Statusmeldungen',
-              apiHistoryTitle: 'API-Zugriff',
-              historyApiEnabled: '/api/history-Schnittstelle aktivieren',
-              saveApiAccess: 'API-Zugriff speichern',
-              apiHistoryExampleLabel: 'Beispielaufruf:',
               apiHistoryPerTent: 'API-History'
             }
           };
@@ -3050,12 +2908,6 @@ def setup_page(request: Request):
             set('pushoverAppTokenLabel', tSetup('pushoverAppToken'));
             set('pushoverUserKeyLabel', tSetup('pushoverUserKey'));
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
-            set('apiHistoryTitle', tSetup('apiHistoryTitle'));
-            set('historyApiEnabledLabel', tSetup('historyApiEnabled'));
-            set('saveApiAccessBtn', tSetup('saveApiAccess'));
-            set('apiHistoryExampleLabel', tSetup('apiHistoryExampleLabel'));
-            const ex = document.getElementById('apiHistoryExampleValue');
-            if (ex) ex.textContent = '/api/history?deviceId=1';
             set('auth2faEnabledLabel', tSetup('twofa'));
             set('regenRecoveryCodesLabel', tSetup('regenRecovery'));
             set('recoveryTitle', tSetup('recoveryTitle'));
@@ -3308,7 +3160,6 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = cfg.pushover_app_token || '';
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = cfg.pushover_user_key || '';
               if (pushoverDeviceEl) pushoverDeviceEl.value = cfg.pushover_device || '';
-              if (historyApiEnabledEl) historyApiEnabledEl.checked = (cfg.history_api_enabled !== false);
               authUsernameEl.classList.remove('input-missing');
               authPasswordEl?.classList.remove('input-missing');
               if (twofaInfoEl) {
@@ -3458,10 +3309,6 @@ def setup_page(request: Request):
             document.getElementById('saveAuthBtn')?.click();
           });
 
-          document.getElementById('saveApiAccessBtn')?.addEventListener('click', async () => {
-            document.getElementById('saveAuthBtn')?.click();
-          });
-
           document.getElementById('saveAuthBtn')?.addEventListener('click', async () => {
             if (!authEnabledEl || !authUsernameEl || !authPasswordEl) return;
 
@@ -3502,7 +3349,6 @@ def setup_page(request: Request):
                   pushover_app_token: (pushoverAppTokenEl?.value || '').trim(),
                   pushover_user_key: (pushoverUserKeyEl?.value || '').trim(),
                   pushover_device: (pushoverDeviceEl?.value || '').trim(),
-                  history_api_enabled: !!historyApiEnabledEl?.checked
                 })
               });
               const body = await res.json().catch(() => ({}));
@@ -3524,7 +3370,6 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = body?.pushover_app_token || pushoverAppTokenEl.value;
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = body?.pushover_user_key || pushoverUserKeyEl.value;
               if (pushoverDeviceEl) pushoverDeviceEl.value = body?.pushover_device || pushoverDeviceEl.value;
-              if (historyApiEnabledEl && typeof body?.history_api_enabled !== 'undefined') historyApiEnabledEl.checked = !!body.history_api_enabled;
               if (regenRecoveryCodesEl) regenRecoveryCodesEl.checked = false;
 
               if (auth2faInfoEl) {
@@ -3980,7 +3825,7 @@ def app_shell_page():
             window.location.href = '/auth/login';
           });
 
-          // CSV export moved to tent window (dashboard title actions).
+          // JSON export moved to tent window (dashboard title actions).
 
           menuBtn?.addEventListener('click', () => {
             sideNav?.classList.toggle('open');
@@ -4229,7 +4074,7 @@ def dashboard_page(request: Request):
           <h1 id=\"titleMain\">GrowTent Dashboard</h1>
           <div class=\"title-actions\">
             <span id=\"uptimeBadge\" class=\"small\" style=\"display:none;\">-</span>
-            <button id=\"exportCsvBtn\" type=\"button\">Export CSV</button>
+            <button id=\"exportCsvBtn\" type=\"button\">Export JSON</button>
             <a id=\"espOpenBtn\" class=\"stream-open-btn\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:none;\">Open ESP</a>
             <a id=\"espStatsBtn\" class=\"stream-open-btn\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:none;\">Open stats</a>
           </div>
@@ -4483,7 +4328,7 @@ def dashboard_page(request: Request):
               extTempHistory: 'Tank Temperature History',
               totalConsumption: 'Total consumption',
               totalConsumptionHistory: 'Total consumption history',
-              exportCsv: 'Export CSV',
+              exportCsv: 'Export JSON',
               consumptionToday: 'Consumption / cost today (0-24)',
               tankLevel: 'Tank level',
               tankDistance: 'Distance',
@@ -4603,7 +4448,7 @@ def dashboard_page(request: Request):
               extTempHistory: 'Wassertank-Temperaturverlauf',
               totalConsumption: 'Gesamtverbrauch',
               totalConsumptionHistory: 'Gesamtverbrauchsverlauf',
-              exportCsv: 'CSV exportieren',
+              exportCsv: 'JSON exportieren',
               consumptionToday: 'Verbrauch / Kosten heute (0-24)',
               tankLevel: 'Tankfüllstand',
               tankDistance: 'Abstand',
@@ -6425,7 +6270,7 @@ def dashboard_page(request: Request):
               if (mins === 10080) rangeKey = '7d';
               if (mins > 10080) rangeKey = 'all';
               const url = `/api/export?tent_id=${encodeURIComponent(String(currentTentId))}&range=${encodeURIComponent(rangeKey)}`;
-              window.location.href = url;
+              window.open(url, '_blank', 'noopener,noreferrer');
             });
           }
 
