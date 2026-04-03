@@ -2746,7 +2746,9 @@ def setup_page(request: Request):
                 </div>
                 <div id=\"irPlanMsg\" style=\"margin-top:10px;\"></div>
               </div>
-            </div>
+    
+
+        </div>
           </main>
         </div>
 
@@ -4277,6 +4279,24 @@ def dashboard_page(request: Request):
             <div id=\"dbExhPlanMsg\" style=\"margin-top:10px;\"></div>
           </div>
         </div>
+        <div id="dbMinVpdInfoModal" style="display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1200; align-items:center; justify-content:center; padding:16px;">
+          <div class="card" style="max-width:520px; width:100%; margin-bottom:0;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+              <strong id="dbMinVpdInfoTitle">min. VPD monitoring ESP</strong>
+              <button type="button" id="dbMinVpdInfoCloseBtn">✕</button>
+            </div>
+            <div id="dbMinVpdInfoTentLabel" class="small" style="margin-bottom:10px;">-</div>
+            <div id="dbMinVpdMonStateLine" style="margin-bottom:6px; display:flex; align-items:center; gap:8px; font-size:1rem;"><span id="dbMinVpdMonStateLabel">minVPDMonitoring:</span><input id="dbMinVpdMonStateChk" type="checkbox" disabled /></div>
+            <div id="dbMinVpdTargetLine" style="margin-bottom:6px;">Target VPD: -</div>
+            <div id="dbMinVpdOffsetLine" style="margin-bottom:6px; font-size:1rem;">Offset: -</div>
+            <div id="dbMinVpdEffectiveLine" style="margin-bottom:6px;">Min. VPD (target - offset): -</div>
+            <div id="dbMinVpdHystLine" style="margin-bottom:10px; font-size:1rem;">Hysterese: -</div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+              <button type="button" id="dbMinVpdInfoOkBtn">OK</button>
+            </div>
+          </div>
+        </div>
+
           </main>
         </div>
 
@@ -4370,6 +4390,10 @@ def dashboard_page(request: Request):
               resetCounter: 'Reset counter',
               confirmResetCounter: 'Really reset energy counters?',
               exhaustVpdPlan: 'min. VPD monitoring',
+              minVpdInfo: 'min. VPD monitoring',
+              minVpdMonLabel: 'minVPDMonitoring',
+              minVpdOffsetLabel: 'Offset',
+              minVpdHystLabel: 'Hysteresis',
               minVpd: 'Min VPD',
               minShort: 'min',
               hysteresis: 'Hysteresis (kPa)',
@@ -4490,6 +4514,10 @@ def dashboard_page(request: Request):
               resetCounter: 'Zähler zurücksetzen',
               confirmResetCounter: 'Energiezähler wirklich zurücksetzen?',
               exhaustVpdPlan: 'min. VPD Überwachung',
+              minVpdInfo: 'min. VPD Überwachung',
+              minVpdMonLabel: 'minVPDMonitoring',
+              minVpdOffsetLabel: 'Offset',
+              minVpdHystLabel: 'Hysterese',
               minVpd: 'Min. VPD',
               minShort: 'min',
               hysteresis: 'Hysterese (kPa)',
@@ -4538,6 +4566,11 @@ def dashboard_page(request: Request):
           let currentIrPlan = null;
           let currentIrLastRunDate = null;
           let currentExhPlan = null;
+          let currentMinVpdMonitoring = null;
+          let currentMinVpdOffset = null;
+          let currentMinVpdTarget = null;
+          let currentMinVpdEffective = null;
+          let currentMinVpdHysteresis = null;
           let isGuestMode = false;
           let viewMode = localStorage.getItem('gt_view_mode') || 'auto';
           let mobileNavExpanded = false;
@@ -4642,18 +4675,23 @@ def dashboard_page(request: Request):
             txt('dbExhPlanHystLabel', tr('hysteresis'));
             txt('dbExhPlanSaveBtn', tr('savePlan'));
             txt('dbExhPlanCancelBtn', tr('cancel'));
+            txt('dbMinVpdInfoTitle', tr('minVpdInfo') + ' ESP');
+            txt('dbMinVpdMonStateLabel', tr('minVpdMonLabel') + ':');
             const irActiveBadge = document.getElementById('irActiveBadge');
             if (irActiveBadge) irActiveBadge.style.display = 'none';
             txt('mainKwhTodayValue', '- kWh / - €');
             const phaseActions = document.getElementById('phaseActions');
             if (phaseActions) {
-              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openExhVpdPlanBtn" type="button">${tr('exhaustVpdPlan')}</button>`;
+              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openExhVpdPlanBtn" type="button">${tr('exhaustVpdPlan')}</button><button id="openMinVpdInfoBtn" type="button">${tr('minVpdInfo')}</button>`;
               document.getElementById('resetEnergyBtn')?.addEventListener('click', async () => {
                 if (!window.confirm(tr('confirmResetCounter'))) return;
                 await resetShellyEnergy();
               });
               document.getElementById('openExhVpdPlanBtn')?.addEventListener('click', async () => {
                 await openDashboardExhPlanModal();
+              });
+              document.getElementById('openMinVpdInfoBtn')?.addEventListener('click', async () => {
+                await openDashboardMinVpdInfoModal();
               });
             }
             txt('tempLastChange', `${tr('lastChange')} -`);
@@ -5175,9 +5213,37 @@ def dashboard_page(request: Request):
           document.getElementById('dbExhPlanCancelBtn')?.addEventListener('click', closeDashboardExhPlanModal);
           document.getElementById('dbExhPlanSaveBtn')?.addEventListener('click', saveDashboardExhPlan);
 
+          function closeDashboardMinVpdInfoModal(){
+            const modal = document.getElementById('dbMinVpdInfoModal');
+            if (modal) modal.style.display = 'none';
+          }
+
+          async function openDashboardMinVpdInfoModal(){
+            const modal = document.getElementById('dbMinVpdInfoModal');
+            if (!modal) return;
+            const tentLabel = document.getElementById('dbMinVpdInfoTentLabel');
+            const monLine = document.getElementById('dbMinVpdMonStateLine');
+            const offsetLine = document.getElementById('dbMinVpdOffsetLine');
+            const targetLine = document.getElementById('dbMinVpdTargetLine');
+            const effLine = document.getElementById('dbMinVpdEffectiveLine');
+            const hystLine = document.getElementById('dbMinVpdHystLine');
+            if (tentLabel) tentLabel.textContent = `#${currentTentId || '-'}`;
+            const monChk = document.getElementById('dbMinVpdMonStateChk');
+            if (monChk) monChk.checked = (currentMinVpdMonitoring === true);
+            if (offsetLine) offsetLine.textContent = `${tr('minVpdOffsetLabel')}: ${Number.isFinite(Number(currentMinVpdOffset)) ? Number(currentMinVpdOffset).toFixed(2) : '-'} kPa`;
+            if (targetLine) targetLine.textContent = `${tr('target')}: ${Number.isFinite(Number(currentMinVpdTarget)) ? Number(currentMinVpdTarget).toFixed(2) : '-'} kPa`;
+            if (effLine) effLine.textContent = `${tr('minVpd')}: ${Number.isFinite(Number(currentMinVpdEffective)) ? Number(currentMinVpdEffective).toFixed(2) : '-'} kPa (${tr('target')} - offset)`;
+            if (hystLine) hystLine.textContent = `${tr('minVpdHystLabel')}: ${Number.isFinite(Number(currentMinVpdHysteresis)) ? Number(currentMinVpdHysteresis).toFixed(2) : '-'} kPa`;
+            modal.style.display = 'flex';
+          }
+
+          document.getElementById('dbMinVpdInfoCloseBtn')?.addEventListener('click', closeDashboardMinVpdInfoModal);
+          document.getElementById('dbMinVpdInfoOkBtn')?.addEventListener('click', closeDashboardMinVpdInfoModal);
+
           async function refreshPlanButtonStates(){
             const irBtn = document.getElementById('openIrPlanBtn');
             const exBtn = document.getElementById('openExhVpdPlanBtn');
+            const minBtn = document.getElementById('openMinVpdInfoBtn');
             const activeStyle = 'linear-gradient(180deg, rgba(34,197,94,.35), rgba(22,163,74,.28))';
             const inactiveStyle = 'linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28))';
             currentIrPlan = null;
@@ -5201,6 +5267,10 @@ def dashboard_page(request: Request):
               if (r.ok) currentExhPlan = j?.plan || null;
               if (exBtn && r.ok) exBtn.style.background = j?.plan?.enabled ? activeStyle : inactiveStyle;
             } catch {}
+
+            if (minBtn) {
+              minBtn.style.background = (currentMinVpdMonitoring === true) ? activeStyle : inactiveStyle;
+            }
           }
 
           async function toggleShelly(deviceKey){
@@ -5828,9 +5898,23 @@ def dashboard_page(request: Request):
             targetVpdChart = Number.isFinite(Number(tgtVpd)) ? Number(tgtVpd) : NaN;
             const leafOffset = firstNum(d, ['settings.grow.offsetLeafTemperature']);
             const leafOffsetTxt = Number.isFinite(Number(leafOffset)) ? `${Number(leafOffset).toFixed(2)}°C` : '-';
-            const minVpdTxt = (currentExhPlan && Number.isFinite(Number(currentExhPlan.min_vpd_kpa)))
-              ? `${Number(currentExhPlan.min_vpd_kpa).toFixed(2)} kPa`
-              : '-';
+
+            const minMonRaw = d['settings.grow.minVPDMonitoring'];
+            currentMinVpdMonitoring = (minMonRaw === true || minMonRaw === 1 || String(minMonRaw).toLowerCase() === 'true');
+            currentMinVpdOffset = firstNum(d, ['settings.grow.minVPD']);
+            currentMinVpdTarget = Number.isFinite(Number(tgtVpd)) ? Number(tgtVpd) : null;
+            currentMinVpdHysteresis = firstNum(d, ['settings.grow.vpdHysteresis']);
+            if (Number.isFinite(Number(currentMinVpdTarget)) && Number.isFinite(Number(currentMinVpdOffset))) {
+              currentMinVpdEffective = Number(currentMinVpdTarget) - Number(currentMinVpdOffset);
+            } else {
+              currentMinVpdEffective = null;
+            }
+
+            const minVpdTxt = Number.isFinite(Number(currentMinVpdEffective))
+              ? `${Number(currentMinVpdEffective).toFixed(2)} kPa`
+              : ((currentExhPlan && Number.isFinite(Number(currentExhPlan.min_vpd_kpa)))
+                ? `${Number(currentExhPlan.min_vpd_kpa).toFixed(2)} kPa`
+                : '-');
             html('vpdTarget', `<span style="display:flex; justify-content:space-between; gap:8px;"><span style="display:flex; flex-direction:column; gap:2px;"><span>${tr('target')}: ${Number.isFinite(Number(tgtVpd)) ? Number(tgtVpd).toFixed(2) : '-'} kPa</span><span>${tr('minShort')}: ${minVpdTxt}</span></span><span>${tr('leafOffset')}: ${leafOffsetTxt}</span></span>`);
             // gauges disabled by request
 
@@ -5880,6 +5964,7 @@ def dashboard_page(request: Request):
             const tankCurrentActions = document.getElementById('tankCurrentActions');
             const irrigationCard = document.getElementById('irrigationCard');
             const exhPlanBtn = document.getElementById('openExhVpdPlanBtn');
+            const minVpdInfoBtn = document.getElementById('openMinVpdInfoBtn');
             rel.innerHTML = '';
             if (relExtra) relExtra.innerHTML = '';
             if (relaysExtraCard) relaysExtraCard.style.display = (c === 8) ? 'block' : 'none';
@@ -5888,6 +5973,12 @@ def dashboard_page(request: Request):
 
             if (irrigationCard) irrigationCard.style.display = (c === 8) ? 'block' : 'none';
             if (exhPlanBtn) exhPlanBtn.style.display = (c === 8) ? 'inline-block' : 'none';
+            if (minVpdInfoBtn) {
+              minVpdInfoBtn.style.display = (c === 8) ? 'inline-block' : 'none';
+              const activeStyle = 'linear-gradient(180deg, rgba(34,197,94,.35), rgba(22,163,74,.28))';
+              const inactiveStyle = 'linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28))';
+              minVpdInfoBtn.style.background = (currentMinVpdMonitoring === true) ? activeStyle : inactiveStyle;
+            }
             if (c === 8) {
               const runsLeft = firstNum(d, ['irrigation.runsLeft']);
               const timeLeft = d['irrigation.timeLeft'];
