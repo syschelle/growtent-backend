@@ -46,6 +46,11 @@ def dashboard_page(request: Request):
     return legacy.dashboard_page(request)
 
 
+@router.get('/grow-guide', response_class=HTMLResponse)
+def grow_guide_page(request: Request):
+    return legacy.grow_guide_page(request)
+
+
 @router.get('/api/export')
 def api_export(tent_id: int, range: str = '24h'):
     return legacy.export_history_csv(tent_id, range)

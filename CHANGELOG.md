@@ -2,6 +2,16 @@
 
 All entries are maintained in English only.
 
+## v0.217
+
+### Grow-Guide + dashboard hint improvements
+- Added a dedicated **Grow-Guide** page and linked it in sidebar navigation (above Setup).
+- Added VPD explanation hints on current VPD and VPD history labels.
+- Added humidity explanation/risk hints on current humidity and humidity history labels.
+- Added temperature explanation hint with VPD interaction on current temperature and temperature history labels.
+- Improved alpha hint readability with larger in-app popover display.
+- Kept routing compatible with modular startup (`main.py` + `routes/system.py`) by exposing `/grow-guide` through system router.
+
 ## v0.216
 
 ### Stability fixes after backend min-VPD removal

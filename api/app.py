@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.216"
+APP_VERSION = "v0.217"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -3679,6 +3679,51 @@ def changelog_page():
     """
 
 
+
+
+@app.get("/grow-guide", response_class=HTMLResponse)
+def grow_guide_page(request: Request):
+    if request.query_params.get("embed") != "1":
+        return RedirectResponse(url="/app?page=grow-guide", status_code=302)
+
+    return """
+    <html>
+      <head>
+        <title>Grow-Guide</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>
+          :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --grid:rgba(148,163,184,.15); }
+          :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --grid:rgba(51,65,85,.18); }
+          body { font-family: Arial, sans-serif; margin:0; background:var(--bg); color:var(--text); }
+          .content { padding:1rem; }
+          .card { background:var(--card); border:1px solid var(--grid); border-radius:10px; padding:12px; margin-bottom:10px; }
+          h1 { margin-top:0; }
+          h2 { margin:.2rem 0 .5rem; color:#93c5fd; }
+          h3 { margin:.3rem 0; }
+          ul { margin:.2rem 0 .7rem 1.1rem; }
+        </style>
+      </head>
+      <body>
+        <script>
+          const theme = localStorage.getItem('gt_theme') || 'dark';
+          document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+        </script>
+        <main class="content">
+          <h1>Grow-Guide</h1>
+
+          <div class="card"><h2>1. Stecklinge / Bewurzelung</h2><h3>Ziel: Wurzeln bilden</h3><p>Temperatur: 22–25 °C<br>Luftfeuchte: 70–85 %<br>VPD: 0.4 – 0.8 kPa<br>Licht: 50–150 PPFD<br>Photoperiode: 18h</p><h3>Typisches Verhalten</h3><ul><li>Blätter hängen → normal</li><li>kaum Wachstum → normal</li><li>plötzlich stabil → Wurzeln da</li></ul></div>
+          <div class="card"><h2>2. Frühe Vegetation (nach dem Anwurzeln)</h2><h3>Ziel: Start Wachstum</h3><p>Temperatur: 22–26 °C<br>Luftfeuchte: 60–75 %<br>VPD: 0.8 – 1.0 kPa<br>Licht: 150–300 PPFD</p><h3>Wichtig</h3><ul><li>nicht übergießen</li><li>Wachstum kommt schubweise</li></ul></div>
+          <div class="card"><h2>3. Vegetationsphase</h2><h3>Ziel: Masse + Struktur</h3><p>Temperatur: 22–28 °C<br>Luftfeuchte: 55–70 %<br>VPD: 0.9 – 1.2 kPa<br>Licht: 300–600 PPFD</p><h3>Wichtig</h3><ul><li>Wasserverbrauch steigt stark</li><li>Training möglich</li></ul></div>
+          <div class="card"><h2>4. Stretch / Blütebeginn</h2><h3>Ziel: Höhenwachstum + Blütenansatz</h3><p>Temperatur: 22–27 °C<br>Luftfeuchte: 50–65 %<br>VPD: 1.0 – 1.3 kPa<br>Licht: 500–800 PPFD</p><h3>Wichtig</h3><ul><li>schnelle Veränderungen</li><li>VPD stabil halten</li></ul></div>
+          <div class="card"><h2>5. Blütephase</h2><h3>Ziel: Blütenaufbau</h3><p>Temperatur: 20–26 °C<br>Luftfeuchte: 40–55 %<br>VPD: 1.2 – 1.5 kPa<br>Licht: 600–1000 PPFD</p><h3>Wichtig</h3><ul><li>Schimmelrisiko beachten</li><li>gute Luftzirkulation</li></ul></div>
+          <div class="card"><h2>6. Späte Blüte</h2><h3>Ziel: Reife / Qualität</h3><p>Temperatur: 20–25 °C<br>Luftfeuchte: 40–50 %<br>VPD: 1.3 – 1.6 kPa<br>Licht: konstant</p></div>
+          <div class="card"><h2>Regel-Logik</h2><p>Das System steuert über VPD.</p><p>Empfohlene Zielstruktur:<br>targetVPD = 0.85–0.95<br>minVPD = target - 0.05 bis 0.08<br>Hysterese: 0.05</p><p>Beispiel in min. VPD Überwachung:<br>target = 0.90<br>min = 0.82<br>Abluft AN &lt; 0.82<br>Abluft AUS &gt; 0.90</p></div>
+          <div class="card"><h2>Wichtigste Prinzipien</h2><ul><li>VPD = Hauptsteuerung</li><li>Temperatur + RH sind nur Mittel zum Zweck</li><li>VPD ist das, was die Pflanze „fühlt“</li><li>Junge Pflanzen = weniger Stress</li><li>lieber zu feucht als zu trocken</li><li>lieber zu wenig Licht als zu viel</li><li>Wurzelphase = unsichtbar</li><li>oberirdisch passiert wenig, unten passiert alles</li></ul></div>
+          <div class="card"><h2>Typische Fehler</h2><ul><li>zu früh zu viel Licht</li><li>zu trockene Luft (VPD > 1.1 bei Stecklingen)</li><li>zu häufig gießen</li><li>zu aggressives Regeln</li></ul></div>
+        </main>
+      </body>
+    </html>
+    """
 @app.get("/app", response_class=HTMLResponse)
 def app_shell_page():
     return """
@@ -3748,6 +3793,7 @@ def app_shell_page():
           <aside class="sidebar">
             <div class="muted" id="navTitle">Navigation</div>
             <div id="tentNav"></div>
+            <a class="navlink" data-page="grow-guide" href="/app?page=grow-guide">Grow-Guide</a>
             <a class="navlink" data-page="setup" href="/app?page=setup">Setup</a>
             <a class="navlink" data-page="changelog" href="/app?page=changelog">About</a>
           </aside>
@@ -3788,6 +3834,7 @@ def app_shell_page():
             if (userRole === 'guest' && page === 'setup') page = 'dashboard';
             if (page === 'setup') src = '/setup?embed=1';
             else if (page === 'changelog') src = '/changelog?embed=1';
+            else if (page === 'grow-guide') src = '/grow-guide?embed=1';
             else if (tent) src = `/dashboard?embed=1&tent=${encodeURIComponent(tent)}`;
             if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
             updateActive();
@@ -4048,6 +4095,21 @@ def dashboard_page(request: Request):
             color:#ef4444; font-weight:700; font-size:1rem;
           }
           .range-hint-error { color:#ef4444; font-weight:400; }
+          .alpha-hint-popover {
+            position: fixed;
+            z-index: 1400;
+            max-width: 460px;
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--grid);
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,.35);
+            padding: 12px 14px;
+            font-size: 17px;
+            line-height: 1.5;
+            white-space: normal;
+            display: none;
+          }
         </style>
       </head>
       <body>
@@ -4125,7 +4187,7 @@ def dashboard_page(request: Request):
         <div class=\"grid\" id=\"currentValuesGrid\">
           <div class=\"card\">
             <div class=\"card-head\">
-              <div class=\"label\"><span>🌡️</span> <span id=\"lblTemp\">Temperature</span><span id=\"tempAlphaLed\" class=\"alpha-led alpha-led-off\"></span></div>
+              <div class=\"label\"><span>🌡️</span> <span id=\"lblTemp\">Temperature</span> <span id=\"tempMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span><span id=\"tempAlphaLed\" class=\"alpha-led alpha-led-off\"></span></div>
               <div class=\"small\" id=\"tempLastChange\">Last change: -</div>
             </div>
             <div class=\"value\" id=\"temp\">-</div>
@@ -4133,10 +4195,10 @@ def dashboard_page(request: Request):
             <div class=\"small\" id=\"tempTarget\">Target: -</div>
             <!-- gauge removed -->
           </div>
-          <div class=\"card\"><div class=\"card-head\"><div class=\"label\"><span>💧</span> <span id=\"lblHum\">Humidity</span><span id=\"humAlphaLed\" class=\"alpha-led alpha-led-off\"></span></div><div class=\"small\" id=\"humLastChange\">Last change: -</div></div><div class=\"value\" id=\"hum\">-</div><div class=\"small\" id=\"humRaw\">Raw: -</div><!-- gauge removed --></div>
+          <div class=\"card\"><div class=\"card-head\"><div class=\"label\"><span>💧</span> <span id=\"lblHum\">Humidity</span> <span id=\"humMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span><span id=\"humAlphaLed\" class=\"alpha-led alpha-led-off\"></span></div><div class=\"small\" id=\"humLastChange\">Last change: -</div></div><div class=\"value\" id=\"hum\">-</div><div class=\"small\" id=\"humRaw\">Raw: -</div><!-- gauge removed --></div>
           <div class=\"card\">
             <div class=\"card-head\">
-              <div class=\"label\"><span>🫧</span> <span id=\"lblVpd\">VPD</span></div>
+              <div class=\"label\"><span>🫧</span> <span id=\"lblVpd\">VPD</span> <span id=\"vpdMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
               <div class=\"small\" id=\"vpdLastChange\">Last change: -</div>
             </div>
             <div class=\"value\" id=\"vpd\">-</div>
@@ -4188,19 +4250,19 @@ def dashboard_page(request: Request):
         </div>
 
         <div class=\"card history-card\">
-          <div class=\"label\" id=\"lblTempHistory\">Temperature History</div>
+          <div class=\"label\" id=\"lblTempHistory\"><span id=\"lblTempHistoryText\">Temperature History</span> <span id=\"tempHistoryMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"tempChart\"></canvas>
           <div id=\"historyOverlayTemp\" class=\"history-overlay\"></div>
         </div>
 
         <div class=\"card history-card\">
-          <div class=\"label\" id=\"lblHumHistory\">Humidity History</div>
+          <div class=\"label\" id=\"lblHumHistory\"><span id=\"lblHumHistoryText\">Humidity History</span> <span id=\"humHistoryMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"humChart\"></canvas>
           <div id=\"historyOverlayHum\" class=\"history-overlay\"></div>
         </div>
 
         <div class=\"card history-card\">
-          <div class=\"label\" id=\"lblVpdHistory\">VPD History</div>
+          <div class=\"label\" id=\"lblVpdHistory\"><span id=\"lblVpdHistoryText\">VPD History</span> <span id=\"vpdHistoryMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"vpdChart\"></canvas>
           <div id=\"historyOverlayVpd\" class=\"history-overlay\"></div>
         </div>
@@ -4222,6 +4284,8 @@ def dashboard_page(request: Request):
           <canvas id=\"mainWChart\"></canvas>
           <div id=\"historyOverlayMainW\" class=\"history-overlay\"></div>
         </div>
+
+        <div id=\"alphaHintPopover\" class=\"alpha-hint-popover\"></div>
 
         <div id=\"dbIrPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1200; align-items:center; justify-content:center; padding:16px;\">
           <div class=\"card\" style=\"max-width:520px; width:100%; margin-bottom:0;\">
@@ -4333,6 +4397,9 @@ def dashboard_page(request: Request):
               vpdHistory: 'VPD History',
               alphaHistory: 'Alpha History',
               alphaHint: 'Adaptive alpha of smoothing: lower α = stronger smoothing (slower), higher α = faster reaction (more sensitive). α Temp applies to temperature smoothing, α Hum to humidity smoothing.',
+              vpdMeaningHint: 'VPD means Vapor Pressure Deficit. It describes the difference between the moisture in the air and the maximum moisture the air could hold. In practice: higher VPD = drier air and stronger transpiration demand; lower VPD = more humid air and lower transpiration demand. VPD is the key climate value because it reflects what the plant actually feels.',
+              humMeaningHint: 'Humidity (RH) is the relative moisture content in the air. It strongly influences transpiration and disease pressure. Risks: if RH is too high for too long (especially in bloom), mold risk increases; if RH is too low for too long, plants dry out and get stress. Strong RH swings also stress plants and indicate unstable control.',
+              tempMeaningHint: 'Temperature defines how much moisture air can hold and therefore directly affects VPD. At the same humidity, higher temperature increases VPD; lower temperature decreases VPD. So temperature and RH must always be considered together: stable temperature helps keep VPD stable and reduces plant stress.',
               extTempHistory: 'Tank Temperature History',
               totalConsumption: 'Total consumption',
               totalConsumptionHistory: 'Total consumption history',
@@ -4456,6 +4523,9 @@ def dashboard_page(request: Request):
               vpdHistory: 'VPD-Verlauf',
               alphaHistory: 'Alpha-Verlauf',
               alphaHint: 'Adaptives Alpha der Glättung: kleineres α = stärkere Glättung (träge), größeres α = schnellere Reaktion (empfindlicher). α Temp gilt für Temperatur-Glättung, α Hum für Luftfeuchte-Glättung.',
+              vpdMeaningHint: 'VPD bedeutet Vapour Pressure Deficit (Dampfdruckdefizit). Es beschreibt die Differenz zwischen der aktuellen Feuchte in der Luft und der maximal möglichen Feuchte. Praktisch: höherer VPD = trockenere Luft und stärkerer Transpirationsdruck; niedrigerer VPD = feuchtere Luft und geringerer Transpirationsdruck. VPD ist der zentrale Klimawert, weil er abbildet, was die Pflanze tatsächlich fühlt.',
+              humMeaningHint: 'Luftfeuchte (RH) ist der relative Feuchteanteil der Luft. Sie beeinflusst Transpiration und Krankheitsdruck stark. Gefahren: Ist RH zu lange zu hoch (besonders in der Blüte), steigt das Schimmelrisiko; ist RH zu lange zu niedrig, trocknen Pflanzen aus und geraten in Stress. Starke RH-Schwankungen stressen zusätzlich und deuten auf instabile Regelung hin.',
+              tempMeaningHint: 'Temperatur bestimmt, wie viel Feuchtigkeit die Luft aufnehmen kann und beeinflusst damit den VPD direkt. Bei gleicher Luftfeuchte gilt: höhere Temperatur erhöht den VPD, niedrigere Temperatur senkt den VPD. Temperatur und RH müssen daher immer zusammen betrachtet werden: stabile Temperatur hilft, den VPD stabil zu halten und reduziert Pflanzenstress.',
               extTempHistory: 'Wassertank-Temperaturverlauf',
               totalConsumption: 'Gesamtverbrauch',
               totalConsumptionHistory: 'Gesamtverbrauchsverlauf',
@@ -4622,15 +4692,69 @@ def dashboard_page(request: Request):
             txt('lblRelays', tr('relays'));
             txt('lblRelaysExtra', tr('relaysExtra'));
             txt('lblShelly', tr('shelly'));
-            txt('lblTempHistory', tr('tempHistory'));
-            txt('lblHumHistory', tr('humHistory'));
-            txt('lblVpdHistory', tr('vpdHistory'));
+            txt('lblTempHistoryText', tr('tempHistory'));
+            txt('lblHumHistoryText', tr('humHistory'));
+            txt('lblVpdHistoryText', tr('vpdHistory'));
             txt('lblAlphaHistoryText', tr('alphaHistory'));
+            const showInfoPopover = (anchorEl, text) => {
+              const pop = document.getElementById('alphaHintPopover');
+              if (!pop || !anchorEl) return;
+              pop.textContent = text || '';
+              pop.style.display = 'block';
+              const r = anchorEl.getBoundingClientRect();
+              const top = Math.min(window.innerHeight - 20, r.bottom + 10);
+              const left = Math.min(window.innerWidth - 20, Math.max(10, r.left));
+              pop.style.top = `${top}px`;
+              pop.style.left = `${left}px`;
+            };
+            const vpdMeaningEl = document.getElementById('vpdMeaningHint');
+            if (vpdMeaningEl) {
+              const hint = tr('vpdMeaningHint');
+              vpdMeaningEl.removeAttribute('title');
+              vpdMeaningEl.setAttribute('aria-label', hint);
+              vpdMeaningEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(vpdMeaningEl, hint); };
+            }
+            const tempMeaningEl = document.getElementById('tempMeaningHint');
+            if (tempMeaningEl) {
+              const hint = tr('tempMeaningHint');
+              tempMeaningEl.removeAttribute('title');
+              tempMeaningEl.setAttribute('aria-label', hint);
+              tempMeaningEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(tempMeaningEl, hint); };
+            }
+            const humMeaningEl = document.getElementById('humMeaningHint');
+            if (humMeaningEl) {
+              const hint = tr('humMeaningHint');
+              humMeaningEl.removeAttribute('title');
+              humMeaningEl.setAttribute('aria-label', hint);
+              humMeaningEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(humMeaningEl, hint); };
+            }
+            const humHistoryMeaningEl = document.getElementById('humHistoryMeaningHint');
+            if (humHistoryMeaningEl) {
+              const hint = tr('humMeaningHint');
+              humHistoryMeaningEl.removeAttribute('title');
+              humHistoryMeaningEl.setAttribute('aria-label', hint);
+              humHistoryMeaningEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(humHistoryMeaningEl, hint); };
+            }
+            const tempHistoryMeaningEl = document.getElementById('tempHistoryMeaningHint');
+            if (tempHistoryMeaningEl) {
+              const hint = tr('tempMeaningHint');
+              tempHistoryMeaningEl.removeAttribute('title');
+              tempHistoryMeaningEl.setAttribute('aria-label', hint);
+              tempHistoryMeaningEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(tempHistoryMeaningEl, hint); };
+            }
+            const vpdHistoryMeaningEl = document.getElementById('vpdHistoryMeaningHint');
+            if (vpdHistoryMeaningEl) {
+              const hint = tr('vpdMeaningHint');
+              vpdHistoryMeaningEl.removeAttribute('title');
+              vpdHistoryMeaningEl.setAttribute('aria-label', hint);
+              vpdHistoryMeaningEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(vpdHistoryMeaningEl, hint); };
+            }
             const alphaHintEl = document.getElementById('alphaHistoryHint');
             if (alphaHintEl) {
               const hint = tr('alphaHint');
-              alphaHintEl.title = hint;
+              alphaHintEl.removeAttribute('title');
               alphaHintEl.setAttribute('aria-label', hint);
+              alphaHintEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(alphaHintEl, hint); };
             }
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
             txt('lblMainWHistory', tr('totalConsumptionHistory'));
@@ -4684,6 +4808,27 @@ def dashboard_page(request: Request):
             txt('tankLastChange', `${tr('lastChange')} -`);
             renderTentHeader();
           }
+
+          document.addEventListener('click', (ev) => {
+            const pop = document.getElementById('alphaHintPopover');
+            const triggerAlpha = document.getElementById('alphaHistoryHint');
+            const triggerVpd = document.getElementById('vpdMeaningHint');
+            const triggerTemp = document.getElementById('tempMeaningHint');
+            const triggerHum = document.getElementById('humMeaningHint');
+            const triggerHumHistory = document.getElementById('humHistoryMeaningHint');
+            const triggerTempHistory = document.getElementById('tempHistoryMeaningHint');
+            const triggerVpdHistory = document.getElementById('vpdHistoryMeaningHint');
+            if (!pop || pop.style.display !== 'block') return;
+            if (ev.target === triggerAlpha || triggerAlpha?.contains(ev.target)) return;
+            if (ev.target === triggerVpd || triggerVpd?.contains(ev.target)) return;
+            if (ev.target === triggerTemp || triggerTemp?.contains(ev.target)) return;
+            if (ev.target === triggerHum || triggerHum?.contains(ev.target)) return;
+            if (ev.target === triggerHumHistory || triggerHumHistory?.contains(ev.target)) return;
+            if (ev.target === triggerTempHistory || triggerTempHistory?.contains(ev.target)) return;
+            if (ev.target === triggerVpdHistory || triggerVpdHistory?.contains(ev.target)) return;
+            if (pop.contains(ev.target)) return;
+            pop.style.display = 'none';
+          });
 
           function txt(id, val){ const el=document.getElementById(id); if(el) el.textContent=val; }
           function html(id, val){ const el=document.getElementById(id); if(el) el.innerHTML=val; }
