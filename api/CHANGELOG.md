@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.216
+
+### Stability fixes after backend min-VPD removal
+- Fixed tents list/poller regressions caused by removed exhaust VPD columns.
+- Kept API-stats min-VPD info button/modal active in dashboard.
+- Synced displayed app version with release line.
+
 ## v0.214
 
 ### Removed backend min-VPD monitoring feature set

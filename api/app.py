@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.214"
+APP_VERSION = "v0.216"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -615,8 +615,6 @@ def list_tent_sources():
                     "shelly_main_password": r[5] or "",
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
-                    "exhaust_vpd_plan": json.loads(r[8] or '{}') if r[8] else {},
-                    "exhaust_vpd_triggered": bool(r[9]),
                 }
                 for r in rows
             ]
