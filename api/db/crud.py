@@ -13,7 +13,6 @@ def list_tents_raw():
                 SELECT id, name, source_url, rtsp_url,
                        shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date,
-                       exhaust_vpd_plan_json, exhaust_vpd_triggered,
                        created_at
                 FROM tents
                 ORDER BY id
@@ -32,9 +31,7 @@ def list_tents_raw():
                 "shelly_main_password": r[5] or "",
                 "irrigation_plan": json.loads(r[6] or "{}") if r[6] else {},
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
-                "exhaust_vpd_plan": json.loads(r[8] or "{}") if r[8] else {},
-                "exhaust_vpd_triggered": bool(r[9]),
-                "created_at": r[10].isoformat(),
+                "created_at": r[8].isoformat(),
             }
         )
     return out

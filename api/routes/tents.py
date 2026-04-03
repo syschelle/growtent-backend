@@ -36,16 +36,6 @@ def update_irrigation_plan(tent_id: int, payload: dict, service: TentService = D
     return service.update_irrigation_plan(tent_id, payload)
 
 
-@router.get('/tents/{tent_id}/exhaust-vpd-plan')
-def get_exhaust_vpd_plan(tent_id: int, service: TentService = Depends(get_tent_service)):
-    return service.get_exhaust_vpd_plan(tent_id)
-
-
-@router.put('/tents/{tent_id}/exhaust-vpd-plan')
-def update_exhaust_vpd_plan(tent_id: int, payload: dict, service: TentService = Depends(get_tent_service)):
-    return service.update_exhaust_vpd_plan(tent_id, payload)
-
-
 @router.get('/tents/{tent_id}/latest')
 def latest_state(tent_id: int, request: Request, service: TentService = Depends(get_tent_service)):
     return service.latest(tent_id, request)
