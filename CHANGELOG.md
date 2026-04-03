@@ -2,6 +2,14 @@
 
 All entries are maintained in English only.
 
+## v0.214
+
+### Removed backend min-VPD monitoring feature set
+- Removed backend min-VPD control execution.
+- Removed dashboard buttons/modals related to backend min-VPD monitoring.
+- Removed backend API endpoints for exhaust VPD plan.
+- Removed backend persistence usage for exhaust VPD plan fields.
+
 ## v0.208
 
 ### Exhaust VPD disable behavior

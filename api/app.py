@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.212"
+APP_VERSION = "v0.214"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -390,8 +390,6 @@ def init_db():
                     shelly_main_password TEXT,
                     irrigation_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}',
                     irrigation_last_run_date DATE,
-                    exhaust_vpd_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"min_vpd_kpa":0.6,"hysteresis_kpa":0.05}',
-                    exhaust_vpd_triggered BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
@@ -401,8 +399,8 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS shelly_main_password TEXT;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"every_n_days\":1,\"offset_after_light_on_min\":0}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_last_run_date DATE;")
-            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS exhaust_vpd_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"min_vpd_kpa\":0.6,\"hysteresis_kpa\":0.05}';")
-            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS exhaust_vpd_triggered BOOLEAN NOT NULL DEFAULT FALSE;")
+            cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_plan_json;")
+            cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_triggered;")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tent_state (
@@ -605,7 +603,7 @@ def cleanup_old_data():
 def list_tent_sources():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, exhaust_vpd_plan_json, exhaust_vpd_triggered FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -975,7 +973,6 @@ def poll_loop():
                         POLL_NOTIFY_STATE[tent["id"]] = st
 
                         try:
-                            _try_run_exhaust_vpd_control(tent, payload)
                             _try_run_irrigation_schedule(tent, payload)
                         except Exception as sched_err:
                             print(f"[scheduler] tent #{tent['id']} schedule failed: {sched_err}")
@@ -1299,7 +1296,7 @@ def set_2fa_config(payload: TwoFAConfigPayload):
 def list_tents():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, exhaust_vpd_plan_json, exhaust_vpd_triggered, created_at FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, created_at FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -1350,8 +1347,7 @@ def export_config_backup():
             cur.execute(
                 """
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                       irrigation_plan_json, irrigation_last_run_date,
-                       exhaust_vpd_plan_json, exhaust_vpd_triggered, created_at
+                       irrigation_plan_json, irrigation_last_run_date, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -1379,9 +1375,7 @@ def export_config_backup():
                 "shelly_main_password": r[5],
                 "irrigation_plan_json": r[6],
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
-                "exhaust_vpd_plan_json": r[8],
-                "exhaust_vpd_triggered": bool(r[9]),
-                "created_at": r[10].isoformat() if r[10] else None,
+                "created_at": r[8].isoformat() if r[8] else None,
             }
         )
 
@@ -1444,9 +1438,8 @@ def import_config_backup(payload: dict):
                     INSERT INTO tents(
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                         irrigation_plan_json, irrigation_last_run_date,
-                        exhaust_vpd_plan_json, exhaust_vpd_triggered,
                         created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
                     """,
                     (
                         int(t.get("id") or 0),
@@ -1457,8 +1450,6 @@ def import_config_backup(payload: dict):
                         (str(t.get("shelly_main_password")).strip() if t.get("shelly_main_password") else None),
                         str(t.get("irrigation_plan_json") or '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}'),
                         t.get("irrigation_last_run_date"),
-                        str(t.get("exhaust_vpd_plan_json") or '{"enabled":false,"min_vpd_kpa":0.6,"hysteresis_kpa":0.05}'),
-                        bool(t.get("exhaust_vpd_triggered", False)),
                         t.get("created_at"),
                     ),
                 )
@@ -4389,7 +4380,6 @@ def dashboard_page(request: Request):
               mainEnergy: 'Energy',
               resetCounter: 'Reset counter',
               confirmResetCounter: 'Really reset energy counters?',
-              exhaustVpdPlan: 'min. VPD monitoring',
               minVpdInfo: 'min. VPD monitoring',
               minVpdMonLabel: 'minVPDMonitoring',
               minVpdOffsetLabel: 'Offset',
@@ -4513,7 +4503,6 @@ def dashboard_page(request: Request):
               mainEnergy: 'Energie',
               resetCounter: 'Zähler zurücksetzen',
               confirmResetCounter: 'Energiezähler wirklich zurücksetzen?',
-              exhaustVpdPlan: 'min. VPD Überwachung',
               minVpdInfo: 'min. VPD Überwachung',
               minVpdMonLabel: 'minVPDMonitoring',
               minVpdOffsetLabel: 'Offset',
@@ -4565,7 +4554,6 @@ def dashboard_page(request: Request):
           let shellyMainDirectTs = null;
           let currentIrPlan = null;
           let currentIrLastRunDate = null;
-          let currentExhPlan = null;
           let currentMinVpdMonitoring = null;
           let currentMinVpdOffset = null;
           let currentMinVpdTarget = null;
@@ -4682,13 +4670,10 @@ def dashboard_page(request: Request):
             txt('mainKwhTodayValue', '- kWh / - €');
             const phaseActions = document.getElementById('phaseActions');
             if (phaseActions) {
-              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openExhVpdPlanBtn" type="button">${tr('exhaustVpdPlan')}</button><button id="openMinVpdInfoBtn" type="button">${tr('minVpdInfo')}</button>`;
+              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openMinVpdInfoBtn" type="button">${tr('minVpdInfo')}</button>`;
               document.getElementById('resetEnergyBtn')?.addEventListener('click', async () => {
                 if (!window.confirm(tr('confirmResetCounter'))) return;
                 await resetShellyEnergy();
-              });
-              document.getElementById('openExhVpdPlanBtn')?.addEventListener('click', async () => {
-                await openDashboardExhPlanModal();
               });
               document.getElementById('openMinVpdInfoBtn')?.addEventListener('click', async () => {
                 await openDashboardMinVpdInfoModal();
@@ -5147,72 +5132,6 @@ def dashboard_page(request: Request):
           document.getElementById('dbIrPlanCancelBtn')?.addEventListener('click', closeDashboardIrPlanModal);
           document.getElementById('dbIrPlanSaveBtn')?.addEventListener('click', saveDashboardIrPlan);
 
-          function closeDashboardExhPlanModal(){
-            const modal = document.getElementById('dbExhPlanModal');
-            if (modal) modal.style.display = 'none';
-          }
-
-          async function openDashboardExhPlanModal(){
-            const modal = document.getElementById('dbExhPlanModal');
-            const msg = document.getElementById('dbExhPlanMsg');
-            const title = document.getElementById('dbExhPlanTentLabel');
-            const enabledEl = document.getElementById('dbExhPlanEnabled');
-            const minVpdEl = document.getElementById('dbExhPlanMinVpd');
-            const hystEl = document.getElementById('dbExhPlanHyst');
-            if (!modal || !enabledEl || !minVpdEl || !hystEl || !currentTentId) return;
-
-            if (title) title.textContent = `#${currentTentId}`;
-            if (msg) msg.textContent = '';
-            modal.style.display = 'flex';
-
-            try {
-              const res = await fetch(`/tents/${currentTentId}/exhaust-vpd-plan`, { cache: 'no-store' });
-              const j = await res.json();
-              const p = j?.plan || {};
-              enabledEl.checked = !!p.enabled;
-              minVpdEl.value = Number(p.min_vpd_kpa || 0.6).toFixed(2);
-              hystEl.value = Number(p.hysteresis_kpa ?? 0.05).toFixed(2);
-            } catch {
-              enabledEl.checked = false;
-              minVpdEl.value = '0.60';
-              hystEl.value = '0.05';
-              if (msg) msg.textContent = tr('loadFailed');
-            }
-          }
-
-          async function saveDashboardExhPlan(){
-            const msg = document.getElementById('dbExhPlanMsg');
-            const enabledEl = document.getElementById('dbExhPlanEnabled');
-            const minVpdEl = document.getElementById('dbExhPlanMinVpd');
-            const hystEl = document.getElementById('dbExhPlanHyst');
-            if (!currentTentId || !enabledEl || !minVpdEl || !hystEl) return;
-
-            const payload = {
-              enabled: !!enabledEl.checked,
-              min_vpd_kpa: Math.max(0.1, Number(minVpdEl.value || 0.6)),
-              hysteresis_kpa: Math.max(0, Number(hystEl.value || 0.05)),
-            };
-
-            try {
-              const res = await fetch(`/tents/${currentTentId}/exhaust-vpd-plan`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-              });
-              if (!res.ok) {
-                if (msg) msg.textContent = tr('actionFailed');
-                return;
-              }
-              const j = await res.json().catch(() => ({}));
-              currentExhPlan = j?.plan || payload;
-              if (msg) msg.textContent = currentLang === 'de' ? 'Plan gespeichert.' : 'Plan saved.';
-            } catch {
-              if (msg) msg.textContent = tr('actionFailed');
-            }
-          }
-
-          document.getElementById('dbExhPlanCloseBtn')?.addEventListener('click', closeDashboardExhPlanModal);
-          document.getElementById('dbExhPlanCancelBtn')?.addEventListener('click', closeDashboardExhPlanModal);
-          document.getElementById('dbExhPlanSaveBtn')?.addEventListener('click', saveDashboardExhPlan);
-
           function closeDashboardMinVpdInfoModal(){
             const modal = document.getElementById('dbMinVpdInfoModal');
             if (modal) modal.style.display = 'none';
@@ -5222,7 +5141,6 @@ def dashboard_page(request: Request):
             const modal = document.getElementById('dbMinVpdInfoModal');
             if (!modal) return;
             const tentLabel = document.getElementById('dbMinVpdInfoTentLabel');
-            const monLine = document.getElementById('dbMinVpdMonStateLine');
             const offsetLine = document.getElementById('dbMinVpdOffsetLine');
             const targetLine = document.getElementById('dbMinVpdTargetLine');
             const effLine = document.getElementById('dbMinVpdEffectiveLine');
@@ -5232,7 +5150,7 @@ def dashboard_page(request: Request):
             if (monChk) monChk.checked = (currentMinVpdMonitoring === true);
             if (offsetLine) offsetLine.textContent = `${tr('minVpdOffsetLabel')}: ${Number.isFinite(Number(currentMinVpdOffset)) ? Number(currentMinVpdOffset).toFixed(2) : '-'} kPa`;
             if (targetLine) targetLine.textContent = `${tr('target')}: ${Number.isFinite(Number(currentMinVpdTarget)) ? Number(currentMinVpdTarget).toFixed(2) : '-'} kPa`;
-            if (effLine) effLine.textContent = `${tr('minVpd')}: ${Number.isFinite(Number(currentMinVpdEffective)) ? Number(currentMinVpdEffective).toFixed(2) : '-'} kPa (${tr('target')} - offset)`;
+            if (effLine) effLine.textContent = `${tr('minVpd')}: ${Number.isFinite(Number(currentMinVpdEffective)) ? Number(currentMinVpdEffective).toFixed(2) : '-'} kPa (${tr('target')} - ${tr('minVpdOffsetLabel').toLowerCase()})`;
             if (hystLine) hystLine.textContent = `${tr('minVpdHystLabel')}: ${Number.isFinite(Number(currentMinVpdHysteresis)) ? Number(currentMinVpdHysteresis).toFixed(2) : '-'} kPa`;
             modal.style.display = 'flex';
           }
@@ -5242,14 +5160,13 @@ def dashboard_page(request: Request):
 
           async function refreshPlanButtonStates(){
             const irBtn = document.getElementById('openIrPlanBtn');
-            const exBtn = document.getElementById('openExhVpdPlanBtn');
             const minBtn = document.getElementById('openMinVpdInfoBtn');
             const activeStyle = 'linear-gradient(180deg, rgba(34,197,94,.35), rgba(22,163,74,.28))';
             const inactiveStyle = 'linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28))';
             currentIrPlan = null;
             currentIrLastRunDate = null;
-            currentExhPlan = null;
             if (!currentTentId) return;
+            if (minBtn) minBtn.style.background = (currentMinVpdMonitoring === true) ? activeStyle : inactiveStyle;
 
             try {
               const r = await fetch(`/tents/${currentTentId}/irrigation-plan`, { cache:'no-store' });
@@ -5260,17 +5177,6 @@ def dashboard_page(request: Request):
                 if (irBtn) irBtn.style.background = j?.plan?.enabled ? activeStyle : inactiveStyle;
               }
             } catch {}
-
-            try {
-              const r = await fetch(`/tents/${currentTentId}/exhaust-vpd-plan`, { cache:'no-store' });
-              const j = await r.json().catch(() => ({}));
-              if (r.ok) currentExhPlan = j?.plan || null;
-              if (exBtn && r.ok) exBtn.style.background = j?.plan?.enabled ? activeStyle : inactiveStyle;
-            } catch {}
-
-            if (minBtn) {
-              minBtn.style.background = (currentMinVpdMonitoring === true) ? activeStyle : inactiveStyle;
-            }
           }
 
           async function toggleShelly(deviceKey){
@@ -5963,8 +5869,6 @@ def dashboard_page(request: Request):
             const irrigationCardActions = document.getElementById('irrigationCardActions');
             const tankCurrentActions = document.getElementById('tankCurrentActions');
             const irrigationCard = document.getElementById('irrigationCard');
-            const exhPlanBtn = document.getElementById('openExhVpdPlanBtn');
-            const minVpdInfoBtn = document.getElementById('openMinVpdInfoBtn');
             rel.innerHTML = '';
             if (relExtra) relExtra.innerHTML = '';
             if (relaysExtraCard) relaysExtraCard.style.display = (c === 8) ? 'block' : 'none';
@@ -5972,7 +5876,7 @@ def dashboard_page(request: Request):
             if (tankCurrentActions) tankCurrentActions.innerHTML = '';
 
             if (irrigationCard) irrigationCard.style.display = (c === 8) ? 'block' : 'none';
-            if (exhPlanBtn) exhPlanBtn.style.display = (c === 8) ? 'inline-block' : 'none';
+            const minVpdInfoBtn = document.getElementById('openMinVpdInfoBtn');
             if (minVpdInfoBtn) {
               minVpdInfoBtn.style.display = (c === 8) ? 'inline-block' : 'none';
               const activeStyle = 'linear-gradient(180deg, rgba(34,197,94,.35), rgba(22,163,74,.28))';
