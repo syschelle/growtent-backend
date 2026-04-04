@@ -29,7 +29,7 @@ OFFLINE_NOTIFY_DELAY_SECONDS = int(os.getenv("OFFLINE_NOTIFY_DELAY_SECONDS", "30
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.222"
+APP_VERSION = "v0.223"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -154,14 +154,6 @@ def _send_pushover(title: str, message: str, priority: int = 0, device: str | No
             return r.status_code == 200
     except Exception:
         return False
-
-
-@app.post("/notify/status")
-def notify_status(payload: StatusNotifyPayload):
-    ok = _send_pushover(payload.title or "CanopyOps", payload.message, payload.priority, payload.device)
-    if not ok:
-        raise HTTPException(status_code=503, detail="Pushover not configured or send failed")
-    return {"ok": True}
 
 
 @app.post("/auth/login")
@@ -1114,14 +1106,8 @@ def poll_loop():
 
                         save_state(tent["id"], payload)
 
-                        # Status transition: offline -> online
+                        # status reset on successful fetch (no online push to avoid noise)
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
-                        if st.get("online") is False:
-                            _send_pushover(
-                                "CanopyOps: tent online",
-                                f"Tent #{tent['id']} is reachable again ({tent['source_url']}).",
-                                priority=0,
-                            )
                         st["online"] = True
                         st["offline_since"] = None
                         st["offline_notified"] = False

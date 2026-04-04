@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.223
+
+### Pushover noise reduction
+- Removed `/notify/status` push sender endpoint.
+- Removed automatic "tent online" push notifications.
+- Kept only offline-notification throttling behavior from `v0.222`.
+
 ## v0.222
 
 ### Offline notification throttling for tents

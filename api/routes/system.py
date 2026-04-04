@@ -95,9 +95,3 @@ def config_guests_update(guest_id: int, payload: legacy.GuestUserUpdatePayload):
 def config_guests_delete(guest_id: int):
     return legacy.delete_guest_user(guest_id)
 
-
-@router.post('/notify/status')
-def notify_status(payload: dict):
-    # Reuse legacy Pydantic validation in app.py endpoint.
-    obj = legacy.StatusNotifyPayload(**(payload or {}))
-    return legacy.notify_status(obj)
