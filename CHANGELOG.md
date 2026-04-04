@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.222
+
+### Offline notification throttling for tents
+- Added delayed offline push notifications with configurable threshold (`OFFLINE_NOTIFY_DELAY_SECONDS`, default 300s).
+- Sends at most one offline notification per offline episode (no repeated spam while still offline).
+- Resets notification cycle after tent comes back online, so next outage can notify again.
+
 ## v0.221
 
 ### Setup: dedicated Pushover save action

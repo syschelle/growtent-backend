@@ -25,10 +25,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://growtent:growtent@db:5432
 # POLL_URL removed: no default tent source is injected on fresh installs.
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
+OFFLINE_NOTIFY_DELAY_SECONDS = int(os.getenv("OFFLINE_NOTIFY_DELAY_SECONDS", "300"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.221"
+APP_VERSION = "v0.222"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1122,6 +1123,8 @@ def poll_loop():
                                 priority=0,
                             )
                         st["online"] = True
+                        st["offline_since"] = None
+                        st["offline_notified"] = False
                         st["last_ok"] = datetime.now(timezone.utc).isoformat()
                         POLL_NOTIFY_STATE[tent["id"]] = st
 
@@ -1132,16 +1135,37 @@ def poll_loop():
 
                     except Exception as tent_err:
                         print(f"[poller] tent #{tent['id']} ({tent['source_url']}) failed: {tent_err}")
+                        now = datetime.now(timezone.utc)
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
-                        if st.get("online") is not False:
+
+                        # mark first offline timestamp
+                        if st.get("online") is not False or not st.get("offline_since"):
+                            st["offline_since"] = now.isoformat()
+                            st["offline_notified"] = False
+
+                        # send offline notification only once per offline episode,
+                        # and only after configured delay
+                        offline_since = st.get("offline_since")
+                        delay_elapsed = False
+                        try:
+                            if offline_since:
+                                since_dt = datetime.fromisoformat(str(offline_since).replace('Z', '+00:00'))
+                                delay_elapsed = (now - since_dt).total_seconds() >= max(0, OFFLINE_NOTIFY_DELAY_SECONDS)
+                        except Exception:
+                            delay_elapsed = False
+
+                        if delay_elapsed and not bool(st.get("offline_notified")):
+                            mins = max(0, int(OFFLINE_NOTIFY_DELAY_SECONDS // 60))
                             _send_pushover(
                                 "CanopyOps: tent offline",
-                                f"Tent #{tent['id']} is unreachable ({tent['source_url']}). Error: {tent_err}",
+                                f"Tent #{tent['id']} is unreachable for ~{mins} min ({tent['source_url']}). Last error: {tent_err}",
                                 priority=0,
                             )
+                            st["offline_notified"] = True
+
                         st["online"] = False
                         st["last_error"] = str(tent_err)
-                        st["last_err_at"] = datetime.now(timezone.utc).isoformat()
+                        st["last_err_at"] = now.isoformat()
                         POLL_NOTIFY_STATE[tent["id"]] = st
 
             loops += 1
