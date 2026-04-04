@@ -181,16 +181,21 @@ def auth_login(payload: LoginPayload):
     guest_expires_at = cfg.get("guest_expires_at")
 
     is_admin_login = payload.username == admin_user and hashlib.sha256(payload.password.encode("utf-8")).hexdigest() == admin_hash
-    is_guest_login = payload.username == guest_user and guest_enabled and guest_hash and hashlib.sha256(payload.password.encode("utf-8")).hexdigest() == guest_hash
+    candidate_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+    legacy_guest_login = payload.username == guest_user and guest_enabled and guest_hash and candidate_hash == guest_hash
+    db_guest = _find_active_guest_user(payload.username, candidate_hash)
+    db_guest_login = bool(db_guest and not db_guest.get("expired"))
+    is_guest_login = bool(legacy_guest_login or db_guest_login)
 
     if not is_admin_login and not is_guest_login:
         raise HTTPException(status_code=401, detail="invalid credentials")
 
     if is_guest_login:
         guest_exp_ts = None
+        src_expires = db_guest.get("expires_at") if db_guest_login and db_guest else guest_expires_at
         try:
-            if guest_expires_at:
-                guest_exp_ts = datetime.fromisoformat(str(guest_expires_at).replace('Z', '+00:00')).timestamp()
+            if src_expires:
+                guest_exp_ts = datetime.fromisoformat(str(src_expires).replace('Z', '+00:00')).timestamp()
         except Exception:
             guest_exp_ts = None
         if guest_exp_ts is None or guest_exp_ts <= time.time():
@@ -198,7 +203,7 @@ def auth_login(payload: LoginPayload):
         token = secrets.token_urlsafe(32)
         exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
         SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp}
-        resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": guest_expires_at})
+        resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": src_expires})
         resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
         return resp
 
@@ -320,6 +325,66 @@ def load_auth_config():
             }
 
 
+
+def _parse_iso_datetime(value: str | None):
+    try:
+        if not value:
+            return None
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+
+def list_guest_users(include_disabled: bool = True):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if include_disabled:
+                cur.execute("SELECT id, username, password_hash, expires_at, enabled, created_at, updated_at FROM app_guest_users ORDER BY id")
+            else:
+                cur.execute("SELECT id, username, password_hash, expires_at, enabled, created_at, updated_at FROM app_guest_users WHERE enabled=TRUE ORDER BY id")
+            rows = cur.fetchall()
+            out = []
+            for r in rows:
+                out.append({
+                    "id": r[0],
+                    "username": r[1],
+                    "password_hash": r[2],
+                    "expires_at": r[3].isoformat() if r[3] else None,
+                    "enabled": bool(r[4]),
+                    "created_at": r[5].isoformat() if r[5] else None,
+                    "updated_at": r[6].isoformat() if r[6] else None,
+                })
+            return out
+
+
+def _find_active_guest_user(username: str, password_hash: str):
+    if not username or not password_hash:
+        return None
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, username, expires_at, enabled
+                FROM app_guest_users
+                WHERE username=%s AND password_hash=%s AND enabled=TRUE
+                LIMIT 1
+                """,
+                (username, password_hash),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            expires_at = row[2]
+            if not expires_at or expires_at <= now:
+                return {"expired": True}
+            return {
+                "id": row[0],
+                "username": row[1],
+                "expires_at": expires_at.isoformat(),
+                "enabled": bool(row[3]),
+            }
+
 def get_session(token: str | None):
     if not token:
         return None
@@ -336,6 +401,18 @@ def get_session(token: str | None):
 
 def is_valid_session(token: str | None) -> bool:
     return get_session(token) is not None
+
+
+def require_admin(request: Request):
+    try:
+        if not bool(load_auth_config().get("enabled")):
+            return
+    except Exception:
+        pass
+    token = request.cookies.get("caop_session")
+    session = get_session(token)
+    if not session or (session.get("role") or "admin") != "admin":
+        raise HTTPException(status_code=403, detail="admin required")
 
 
 @app.middleware("http")
@@ -434,6 +511,33 @@ def init_db():
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_user_key TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS history_api_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_guest_users (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_guest_users (
+                    id BIGSERIAL PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_app_guest_users_enabled_exp ON app_guest_users(enabled, expires_at);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tent_state_tent_time ON tent_state(tent_id, captured_at DESC);")
             cur.execute(
                 """
@@ -1215,6 +1319,121 @@ def set_auth_config(payload: AuthConfigPayload):
         "qr_png_url": None,
         "recovery_codes": [],
     }
+
+
+class GuestUserCreatePayload(BaseModel):
+    username: str
+    password: str
+    expires_at: str
+    enabled: bool = True
+
+
+class GuestUserUpdatePayload(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    expires_at: str | None = None
+    enabled: bool | None = None
+
+
+@app.get("/config/guests")
+def get_guest_users_config():
+    guests = list_guest_users(include_disabled=True)
+    return {
+        "items": [
+            {
+                "id": g["id"],
+                "username": g["username"],
+                "expires_at": g["expires_at"],
+                "enabled": g["enabled"],
+                "created_at": g["created_at"],
+                "updated_at": g["updated_at"],
+            }
+            for g in guests
+        ]
+    }
+
+
+@app.post("/config/guests")
+def create_guest_user(payload: GuestUserCreatePayload):
+    username = (payload.username or "").strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="username required")
+    if not payload.password:
+        raise HTTPException(status_code=400, detail="password required")
+    exp = _parse_iso_datetime(payload.expires_at)
+    if not exp:
+        raise HTTPException(status_code=400, detail="expires_at must be ISO datetime")
+    if exp <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="expires_at must be in the future")
+    pw_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO app_guest_users(username, password_hash, expires_at, enabled, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id, username, expires_at, enabled, created_at, updated_at
+                    """,
+                    (username, pw_hash, exp, bool(payload.enabled)),
+                )
+                row = cur.fetchone()
+    except psycopg2.Error as e:
+        if getattr(e, "pgcode", None) == "23505":
+            raise HTTPException(status_code=409, detail="username already exists")
+        raise
+    return {"ok": True, "item": {"id": row[0], "username": row[1], "expires_at": row[2].isoformat() if row[2] else None, "enabled": bool(row[3]), "created_at": row[4].isoformat() if row[4] else None, "updated_at": row[5].isoformat() if row[5] else None}}
+
+
+@app.put("/config/guests/{guest_id}")
+def update_guest_user(guest_id: int, payload: GuestUserUpdatePayload):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, username, password_hash, expires_at, enabled FROM app_guest_users WHERE id=%s", (guest_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="guest user not found")
+            username = (payload.username if payload.username is not None else row[1])
+            username = (username or "").strip()
+            if not username:
+                raise HTTPException(status_code=400, detail="username required")
+            pw_hash = row[2]
+            if isinstance(payload.password, str) and payload.password != "":
+                pw_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+            exp = row[3]
+            if payload.expires_at is not None:
+                exp = _parse_iso_datetime(payload.expires_at)
+                if not exp:
+                    raise HTTPException(status_code=400, detail="expires_at must be ISO datetime")
+            if not exp or exp <= datetime.now(timezone.utc):
+                raise HTTPException(status_code=400, detail="expires_at must be in the future")
+            enabled = row[4] if payload.enabled is None else bool(payload.enabled)
+            try:
+                cur.execute(
+                    """
+                    UPDATE app_guest_users
+                    SET username=%s, password_hash=%s, expires_at=%s, enabled=%s, updated_at=NOW()
+                    WHERE id=%s
+                    RETURNING id, username, expires_at, enabled, created_at, updated_at
+                    """,
+                    (username, pw_hash, exp, enabled, guest_id),
+                )
+                out = cur.fetchone()
+            except psycopg2.Error as e:
+                if getattr(e, "pgcode", None) == "23505":
+                    raise HTTPException(status_code=409, detail="username already exists")
+                raise
+    return {"ok": True, "item": {"id": out[0], "username": out[1], "expires_at": out[2].isoformat() if out[2] else None, "enabled": bool(out[3]), "created_at": out[4].isoformat() if out[4] else None, "updated_at": out[5].isoformat() if out[5] else None}}
+
+
+@app.delete("/config/guests/{guest_id}")
+def delete_guest_user(guest_id: int):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM app_guest_users WHERE id=%s", (guest_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="guest user not found")
+    return {"ok": True}
 
 
 @app.post("/config/auth/2fa")
@@ -2656,6 +2875,18 @@ def setup_page(request: Request):
               </div>
             </div>
 
+            <div class=\"card\" id=\"guestUsersCard\" style=\"margin-bottom:12px; max-width:760px;\">
+              <div style=\"margin-bottom:8px;\"><strong id=\"guestUsersTitle\">Guest users</strong></div>
+              <div id=\"guestUsersList\" style=\"font-size:.92rem; margin-bottom:10px;\"></div>
+              <div style=\"display:flex; gap:6px; flex-wrap:wrap;\">
+                <input id=\"guestNewUsername\" placeholder=\"guest-username\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                <input id=\"guestNewPassword\" type=\"password\" placeholder=\"password\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                <input id=\"guestNewExpiresAt\" type=\"datetime-local\" style=\"padding:8px 10px; border-radius:8px; width:220px;\" />
+                <button type=\"button\" id=\"addGuestUserBtn\">Add guest</button>
+              </div>
+              <div id=\"guestUsersMsg\" style=\"margin-top:8px;\"></div>
+            </div>
+
             <div class=\"card\" id=\"pushoverCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"pushoverTitle\">Pushover status notifications</strong></div>
               <div id=\"pushoverAppTokenLabel\" style=\"margin-bottom:6px;\">Pushover app token</div>
@@ -2764,6 +2995,12 @@ def setup_page(request: Request):
           const guestUsernameEl = document.getElementById('guestUsername');
           const guestPasswordEl = document.getElementById('guestPassword');
           const guestExpiresAtEl = document.getElementById('guestExpiresAt');
+          const guestUsersListEl = document.getElementById('guestUsersList');
+          const guestUsersMsgEl = document.getElementById('guestUsersMsg');
+          const guestNewUsernameEl = document.getElementById('guestNewUsername');
+          const guestNewPasswordEl = document.getElementById('guestNewPassword');
+          const guestNewExpiresAtEl = document.getElementById('guestNewExpiresAt');
+          const guestNewEnabledEl = document.getElementById('guestNewEnabled');
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
@@ -2807,6 +3044,11 @@ def setup_page(request: Request):
               guestPassword: 'Guest password (leave empty to keep unchanged)',
               guestExpiresAt: 'Guest expires at',
               saveGuest: 'Save guest',
+              guestUsersTitle: 'Guest users',
+              guestCreateTitle: 'Create guest user',
+              guestNewEnabled: 'Enabled',
+              addGuestUser: 'Add guest user',
+              guestDelete: 'Delete',
               backup: 'Backup',
               exportBackup: 'Export backup',
               importBackup: 'Import backup',
@@ -2816,7 +3058,10 @@ def setup_page(request: Request):
               rubricBackup: 'Backup',
               rubricDevices: 'Tents',
               pushoverTitle: 'Pushover status notifications',
-              apiHistoryPerTent: 'API History'
+              apiHistoryPerTent: 'API History',
+              guestUsersTitle: 'Guest users',
+              addGuestUser: 'Add guest',
+              guestUsersNone: 'No guest users configured.'
             },
             de: {
               nav: 'Navigation',
@@ -2854,6 +3099,11 @@ def setup_page(request: Request):
               guestPassword: 'Gast-Passwort (leer = unverändert)',
               guestExpiresAt: 'Gast gültig bis',
               saveGuest: 'Gast speichern',
+              guestUsersTitle: 'Gastnutzer',
+              guestCreateTitle: 'Gastnutzer anlegen',
+              guestNewEnabled: 'Aktiv',
+              addGuestUser: 'Gastnutzer hinzufügen',
+              guestDelete: 'Löschen',
               backup: 'Backup',
               exportBackup: 'Backup exportieren',
               importBackup: 'Backup importieren',
@@ -2863,7 +3113,10 @@ def setup_page(request: Request):
               rubricBackup: 'Backup',
               rubricDevices: 'Zelte',
               pushoverTitle: 'Pushover-Statusmeldungen',
-              apiHistoryPerTent: 'API-History'
+              apiHistoryPerTent: 'API-History',
+              guestUsersTitle: 'Gastbenutzer',
+              addGuestUser: 'Gast hinzufügen',
+              guestUsersNone: 'Keine Gastbenutzer vorhanden.'
             }
           };
 
@@ -2916,9 +3169,15 @@ def setup_page(request: Request):
             set('guestPassLabel', tSetup('guestPassword'));
             set('guestExpLabel', tSetup('guestExpiresAt'));
             set('saveGuestBtn', tSetup('saveGuest'));
+            set('guestUsersTitle', tSetup('guestUsersTitle'));
+            set('guestCreateTitle', tSetup('guestCreateTitle'));
+            set('guestNewEnabledLabel', tSetup('guestNewEnabled'));
+            set('addGuestUserBtn', tSetup('addGuestUser'));
             set('backupTitle', tSetup('backup'));
             set('exportBackupBtn', tSetup('exportBackup'));
             set('importBackupBtn', tSetup('importBackup'));
+            set('guestUsersTitle', tSetup('guestUsersTitle'));
+            set('addGuestUserBtn', tSetup('addGuestUser'));
           }
 
           function applyTheme(theme){
@@ -2927,7 +3186,8 @@ def setup_page(request: Request):
           }
 
           const initialTheme = (localStorage.getItem('gt_theme') || 'dark');
-          const initialLang = (localStorage.getItem('gt_lang') || 'en');
+          const browserLang = (navigator.language || 'en').toLowerCase();
+          const initialLang = (localStorage.getItem('gt_lang') || (browserLang.startsWith('de') ? 'de' : 'en'));
           const initialUnit = (localStorage.getItem('gt_temp_unit') || 'C');
 
           sel.value = initialTheme;
@@ -3133,6 +3393,39 @@ def setup_page(request: Request):
             }
           });
 
+          async function loadGuestUsers(){
+            if (!guestUsersListEl) return;
+            try {
+              const res = await fetch('/config/guests', { cache: 'no-store' });
+              const body = await res.json().catch(() => ({}));
+              const items = Array.isArray(body?.items) ? body.items : [];
+              if (!items.length) {
+                guestUsersListEl.innerHTML = '<div>No guest users configured.</div>';
+                return;
+              }
+              guestUsersListEl.innerHTML = items.map(g => `
+                <div style="padding:6px 0; border-bottom:1px solid var(--grid);">
+                  <strong>${g.username}</strong> · ${g.enabled ? 'enabled' : 'disabled'}<br>
+                  <span style="opacity:.85">expires: ${g.expires_at ? String(g.expires_at).slice(0,16).replace('T',' ') : '-'}</span><br>
+                  <button data-delete-guest="${g.id}" style="margin-top:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('guestDelete')}</button>
+                </div>
+              `).join('');
+              guestUsersListEl.querySelectorAll('button[data-delete-guest]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                  const id = Number(btn.getAttribute('data-delete-guest'));
+                  if (!id) return;
+                  if (!confirm('Delete guest user?')) return;
+                  const dr = await fetch(`/config/guests/${id}`, { method: 'DELETE' });
+                  if (!dr.ok) { if (guestUsersMsgEl) guestUsersMsgEl.textContent = 'Delete failed.'; return; }
+                  if (guestUsersMsgEl) guestUsersMsgEl.textContent = 'Guest user deleted.';
+                  await loadGuestUsers();
+                });
+              });
+            } catch {
+              guestUsersListEl.textContent = 'Failed to load guest users.';
+            }
+          }
+
           async function loadAuthConfigUi(){
             if (!authEnabledEl || !authUsernameEl) return;
             try {
@@ -3299,6 +3592,29 @@ def setup_page(request: Request):
             document.getElementById('saveAuthBtn')?.click();
           });
 
+          document.getElementById('addGuestUserBtn')?.addEventListener('click', async () => {
+            try {
+              const username = (guestNewUsernameEl?.value || '').trim();
+              const password = (guestNewPasswordEl?.value || '');
+              const expires = guestNewExpiresAtEl?.value ? new Date(guestNewExpiresAtEl.value).toISOString() : '';
+              const enabled = !!guestNewEnabledEl?.checked;
+              const res = await fetch('/config/guests', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, expires_at: expires, enabled }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) { if (guestUsersMsgEl) guestUsersMsgEl.textContent = body?.detail || 'Failed to create guest user.'; return; }
+              if (guestNewUsernameEl) guestNewUsernameEl.value = '';
+              if (guestNewPasswordEl) guestNewPasswordEl.value = '';
+              if (guestNewExpiresAtEl) guestNewExpiresAtEl.value = '';
+              if (guestUsersMsgEl) guestUsersMsgEl.textContent = 'Guest user created.';
+              await loadGuestUsers();
+            } catch {
+              if (guestUsersMsgEl) guestUsersMsgEl.textContent = 'Failed to create guest user.';
+            }
+          });
+
           document.getElementById('saveAuthBtn')?.addEventListener('click', async () => {
             if (!authEnabledEl || !authUsernameEl || !authPasswordEl) return;
 
@@ -3401,6 +3717,7 @@ def setup_page(request: Request):
               }
 
               if (authMsgEl) authMsgEl.textContent = `Saved. Authentication ${persistedEnabled ? 'enabled' : 'disabled'}. Password ${body?.has_password ? 'set' : 'not set'}.`;
+              await loadGuestUsers();
             } catch {
               if (authMsgEl) authMsgEl.textContent = 'Failed to save access settings.';
             }
@@ -3485,6 +3802,7 @@ def setup_page(request: Request):
           loadTents();
           loadSetupNavTents();
           loadAuthConfigUi();
+          loadGuestUsers();
         </script>
       </body>
     </html>

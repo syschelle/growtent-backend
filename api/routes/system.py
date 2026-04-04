@@ -76,6 +76,26 @@ def config_backup_import(payload: dict):
     return legacy.import_config_backup(payload)
 
 
+@router.get('/config/guests')
+def config_guests():
+    return legacy.get_guest_users_config()
+
+
+@router.post('/config/guests')
+def config_guests_create(payload: legacy.GuestUserCreatePayload):
+    return legacy.create_guest_user(payload)
+
+
+@router.put('/config/guests/{guest_id}')
+def config_guests_update(guest_id: int, payload: legacy.GuestUserUpdatePayload):
+    return legacy.update_guest_user(guest_id, payload)
+
+
+@router.delete('/config/guests/{guest_id}')
+def config_guests_delete(guest_id: int):
+    return legacy.delete_guest_user(guest_id)
+
+
 @router.post('/notify/status')
 def notify_status(payload: dict):
     # Reuse legacy Pydantic validation in app.py endpoint.
