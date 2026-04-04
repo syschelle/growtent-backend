@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.220
+
+### History chart axis synchronization
+- Synchronized right Y-axis min/max to match the left Y-axis for temperature, humidity, and VPD history charts.
+- Keeps both sides in the same value range and avoids mismatched legend/axis interpretation.
+
 ## v0.219
 
 ### Guest access enforcement and legacy-delete fix
