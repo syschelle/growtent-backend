@@ -2,6 +2,17 @@
 
 All entries are maintained in English only.
 
+## v0.218
+
+### Multi-guest setup and access hardening
+- Added setup support for multiple guest users with list view (username, expiry, status) and create/delete actions.
+- Added `/config/guests` CRUD endpoints and router wiring for modular runtime.
+- Added browser-language default for setup language select when `gt_lang` is not set.
+- Removed legacy single-guest setup card from UI and kept compatibility display via guest list API.
+- Fixed guest creation default to `enabled=true` when no checkbox is present.
+- Hardened guest access controls: guest sessions are always read-only and blocked from setup/config writes.
+- Added anonymous write blocking when global auth is disabled to prevent control bypass.
+
 ## v0.217
 
 ### Grow-Guide + dashboard hint improvements

@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.217"
+APP_VERSION = "v0.218"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -167,6 +167,49 @@ def notify_status(payload: StatusNotifyPayload):
 def auth_login(payload: LoginPayload):
     cfg = load_auth_config()
     if not cfg.get("enabled"):
+        # If auth is globally disabled, keep local convenience login,
+        # but still honor defined guest accounts as read-only sessions.
+        candidate_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+
+        # Legacy single guest from app_auth_config
+        legacy_guest_user = (cfg.get("guest_username") or "").strip()
+        legacy_guest_hash = (cfg.get("guest_password_hash") or "")
+        legacy_guest_exp = cfg.get("guest_expires_at")
+        legacy_match = bool(legacy_guest_user and legacy_guest_hash and payload.username == legacy_guest_user and candidate_hash == legacy_guest_hash)
+        if legacy_match:
+            guest_exp_ts = None
+            try:
+                if legacy_guest_exp:
+                    guest_exp_ts = datetime.fromisoformat(str(legacy_guest_exp).replace('Z', '+00:00')).timestamp()
+            except Exception:
+                guest_exp_ts = None
+            if guest_exp_ts is None or guest_exp_ts <= time.time():
+                raise HTTPException(status_code=401, detail="guest access expired")
+            token = secrets.token_urlsafe(32)
+            exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
+            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp}
+            resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": legacy_guest_exp})
+            resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
+            return resp
+
+        # New multi-guest table
+        g = _find_active_guest_user(payload.username, candidate_hash)
+        if g and not g.get("expired"):
+            guest_exp_ts = None
+            try:
+                if g.get("expires_at"):
+                    guest_exp_ts = datetime.fromisoformat(str(g.get("expires_at")).replace('Z', '+00:00')).timestamp()
+            except Exception:
+                guest_exp_ts = None
+            if guest_exp_ts is None or guest_exp_ts <= time.time():
+                raise HTTPException(status_code=401, detail="guest access expired")
+            token = secrets.token_urlsafe(32)
+            exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
+            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp}
+            resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": g.get("expires_at")})
+            resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
+            return resp
+
         token = secrets.token_urlsafe(32)
         SESSIONS[token] = {"authenticated": True, "role": "admin", "expires_at": time.time() + SESSION_TTL_SECONDS}
         resp = JSONResponse({"ok": True})
@@ -427,21 +470,29 @@ async def auth_middleware(request: Request, call_next):
     except Exception:
         cfg = {"enabled": False}
 
+    token = request.cookies.get("caop_session")
+    session = get_session(token)
+
     if cfg.get("enabled"):
-        token = request.cookies.get("caop_session")
-        session = get_session(token)
         if not session:
             if "text/html" in (request.headers.get("accept") or ""):
                 return RedirectResponse(url="/auth/login", status_code=302)
             return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
-        if (session.get("role") or "admin") == "guest":
-            if path.startswith("/config") or path.startswith("/setup") or (path.startswith("/app") and request.query_params.get("page") == "setup"):
-                if "text/html" in (request.headers.get("accept") or ""):
-                    return RedirectResponse(url="/app?page=dashboard", status_code=302)
-                return JSONResponse(status_code=403, content={"detail": "guest mode: access denied"})
-            if request.method.upper() != "GET" and path != "/auth/logout":
-                return JSONResponse(status_code=403, content={"detail": "guest mode: write actions disabled"})
+    # If auth is disabled, never allow anonymous write actions.
+    # This avoids bypassing guest restrictions via no-session requests.
+    if not cfg.get("enabled") and not session and request.method.upper() != "GET":
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+    # Guest restrictions must always apply when a guest session exists,
+    # regardless of global auth enabled/disabled.
+    if session and (session.get("role") or "admin") == "guest":
+        if path.startswith("/config") or path.startswith("/setup") or (path.startswith("/app") and request.query_params.get("page") == "setup"):
+            if "text/html" in (request.headers.get("accept") or ""):
+                return RedirectResponse(url="/app?page=dashboard", status_code=302)
+            return JSONResponse(status_code=403, content={"detail": "guest mode: access denied"})
+        if request.method.upper() != "GET" and path != "/auth/logout":
+            return JSONResponse(status_code=403, content={"detail": "guest mode: write actions disabled"})
 
     response = await call_next(request)
     if request.method == "GET" and (
@@ -1338,19 +1389,35 @@ class GuestUserUpdatePayload(BaseModel):
 @app.get("/config/guests")
 def get_guest_users_config():
     guests = list_guest_users(include_disabled=True)
-    return {
-        "items": [
-            {
-                "id": g["id"],
-                "username": g["username"],
-                "expires_at": g["expires_at"],
-                "enabled": g["enabled"],
-                "created_at": g["created_at"],
-                "updated_at": g["updated_at"],
-            }
-            for g in guests
-        ]
-    }
+    items = [
+        {
+            "id": g["id"],
+            "username": g["username"],
+            "expires_at": g["expires_at"],
+            "enabled": g["enabled"],
+            "created_at": g["created_at"],
+            "updated_at": g["updated_at"],
+        }
+        for g in guests
+    ]
+
+    # Compatibility: include legacy single-guest config in the list as pseudo item
+    # so users always see what is currently configured.
+    cfg = load_auth_config()
+    legacy_enabled = bool(cfg.get("guest_enabled"))
+    legacy_user = (cfg.get("guest_username") or "").strip()
+    legacy_exp = cfg.get("guest_expires_at")
+    if legacy_enabled and legacy_user and not any((x.get("username") or "").strip() == legacy_user for x in items):
+        items.insert(0, {
+            "id": -1,
+            "username": legacy_user,
+            "expires_at": legacy_exp,
+            "enabled": True,
+            "created_at": None,
+            "updated_at": None,
+        })
+
+    return {"items": items}
 
 
 @app.post("/config/guests")
@@ -2853,28 +2920,6 @@ def setup_page(request: Request):
               <div id=\"auth2faInfo\" style=\"margin-top:10px; font-size:.9rem;\"></div>
             </div>
 
-            <div class=\"card\" id=\"guestCard\" style=\"margin-bottom:12px; max-width:540px;\">
-              <div style=\"margin-bottom:8px;\"><strong id=\"guestTitle\">Guest mode (read-only)</strong></div>
-              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
-                <input type=\"checkbox\" id=\"guestEnabled\" />
-                <span id=\"guestEnabledLabel\">Enable guest login (view-only)</span>
-              </label>
-              <div id=\"guestUserLabel\" style=\"margin-bottom:6px;\">Guest username</div>
-              <input id=\"guestUsername\" placeholder=\"guest\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
-              <div id=\"guestPassLabel\" style=\"margin-bottom:6px;\">Guest password (leave empty to keep unchanged)</div>
-              <input id=\"guestPassword\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
-              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
-                <input type=\"checkbox\" id=\"showGuestPassword\" />
-                <span id=\"showGuestPasswordLabel\">Show password</span>
-              </label>
-              <div id=\"guestExpLabel\" style=\"margin-bottom:6px;\">Guest expires at</div>
-              <input id=\"guestExpiresAt\" type=\"datetime-local\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-bottom:10px;\" />
-              <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;\">
-                <button type=\"button\" id=\"genGuestPassBtn\">Generate password</button>
-                <button type=\"button\" id=\"saveGuestBtn\">Save guest</button>
-              </div>
-            </div>
-
             <div class=\"card\" id=\"guestUsersCard\" style=\"margin-bottom:12px; max-width:760px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"guestUsersTitle\">Guest users</strong></div>
               <div id=\"guestUsersList\" style=\"font-size:.92rem; margin-bottom:10px;\"></div>
@@ -3597,7 +3642,7 @@ def setup_page(request: Request):
               const username = (guestNewUsernameEl?.value || '').trim();
               const password = (guestNewPasswordEl?.value || '');
               const expires = guestNewExpiresAtEl?.value ? new Date(guestNewExpiresAtEl.value).toISOString() : '';
-              const enabled = !!guestNewEnabledEl?.checked;
+              const enabled = guestNewEnabledEl ? !!guestNewEnabledEl.checked : true;
               const res = await fetch('/config/guests', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
