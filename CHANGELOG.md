@@ -2,6 +2,14 @@
 
 All entries are maintained in English only.
 
+## v0.219
+
+### Guest access enforcement and legacy-delete fix
+- Enforced guest read-only restrictions independently of global auth flag.
+- Blocked anonymous write requests when global auth is disabled.
+- Added legacy guest deletion handling (pseudo guest id) so old guest entries can be removed from setup.
+- Synced app version to `v0.219`.
+
 ## v0.218
 
 ### Multi-guest setup and access hardening

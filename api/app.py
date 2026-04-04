@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.218"
+APP_VERSION = "v0.219"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1495,6 +1495,23 @@ def update_guest_user(guest_id: int, payload: GuestUserUpdatePayload):
 
 @app.delete("/config/guests/{guest_id}")
 def delete_guest_user(guest_id: int):
+    # Legacy single-guest entry from app_auth_config is exposed as pseudo id -1.
+    if int(guest_id) < 0:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE app_auth_config
+                    SET guest_enabled=FALSE,
+                        guest_username=NULL,
+                        guest_password_hash=NULL,
+                        guest_expires_at=NULL,
+                        updated_at=NOW()
+                    WHERE id=1
+                    """
+                )
+        return {"ok": True}
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM app_guest_users WHERE id=%s", (guest_id,))
