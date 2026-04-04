@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.219"
+APP_VERSION = "v0.220"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -6103,6 +6103,45 @@ def dashboard_page(request: Request):
             };
           }
 
+          function syncRightAxisToLeft(chart){
+            try {
+              if (!chart?.scales?.y || !chart?.scales?.yR) return;
+              const y = chart.scales.y;
+              chart.options.scales.yR.min = y.min;
+              chart.options.scales.yR.max = y.max;
+              chart.update('none');
+            } catch {}
+          }
+
+          function _legendLabelsWithCurrent_OLD(){
+
+            if (typeof Chart === 'undefined' || !Chart?.defaults?.plugins?.legend?.labels?.generateLabels) {
+              return { color: chartLegendColor(), filter: (item) => !!item.text };
+            }
+            return {
+              color: chartLegendColor(),
+              filter: (item) => !!item.text,
+              generateLabels: (chart) => {
+                const base = Chart.defaults.plugins.legend.labels.generateLabels(chart) || [];
+                return base.map((it) => {
+                  const ds = chart?.data?.datasets?.[it.datasetIndex];
+                  if (!ds || !Array.isArray(ds.data) || !it.text) return it;
+                  let last = null;
+                  for (let i = ds.data.length - 1; i >= 0; i--) {
+                    const n = Number(ds.data[i]);
+                    if (Number.isFinite(n)) { last = n; break; }
+                  }
+                  if (Number.isFinite(last)) {
+                    const abs = Math.abs(last);
+                    const decimals = abs >= 100 ? 0 : (abs >= 10 ? 1 : 2);
+                    it.text = `${it.text}: ${last.toFixed(decimals)}`;
+                  }
+                  return it;
+                });
+              }
+            };
+          }
+
           function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
@@ -6144,6 +6183,7 @@ def dashboard_page(request: Request):
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
               });
+              syncRightAxisToLeft(tempChart);
             }
 
             const humCtx = document.getElementById('humChart');
@@ -6170,6 +6210,7 @@ def dashboard_page(request: Request):
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
               });
+              syncRightAxisToLeft(humChart);
             }
 
             const vpdCtx = document.getElementById('vpdChart');
@@ -6197,6 +6238,7 @@ def dashboard_page(request: Request):
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
               });
+              syncRightAxisToLeft(vpdChart);
             }
 
             const alphaCtx = document.getElementById('alphaChart');
