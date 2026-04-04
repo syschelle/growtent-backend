@@ -28,7 +28,7 @@ RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.220"
+APP_VERSION = "v0.221"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -2957,6 +2957,10 @@ def setup_page(request: Request):
               <input id=\"pushoverUserKey\" placeholder=\"uSeRkEy\" style=\"padding:8px 10px; border-radius:8px; width:300px; margin-bottom:10px;\" />
               <div id=\"pushoverDeviceLabel\" style=\"margin-bottom:6px;\">Pushover device (optional)</div>
               <input id=\"pushoverDevice\" placeholder=\"e.g. iphone\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
+              <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;\">
+                <button type=\"button\" id=\"savePushoverBtn\">Save Pushover</button>
+              </div>
+              <div id=\"pushoverMsg\" style=\"margin-top:8px;\"></div>
               <div class=\"muted\">Status messages for online/offline transitions from poller.</div>
             </div>
 
@@ -3120,6 +3124,7 @@ def setup_page(request: Request):
               rubricBackup: 'Backup',
               rubricDevices: 'Tents',
               pushoverTitle: 'Pushover status notifications',
+              savePushover: 'Save Pushover',
               apiHistoryPerTent: 'API History',
               guestUsersTitle: 'Guest users',
               addGuestUser: 'Add guest',
@@ -3175,6 +3180,7 @@ def setup_page(request: Request):
               rubricBackup: 'Backup',
               rubricDevices: 'Zelte',
               pushoverTitle: 'Pushover-Statusmeldungen',
+              savePushover: 'Pushover speichern',
               apiHistoryPerTent: 'API-History',
               guestUsersTitle: 'Gastbenutzer',
               addGuestUser: 'Gast hinzufügen',
@@ -3210,6 +3216,7 @@ def setup_page(request: Request):
             set('showAuthPasswordLabel', tSetup('showPassword'));
             set('showGuestPasswordLabel', tSetup('showPassword'));
             set('pushoverTitle', tSetup('pushoverTitle'));
+            set('savePushoverBtn', tSetup('savePushover'));
             set('pushoverAppTokenLabel', tSetup('pushoverAppToken'));
             set('pushoverUserKeyLabel', tSetup('pushoverUserKey'));
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
@@ -3675,6 +3682,12 @@ def setup_page(request: Request):
             } catch {
               if (guestUsersMsgEl) guestUsersMsgEl.textContent = 'Failed to create guest user.';
             }
+          });
+
+          document.getElementById('savePushoverBtn')?.addEventListener('click', async () => {
+            const msgEl = document.getElementById('pushoverMsg');
+            document.getElementById('saveAuthBtn')?.click();
+            if (msgEl) msgEl.textContent = (langSel?.value === 'de') ? 'Pushover gespeichert.' : 'Pushover saved.';
           });
 
           document.getElementById('saveAuthBtn')?.addEventListener('click', async () => {

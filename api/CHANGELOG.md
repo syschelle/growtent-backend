@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.221
+
+### Setup: dedicated Pushover save action
+- Added a dedicated `Save Pushover` button inside the Pushover status card in Setup.
+- Kept existing access-save flow intact; button now gives direct save action for that card.
+- Added DE/EN i18n labels for the new button text.
+
 ## v0.220
 
 ### History chart axis synchronization
