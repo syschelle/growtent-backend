@@ -26,6 +26,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://growtent:growtent@db:5432
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 OFFLINE_NOTIFY_DELAY_SECONDS = int(os.getenv("OFFLINE_NOTIFY_DELAY_SECONDS", "300"))
+HEAP_WARN_FREE_BYTES = int(os.getenv("HEAP_WARN_FREE_BYTES", "120000"))
+HEAP_WARN_LARGEST_BLOCK_BYTES = int(os.getenv("HEAP_WARN_LARGEST_BLOCK_BYTES", "60000"))
+HEAP_WARN_FRAGMENTATION_RATIO = float(os.getenv("HEAP_WARN_FRAGMENTATION_RATIO", "0.35"))
+HEAP_WARN_CONSECUTIVE_SAMPLES = int(os.getenv("HEAP_WARN_CONSECUTIVE_SAMPLES", "3"))
+HEAP_RECOVER_CONSECUTIVE_SAMPLES = int(os.getenv("HEAP_RECOVER_CONSECUTIVE_SAMPLES", "6"))
+HEAP_WARN_COOLDOWN_SECONDS = int(os.getenv("HEAP_WARN_COOLDOWN_SECONDS", "3600"))
+HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "3600"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
@@ -1082,6 +1089,39 @@ def _try_run_irrigation_schedule(tent: dict, payload: dict):
 
 
 
+def _heap_warning_reason(payload: dict):
+    try:
+        free_heap = _to_float((payload or {}).get("sys.freeHeap"))
+        min_free_heap = _to_float((payload or {}).get("sys.minFreeHeap"))
+        largest_block = _to_float((payload or {}).get("sys.largestFreeHeapBlock"))
+
+        if free_heap is None and min_free_heap is None and largest_block is None:
+            return False, "", {"free": None, "min": None, "largest": None, "ratio": None}
+
+        ratio = None
+        if free_heap and free_heap > 0 and largest_block is not None:
+            ratio = float(largest_block) / float(free_heap)
+
+        reasons = []
+        if free_heap is not None and free_heap < HEAP_WARN_FREE_BYTES:
+            reasons.append(f"freeHeap low ({int(free_heap)} B)")
+        if largest_block is not None and largest_block < HEAP_WARN_LARGEST_BLOCK_BYTES:
+            reasons.append(f"largestFreeBlock low ({int(largest_block)} B)")
+        if ratio is not None and ratio < HEAP_WARN_FRAGMENTATION_RATIO:
+            reasons.append(f"fragmentation high (largest/free={ratio:.2f})")
+
+        if reasons:
+            return True, ", ".join(reasons), {
+                "free": free_heap,
+                "min": min_free_heap,
+                "largest": largest_block,
+                "ratio": ratio,
+            }
+        return False, "", {"free": free_heap, "min": min_free_heap, "largest": largest_block, "ratio": ratio}
+    except Exception:
+        return False, "", {"free": None, "min": None, "largest": None, "ratio": None}
+
+
 def poll_loop():
     loops = 0
     while True:
@@ -1112,6 +1152,66 @@ def poll_loop():
                         st["offline_since"] = None
                         st["offline_notified"] = False
                         st["last_ok"] = datetime.now(timezone.utc).isoformat()
+
+                        heap_problem, heap_reason, heap_metrics = _heap_warning_reason(payload)
+                        heap_count = int(st.get("heap_warn_count") or 0)
+                        heap_ok_count = int(st.get("heap_ok_count") or 0)
+                        if heap_problem:
+                            heap_count += 1
+                            heap_ok_count = 0
+                            st["heap_warn_count"] = heap_count
+                            st["heap_ok_count"] = heap_ok_count
+                            now = datetime.now(timezone.utc)
+                            last_sent = st.get("heap_warn_sent_at")
+                            allow_send = True
+                            if last_sent:
+                                try:
+                                    prev = datetime.fromisoformat(str(last_sent).replace('Z', '+00:00'))
+                                    allow_send = (now - prev).total_seconds() >= max(0, HEAP_WARN_COOLDOWN_SECONDS)
+                                except Exception:
+                                    allow_send = True
+
+                            if heap_count >= max(1, HEAP_WARN_CONSECUTIVE_SAMPLES) and allow_send:
+                                free_b = heap_metrics.get("free")
+                                min_b = heap_metrics.get("min")
+                                largest_b = heap_metrics.get("largest")
+                                ratio = heap_metrics.get("ratio")
+                                _send_pushover(
+                                    "CanopyOps: heap warning",
+                                    (
+                                        f"Tent #{tent['id']} heap looks problematic: {heap_reason}. "
+                                        f"free={int(free_b) if free_b is not None else '-'} B, "
+                                        f"min={int(min_b) if min_b is not None else '-'} B, "
+                                        f"largest={int(largest_b) if largest_b is not None else '-'} B, "
+                                        f"largest/free={(f'{ratio:.2f}' if ratio is not None else '-')}."
+                                    ),
+                                    priority=0,
+                                )
+                                st["heap_warn_sent_at"] = now.isoformat()
+                                st["heap_warn_active"] = True
+                        else:
+                            st["heap_warn_count"] = 0
+                            heap_ok_count += 1
+                            st["heap_ok_count"] = heap_ok_count
+                            if bool(st.get("heap_warn_active")) and heap_ok_count >= max(1, HEAP_RECOVER_CONSECUTIVE_SAMPLES):
+                                now = datetime.now(timezone.utc)
+                                allow_recover = True
+                                last_recover = st.get("heap_recover_sent_at")
+                                if last_recover:
+                                    try:
+                                        prev = datetime.fromisoformat(str(last_recover).replace('Z', '+00:00'))
+                                        allow_recover = (now - prev).total_seconds() >= max(0, HEAP_RECOVER_COOLDOWN_SECONDS)
+                                    except Exception:
+                                        allow_recover = True
+                                if allow_recover:
+                                    _send_pushover(
+                                        "CanopyOps: heap recovered",
+                                        f"Tent #{tent['id']} heap metrics are stable again.",
+                                        priority=0,
+                                    )
+                                    st["heap_recover_sent_at"] = now.isoformat()
+                                st["heap_warn_active"] = False
+
                         POLL_NOTIFY_STATE[tent["id"]] = st
 
                         try:
@@ -4692,7 +4792,7 @@ def dashboard_page(request: Request):
         </div>
 
         <div class=\"card history-card\">
-          <div class=\"label\" id=\"lblHeapHistory\">ESP Heap history</div>
+          <div class=\"label\" id=\"lblHeapHistory\"><span id=\"lblHeapHistoryText\">ESP Heap history</span> <span id=\"heapHistoryHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"heapChart\"></canvas>
         </div>
 
@@ -4818,6 +4918,7 @@ def dashboard_page(request: Request):
               heapFree: 'Free heap',
               heapMin: 'Min free heap',
               heapLargest: 'Largest free block',
+              heapHistoryHint: 'Shows ESP memory trends over time. Free heap = currently available RAM; Min free heap = lowest value since boot; Largest free block = biggest contiguous memory block. Warnings trigger when values stay below configured limits for multiple samples (defaults: free < 120000 B, largest block < 60000 B, or largest/free < 0.35). Recovery is sent only after several stable samples and with cooldown to avoid spam.',
               exportCsv: 'Export JSON',
               consumptionToday: 'Consumption / cost today (0-24)',
               tankLevel: 'Tank level',
@@ -4948,6 +5049,7 @@ def dashboard_page(request: Request):
               heapFree: 'Freier Heap',
               heapMin: 'Min. freier Heap',
               heapLargest: 'Größter freier Block',
+              heapHistoryHint: 'Zeigt den ESP-Speicherverlauf über die Zeit. Freier Heap = aktuell verfügbarer RAM; Min. freier Heap = niedrigster Wert seit dem Boot; Größter freier Block = größter zusammenhängender Speicherblock. Warnungen kommen nur, wenn Werte über mehrere Messungen unter den Schwellwerten bleiben (Standard: free < 120000 B, largest block < 60000 B oder largest/free < 0.35). Recovery wird erst nach mehreren stabilen Messungen und mit Cooldown gesendet, damit es nicht spammt.',
               exportCsv: 'JSON exportieren',
               consumptionToday: 'Verbrauch / Kosten heute (0-24)',
               tankLevel: 'Tankfüllstand',
@@ -5177,7 +5279,14 @@ def dashboard_page(request: Request):
             }
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
             txt('lblMainWHistory', tr('totalConsumptionHistory'));
-            txt('lblHeapHistory', tr('heapHistory'));
+            txt('lblHeapHistoryText', tr('heapHistory'));
+            const heapHistoryHintEl = document.getElementById('heapHistoryHint');
+            if (heapHistoryHintEl) {
+              const hint = tr('heapHistoryHint');
+              heapHistoryHintEl.removeAttribute('title');
+              heapHistoryHintEl.setAttribute('aria-label', hint);
+              heapHistoryHintEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(heapHistoryHintEl, hint); };
+            }
             txt('lblStream', tr('cameraStream'));
             txt('streamInfo', tr('noRtsp'));
             txt('streamOpenBtn', tr('openPreview'));
@@ -5238,6 +5347,7 @@ def dashboard_page(request: Request):
             const triggerHumHistory = document.getElementById('humHistoryMeaningHint');
             const triggerTempHistory = document.getElementById('tempHistoryMeaningHint');
             const triggerVpdHistory = document.getElementById('vpdHistoryMeaningHint');
+            const triggerHeapHistory = document.getElementById('heapHistoryHint');
             if (!pop || pop.style.display !== 'block') return;
             if (ev.target === triggerAlpha || triggerAlpha?.contains(ev.target)) return;
             if (ev.target === triggerVpd || triggerVpd?.contains(ev.target)) return;
@@ -5246,6 +5356,7 @@ def dashboard_page(request: Request):
             if (ev.target === triggerHumHistory || triggerHumHistory?.contains(ev.target)) return;
             if (ev.target === triggerTempHistory || triggerTempHistory?.contains(ev.target)) return;
             if (ev.target === triggerVpdHistory || triggerVpdHistory?.contains(ev.target)) return;
+            if (ev.target === triggerHeapHistory || triggerHeapHistory?.contains(ev.target)) return;
             if (pop.contains(ev.target)) return;
             pop.style.display = 'none';
           });
