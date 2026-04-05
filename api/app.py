@@ -2204,6 +2204,9 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "mainW": d.get("cur.shelly.main.Watt"),
                 "mainWh": d.get("cur.shelly.main.Wh"),
                 "mainCost": d.get("cur.shelly.main.Cost"),
+                "sysFreeHeap": _to_float(d.get("sys.freeHeap")),
+                "sysMinFreeHeap": _to_float(d.get("sys.minFreeHeap")),
+                "sysLargestFreeHeapBlock": _to_float(d.get("sys.largestFreeHeapBlock")),
             }
         )
 
@@ -4688,6 +4691,11 @@ def dashboard_page(request: Request):
           <div id=\"historyOverlayMainW\" class=\"history-overlay\"></div>
         </div>
 
+        <div class=\"card history-card\">
+          <div class=\"label\" id=\"lblHeapHistory\">ESP Heap history</div>
+          <canvas id=\"heapChart\"></canvas>
+        </div>
+
         <div id=\"alphaHintPopover\" class=\"alpha-hint-popover\"></div>
 
         <div id=\"dbIrPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1200; align-items:center; justify-content:center; padding:16px;\">
@@ -4806,6 +4814,10 @@ def dashboard_page(request: Request):
               extTempHistory: 'Tank Temperature History',
               totalConsumption: 'Total consumption',
               totalConsumptionHistory: 'Total consumption history',
+              heapHistory: 'ESP Heap history',
+              heapFree: 'Free heap',
+              heapMin: 'Min free heap',
+              heapLargest: 'Largest free block',
               exportCsv: 'Export JSON',
               consumptionToday: 'Consumption / cost today (0-24)',
               tankLevel: 'Tank level',
@@ -4932,6 +4944,10 @@ def dashboard_page(request: Request):
               extTempHistory: 'Wassertank-Temperaturverlauf',
               totalConsumption: 'Gesamtverbrauch',
               totalConsumptionHistory: 'Gesamtverbrauchsverlauf',
+              heapHistory: 'ESP-Heap Verlauf',
+              heapFree: 'Freier Heap',
+              heapMin: 'Min. freier Heap',
+              heapLargest: 'Größter freier Block',
               exportCsv: 'JSON exportieren',
               consumptionToday: 'Verbrauch / Kosten heute (0-24)',
               tankLevel: 'Tankfüllstand',
@@ -5161,6 +5177,7 @@ def dashboard_page(request: Request):
             }
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
             txt('lblMainWHistory', tr('totalConsumptionHistory'));
+            txt('lblHeapHistory', tr('heapHistory'));
             txt('lblStream', tr('cameraStream'));
             txt('streamInfo', tr('noRtsp'));
             txt('streamOpenBtn', tr('openPreview'));
@@ -6038,6 +6055,7 @@ def dashboard_page(request: Request):
           let alphaChart;
           let extTempChart;
           let mainWChart;
+          let heapChart;
           let previewTimer = null;
           let currentPreviewBase = '';
           let extTempSensorName = 'DS18B20';
@@ -6126,6 +6144,35 @@ def dashboard_page(request: Request):
             };
           }
 
+          function legendLabelsWithCurrentKiB(){
+            if (typeof Chart === 'undefined' || !Chart?.defaults?.plugins?.legend?.labels?.generateLabels) {
+              return { color: chartLegendColor(), filter: (item) => !!item.text };
+            }
+            return {
+              color: chartLegendColor(),
+              filter: (item) => !!item.text,
+              generateLabels: (chart) => {
+                const base = Chart.defaults.plugins.legend.labels.generateLabels(chart) || [];
+                return base.map((it) => {
+                  const ds = chart?.data?.datasets?.[it.datasetIndex];
+                  if (!ds || !Array.isArray(ds.data) || !it.text) return it;
+                  let last = null;
+                  for (let i = ds.data.length - 1; i >= 0; i--) {
+                    const n = Number(ds.data[i]);
+                    if (Number.isFinite(n)) { last = n; break; }
+                  }
+                  if (Number.isFinite(last)) {
+                    const kib = last / 1024;
+                    const abs = Math.abs(kib);
+                    const decimals = abs >= 100 ? 0 : (abs >= 10 ? 1 : 2);
+                    it.text = `${it.text}: ${kib.toFixed(decimals)} KiB`;
+                  }
+                  return it;
+                });
+              }
+            };
+          }
+
           function syncRightAxisToLeft(chart){
             try {
               if (!chart?.scales?.y || !chart?.scales?.yR) return;
@@ -6165,7 +6212,7 @@ def dashboard_page(request: Request):
             };
           }
 
-          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries){
+          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
               return;
@@ -6176,6 +6223,7 @@ def dashboard_page(request: Request):
             if (extTempChart) extTempChart.destroy();
             if (mainWChart) mainWChart.destroy();
             if (alphaChart) alphaChart.destroy();
+            if (heapChart) heapChart.destroy();
 
             const tempUnitLabel = currentTempUnit === 'F' ? '°F' : '°C';
 
@@ -6290,6 +6338,55 @@ def dashboard_page(request: Request):
             }
             extTempChart = buildSingleChart('extTempChart', labels, `${extTempLabelBase()} ${tempUnitLabel}`, extTemp, '#10b981', tempUnitLabel);
             mainWChart = buildSingleChart('mainWChart', labels, `${tr('totalConsumption')} W`, mainW, '#ef4444', 'W', 0);
+
+            const heapCtx = document.getElementById('heapChart');
+            if (heapCtx) {
+              const kibTick = (value) => {
+                const n = Number(value);
+                if (!Number.isFinite(n)) return '-';
+                const kib = n / 1024;
+                const abs = Math.abs(kib);
+                const decimals = abs >= 100 ? 0 : (abs >= 10 ? 1 : 2);
+                return `${kib.toFixed(decimals)} KiB`;
+              };
+
+              heapChart = new Chart(heapCtx, {
+                type: 'line',
+                data: {
+                  labels,
+                  datasets: [
+                    { label: tr('heapFree'), data: heapFreeSeries, borderColor: '#38bdf8', tension: 0.15, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
+                    { label: tr('heapMin'), data: heapMinSeries, borderColor: '#f59e0b', tension: 0.15, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
+                    { label: tr('heapLargest'), data: heapLargestSeries, borderColor: '#a78bfa', tension: 0.15, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
+                    { label: '', data: heapFreeSeries, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.15, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' }
+                  ]
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  interaction: { mode: 'nearest', intersect: false },
+                  scales: {
+                    x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
+                    y: {
+                      position:'left',
+                      ticks:{ color:'#cbd5e1', callback: kibTick },
+                      grid:{ color:'rgba(148,163,184,.15)' },
+                      title: { display:true, text:'KiB', color:'#cbd5e1' },
+                      afterFit: (scale) => { scale.width = 64; }
+                    },
+                    yR: {
+                      position:'right',
+                      ticks:{ color:'#cbd5e1', callback: kibTick },
+                      grid:{ drawOnChartArea:false },
+                      title: { display:true, text:'KiB', color:'#cbd5e1' },
+                      afterFit: (scale) => { scale.width = 64; }
+                    }
+                  },
+                  plugins: { legend: { labels: legendLabelsWithCurrentKiB() } }
+                }
+              });
+              syncRightAxisToLeft(heapChart);
+            }
           }
 
           async function loadLatest(){
@@ -6570,7 +6667,7 @@ def dashboard_page(request: Request):
             renderShellyDevices(d);
           }
 
-          async function loadHistory(){
+          async function loadHistory(){ 
             const minutes = Number(localStorage.getItem('gt_range_minutes') || '60');
 
             const fetchHistory = async (m) => {
@@ -6648,7 +6745,7 @@ def dashboard_page(request: Request):
             if (!points.length) {
               txt('status', currentLang === 'de' ? 'Keine Verlaufsdaten verfügbar.' : 'No history data available.');
               setHistoryOverlays('');
-              buildCharts([], [], [], [], [], [], [], [], [], []);
+              buildCharts([], [], [], [], [], [], [], [], [], [], [], [], []);
               return;
             }
             const historyWarmup = points.length < 30;
@@ -6712,7 +6809,19 @@ def dashboard_page(request: Request):
               const a = Number(p.effectiveAlfaHumPct);
               return Number.isFinite(a) ? Number(a.toFixed(3)) : null;
             });
-            buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries);
+            const heapFreeSeries = points.map(p => {
+              const n = Number(p.sysFreeHeap);
+              return Number.isFinite(n) ? Math.round(n) : null;
+            });
+            const heapMinSeries = points.map(p => {
+              const n = Number(p.sysMinFreeHeap);
+              return Number.isFinite(n) ? Math.round(n) : null;
+            });
+            const heapLargestSeries = points.map(p => {
+              const n = Number(p.sysLargestFreeHeapBlock);
+              return Number.isFinite(n) ? Math.round(n) : null;
+            });
+            buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries);
           }
 
           async function loadTentNav(){
