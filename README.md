@@ -90,7 +90,7 @@ Persistence is PostgreSQL; service stack runs via Docker Compose.
 ## Quick start
 
 ```bash
-cd growtent-backend-poc
+cd growtent-backend
 docker compose up -d --build
 ```
 
