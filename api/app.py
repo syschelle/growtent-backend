@@ -1727,6 +1727,135 @@ def list_tents():
             ]
 
 
+@app.get("/api/poll-errors")
+def api_poll_errors(request: Request):
+    # Not for guest users.
+    require_admin(request)
+
+    tents_by_id = {}
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, source_url FROM tents ORDER BY id")
+                for r in cur.fetchall():
+                    tents_by_id[int(r[0])] = {
+                        "id": int(r[0]),
+                        "name": r[1] or f"Tent {int(r[0])}",
+                        "source_url": r[2] or "",
+                    }
+    except Exception:
+        tents_by_id = {}
+
+    tent_filter = request.query_params.get("tent")
+    tent_filter_id = None
+    if tent_filter is not None:
+        try:
+            tent_filter_id = int(str(tent_filter))
+        except Exception:
+            tent_filter_id = None
+
+    items = []
+    # Keep deterministic order by tent id.
+    for tid in sorted(POLL_NOTIFY_STATE.keys()):
+        if tent_filter_id is not None and int(tid) != int(tent_filter_id):
+            continue
+        st = POLL_NOTIFY_STATE.get(tid) or {}
+        tent = tents_by_id.get(int(tid), {"id": int(tid), "name": f"Tent {int(tid)}", "source_url": ""})
+        items.append({
+            "tent_id": int(tid),
+            "tent_name": tent.get("name") or f"Tent {int(tid)}",
+            "source_url": tent.get("source_url") or "",
+            "online": st.get("online"),
+            "last_ok": st.get("last_ok"),
+            "offline_since": st.get("offline_since"),
+            "offline_notified": bool(st.get("offline_notified")),
+            "last_error": st.get("last_error") or "",
+        })
+
+    return {
+        "ok": True,
+        "count": len(items),
+        "items": items,
+    }
+
+
+@app.get("/poll-errors")
+def poll_errors_page(request: Request):
+    # Not for guest users.
+    require_admin(request)
+
+    tent_q = request.query_params.get("tent")
+    tent_q_js = ""
+    try:
+        if tent_q is not None:
+            tent_q_js = str(int(str(tent_q)))
+    except Exception:
+        tent_q_js = ""
+
+    return HTMLResponse(
+        """
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Polling-Fehler (Live)</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { font-family: Arial, sans-serif; background:#0f172a; color:#e2e8f0; margin:0; padding:16px; }
+      h1 { margin:0 0 12px 0; font-size:1.1rem; }
+      .muted { color:#94a3b8; font-size:.9rem; margin-bottom:12px; }
+      .card { border:1px solid rgba(148,163,184,.2); border-radius:10px; padding:10px; margin-bottom:10px; background:#111827; }
+      .ok { color:#22c55e; font-weight:700; }
+      .bad { color:#ef4444; font-weight:700; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
+      a { color:#93c5fd; }
+    </style>
+  </head>
+  <body>
+    <h1>Polling-Fehler (Live)</h1>
+    <div class="muted" id="scopeHint">Aktualisierung alle 5 Sekunden</div>
+    <div id="list"></div>
+    <script>
+      const tentFilter = "__TENT_FILTER__";
+      const scopeHint = document.getElementById('scopeHint');
+      if (scopeHint && tentFilter) scopeHint.textContent = `Nur Zelt #${tentFilter} · Aktualisierung alle 5 Sekunden`;
+      function esc(v){ return String(v ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
+      async function tick(){
+        const list = document.getElementById('list');
+        try {
+          const url = tentFilter ? `/api/poll-errors?tent=${encodeURIComponent(tentFilter)}` : '/api/poll-errors';
+          const r = await fetch(url, { cache:'no-store' });
+          if (!r.ok) { list.innerHTML = `<div class="card bad">HTTP ${r.status}</div>`; return; }
+          const j = await r.json();
+          const items = Array.isArray(j?.items) ? j.items : [];
+          if (!items.length) { list.innerHTML = '<div class="card muted">Keine Polling-Fehlerdaten vorhanden.</div>'; return; }
+          list.innerHTML = items.map(it => {
+            const online = it.online === true;
+            const cls = online ? 'ok' : 'bad';
+            const label = online ? 'online' : 'offline';
+            const err = it.last_error ? `<div class="mono" style="margin-top:8px;">${esc(it.last_error)}</div>` : '<div class="muted" style="margin-top:8px;">Kein Fehlertext</div>';
+            const src = it.source_url ? `<div><a href="${esc(it.source_url)}" target="_blank" rel="noopener">${esc(it.source_url)}</a></div>` : '';
+            return `<div class="card">
+              <div><strong>${esc(it.tent_name || ('Tent ' + it.tent_id))}</strong> <span class="${cls}">${label}</span></div>
+              ${src}
+              <div class="muted">last_ok: ${esc(it.last_ok || '-')} | offline_since: ${esc(it.offline_since || '-')}</div>
+              ${err}
+            </div>`;
+          }).join('');
+        } catch (e) {
+          list.innerHTML = `<div class="card bad">Fetch-Fehler: ${esc(e?.message || e)}</div>`;
+        }
+      }
+      tick();
+      setInterval(tick, 5000);
+    </script>
+  </body>
+</html>
+        """.replace("__TENT_FILTER__", tent_q_js)
+    )
+
+
 @app.post("/config/auth/2fa/verify")
 def verify_2fa_setup(payload: TwoFAVerifyPayload):
     pending = TWOFA_ENROLL.get(payload.token)
@@ -2984,6 +3113,7 @@ def setup_page(request: Request):
             <div id=\"setupNavTitle\" style=\"font-size:.8rem; color:#94a3b8; margin-bottom:10px;\">Navigation</div>
             <div id=\"tentNavSetup\"></div>
             <a class=\"navlink active\" href=\"/app?page=setup\" id=\"setupNavSetup\">Setup</a>
+            <a class=\"navlink\" href=\"/poll-errors\" id=\"setupNavPollErrors\" target=\"_blank\" rel=\"noopener\">Polling-Fehler (Live)</a>
             <a class=\"navlink\" href=\"/app?page=changelog\" id=\"setupNavChangelog\">About</a>
             <!-- sidebar image removed -->
           </aside>
@@ -4299,6 +4429,7 @@ def app_shell_page():
           <aside class="sidebar">
             <div class="muted" id="navTitle">Navigation</div>
             <div id="tentNav"></div>
+            <a class="navlink" data-page="poll-errors" href="/poll-errors" target="_blank" rel="noopener">Polling-Fehler (Live)</a>
             <a class="navlink" data-page="grow-guide" href="/app?page=grow-guide">Grow-Guide</a>
             <a class="navlink" data-page="setup" href="/app?page=setup">Setup</a>
             <a class="navlink" data-page="changelog" href="/app?page=changelog">About</a>
@@ -4392,6 +4523,8 @@ def app_shell_page():
                 if (guestBadge) guestBadge.style.display = 'inline-block';
                 const setupLink = document.querySelector('.sidebar .navlink[data-page="setup"], .sidebar a[href="/app?page=setup"]');
                 if (setupLink) setupLink.style.display = 'none';
+                const pollErrorsLink = document.querySelector('.sidebar .navlink[data-page="poll-errors"], .sidebar a[href="/poll-errors"]');
+                if (pollErrorsLink) pollErrorsLink.style.display = 'none';
                 if (page === 'setup') page = 'dashboard';
               } else {
                 if (guestBadge) guestBadge.style.display = 'none';
@@ -4460,7 +4593,7 @@ def dashboard_page(request: Request):
           .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
           .status-badge { padding:2px 8px; border-radius:999px; font-size:.75rem; font-weight:700; }
           .stream-open-btn { display:inline-block; padding:6px 9px; border-radius:10px; border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); text-decoration:none; font-size:.82rem; font-weight:800; box-shadow:0 2px 10px rgba(2,6,23,.22); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; }
-          #espOpenBtn, #espStatsBtn { font-weight:400; }
+          #espOpenBtn, #espStatsBtn, #pollErrorsBtn { font-weight:400; }
           .mobile-nav-toggle { display:none; }
           .title-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
           .title-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
@@ -4471,8 +4604,8 @@ def dashboard_page(request: Request):
           body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle) {
             pointer-events:none; opacity:.55; cursor:not-allowed;
           }
-          body.role-pending #espOpenBtn, body.role-pending #espStatsBtn, body.role-pending #streamOpenBtn,
-          body.role-guest #espOpenBtn, body.role-guest #espStatsBtn, body.role-guest #streamOpenBtn,
+          body.role-pending #espOpenBtn, body.role-pending #espStatsBtn, body.role-pending #pollErrorsBtn, body.role-pending #streamOpenBtn,
+          body.role-guest #espOpenBtn, body.role-guest #espStatsBtn, body.role-guest #pollErrorsBtn, body.role-guest #streamOpenBtn,
           body.role-pending .shelly-open-btn, body.role-guest .shelly-open-btn {
             pointer-events:none; opacity:.55; cursor:not-allowed;
           }
@@ -4524,7 +4657,7 @@ def dashboard_page(request: Request):
             .top-cards { grid-template-columns: 1fr; }
             .grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
             #shellyDevices { grid-template-columns: repeat(2, minmax(0,1fr)); }
-            #exportCsvBtn, #espOpenBtn, #espStatsBtn { display:none !important; }
+            #exportCsvBtn, #espOpenBtn, #espStatsBtn, #pollErrorsBtn { display:none !important; }
           }
 
           @media (max-width: 640px){
@@ -4635,6 +4768,7 @@ def dashboard_page(request: Request):
             <button id=\"exportCsvBtn\" type=\"button\">Export JSON</button>
             <a id=\"espOpenBtn\" class=\"stream-open-btn\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:none;\">Open ESP</a>
             <a id=\"espStatsBtn\" class=\"stream-open-btn\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:none;\">Open stats</a>
+            <a id=\"pollErrorsBtn\" class=\"stream-open-btn\" href=\"#\" rel=\"noopener noreferrer\" style=\"display:none;\">Poll errors</a>
           </div>
         </div>
         <div class=\"small\" id=\"sourceText\">Source: -</div>
@@ -4798,6 +4932,17 @@ def dashboard_page(request: Request):
 
         <div id=\"alphaHintPopover\" class=\"alpha-hint-popover\"></div>
 
+        <div id=\"pollErrorsModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1300; align-items:center; justify-content:center; padding:16px;\">
+          <div class=\"card\" style=\"width:min(1100px, 96vw); max-width:1100px; margin-bottom:0;\">
+            <div style=\"display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;\">
+              <strong id=\"pollErrorsModalTitle\">Polling-Fehler (Live)</strong>
+              <button type=\"button\" id=\"pollErrorsModalCloseBtn\">✕</button>
+            </div>
+            <iframe id=\"pollErrorsFrame\" style=\"width:100%; height:min(72vh, 760px); border:0; border-radius:8px; background:#0b1220;\" src=\"about:blank\"></iframe>
+            <div class=\"small\" id=\"pollErrorsModalHint\" style=\"margin-top:8px;\">Aktualisiert sich automatisch.</div>
+          </div>
+        </div>
+
         <div id=\"dbIrPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1200; align-items:center; justify-content:center; padding:16px;\">
           <div class=\"card\" style=\"max-width:520px; width:100%; margin-bottom:0;\">
             <div style=\"display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;\">
@@ -4876,6 +5021,7 @@ def dashboard_page(request: Request):
               openPreview: 'Open fullscreen',
               openEsp: 'Open ESP',
               openEspStats: 'Open stats',
+              openPollErrors: 'Poll errors',
               uptime: 'Uptime',
               uptimeDay: 'd',
               uptimeHour: 'h',
@@ -5007,6 +5153,7 @@ def dashboard_page(request: Request):
               openPreview: 'Vollbild öffnen',
               openEsp: 'ESP öffnen',
               openEspStats: 'Stats öffnen',
+              openPollErrors: 'Polling-Fehler',
               uptime: 'Laufzeit',
               uptimeDay: 'Tg',
               uptimeHour: 'Std',
@@ -5293,6 +5440,7 @@ def dashboard_page(request: Request):
             txt('exportCsvBtn', tr('exportCsv'));
             txt('espOpenBtn', tr('openEsp'));
             txt('espStatsBtn', tr('openEspStats'));
+            txt('pollErrorsBtn', tr('openPollErrors'));
             txt('uptimeBadge', `${tr('uptime')}: -`);
             applyViewMode();
             txt('lblGrowPhase', tr('growPhase'));
@@ -5359,6 +5507,15 @@ def dashboard_page(request: Request):
             if (ev.target === triggerHeapHistory || triggerHeapHistory?.contains(ev.target)) return;
             if (pop.contains(ev.target)) return;
             pop.style.display = 'none';
+          });
+
+          document.getElementById('pollErrorsBtn')?.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            openPollErrorsModal();
+          });
+          document.getElementById('pollErrorsModalCloseBtn')?.addEventListener('click', closePollErrorsModal);
+          document.getElementById('pollErrorsModal')?.addEventListener('click', (ev) => {
+            if (ev.target?.id === 'pollErrorsModal') closePollErrorsModal();
           });
 
           function txt(id, val){ const el=document.getElementById(id); if(el) el.textContent=val; }
@@ -5436,13 +5593,30 @@ def dashboard_page(request: Request):
             }
           }
 
+          function closePollErrorsModal(){
+            const modal = document.getElementById('pollErrorsModal');
+            const frame = document.getElementById('pollErrorsFrame');
+            if (modal) modal.style.display = 'none';
+            if (frame) frame.src = 'about:blank';
+          }
+
+          function openPollErrorsModal(){
+            const modal = document.getElementById('pollErrorsModal');
+            const frame = document.getElementById('pollErrorsFrame');
+            if (!modal || !frame || !currentTentMeta?.id) return;
+            frame.src = `/poll-errors?tent=${encodeURIComponent(currentTentMeta.id)}`;
+            modal.style.display = 'flex';
+          }
+
           function renderTentHeader(){
             const espBtn = document.getElementById('espOpenBtn');
             const espStatsBtn = document.getElementById('espStatsBtn');
+            const pollErrorsBtn = document.getElementById('pollErrorsBtn');
             const uptimeEl = document.getElementById('uptimeBadge');
             if (!currentTentMeta) {
               if (espBtn) { espBtn.style.display = 'none'; espBtn.removeAttribute('href'); }
               if (espStatsBtn) { espStatsBtn.style.display = 'none'; espStatsBtn.removeAttribute('href'); }
+              if (pollErrorsBtn) { pollErrorsBtn.style.display = 'none'; pollErrorsBtn.removeAttribute('href'); }
               if (uptimeEl) { uptimeEl.style.display = 'none'; uptimeEl.textContent = `${tr('uptime')}: -`; }
               return;
             }
@@ -5468,6 +5642,14 @@ def dashboard_page(request: Request):
             } else if (espStatsBtn) {
               espStatsBtn.style.display = 'none';
               espStatsBtn.removeAttribute('href');
+            }
+
+            if (pollErrorsBtn && currentTentMeta?.id) {
+              pollErrorsBtn.href = `/poll-errors?tent=${encodeURIComponent(currentTentMeta.id)}`;
+              pollErrorsBtn.style.display = 'inline-block';
+            } else if (pollErrorsBtn) {
+              pollErrorsBtn.style.display = 'none';
+              pollErrorsBtn.removeAttribute('href');
             }
           }
 

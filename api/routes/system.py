@@ -51,6 +51,16 @@ def grow_guide_page(request: Request):
     return legacy.grow_guide_page(request)
 
 
+@router.get('/poll-errors', response_class=HTMLResponse)
+def poll_errors_page(request: Request):
+    return legacy.poll_errors_page(request)
+
+
+@router.get('/api/poll-errors')
+def api_poll_errors(request: Request):
+    return legacy.api_poll_errors(request)
+
+
 @router.get('/api/export')
 def api_export(tent_id: int, range: str = '24h'):
     return legacy.export_history_csv(tent_id, range)
@@ -94,4 +104,3 @@ def config_guests_update(guest_id: int, payload: legacy.GuestUserUpdatePayload):
 @router.delete('/config/guests/{guest_id}')
 def config_guests_delete(guest_id: int):
     return legacy.delete_guest_user(guest_id)
-
