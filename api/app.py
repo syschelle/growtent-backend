@@ -3113,7 +3113,6 @@ def setup_page(request: Request):
             <div id=\"setupNavTitle\" style=\"font-size:.8rem; color:#94a3b8; margin-bottom:10px;\">Navigation</div>
             <div id=\"tentNavSetup\"></div>
             <a class=\"navlink active\" href=\"/app?page=setup\" id=\"setupNavSetup\">Setup</a>
-            <a class=\"navlink\" href=\"/poll-errors\" id=\"setupNavPollErrors\" target=\"_blank\" rel=\"noopener\">Polling-Fehler (Live)</a>
             <a class=\"navlink\" href=\"/app?page=changelog\" id=\"setupNavChangelog\">About</a>
             <!-- sidebar image removed -->
           </aside>
@@ -4429,7 +4428,6 @@ def app_shell_page():
           <aside class="sidebar">
             <div class="muted" id="navTitle">Navigation</div>
             <div id="tentNav"></div>
-            <a class="navlink" data-page="poll-errors" href="/poll-errors" target="_blank" rel="noopener">Polling-Fehler (Live)</a>
             <a class="navlink" data-page="grow-guide" href="/app?page=grow-guide">Grow-Guide</a>
             <a class="navlink" data-page="setup" href="/app?page=setup">Setup</a>
             <a class="navlink" data-page="changelog" href="/app?page=changelog">About</a>
@@ -4523,8 +4521,6 @@ def app_shell_page():
                 if (guestBadge) guestBadge.style.display = 'inline-block';
                 const setupLink = document.querySelector('.sidebar .navlink[data-page="setup"], .sidebar a[href="/app?page=setup"]');
                 if (setupLink) setupLink.style.display = 'none';
-                const pollErrorsLink = document.querySelector('.sidebar .navlink[data-page="poll-errors"], .sidebar a[href="/poll-errors"]');
-                if (pollErrorsLink) pollErrorsLink.style.display = 'none';
                 if (page === 'setup') page = 'dashboard';
               } else {
                 if (guestBadge) guestBadge.style.display = 'none';
@@ -5022,6 +5018,8 @@ def dashboard_page(request: Request):
               openEsp: 'Open ESP',
               openEspStats: 'Open stats',
               openPollErrors: 'Poll errors',
+              pollErrorsModalTitle: 'Polling errors (live)',
+              pollErrorsModalHint: 'Auto-refreshes automatically.',
               uptime: 'Uptime',
               uptimeDay: 'd',
               uptimeHour: 'h',
@@ -5154,6 +5152,8 @@ def dashboard_page(request: Request):
               openEsp: 'ESP öffnen',
               openEspStats: 'Stats öffnen',
               openPollErrors: 'Polling-Fehler',
+              pollErrorsModalTitle: 'Polling-Fehler (Live)',
+              pollErrorsModalHint: 'Aktualisiert sich automatisch.',
               uptime: 'Laufzeit',
               uptimeDay: 'Tg',
               uptimeHour: 'Std',
@@ -5441,6 +5441,8 @@ def dashboard_page(request: Request):
             txt('espOpenBtn', tr('openEsp'));
             txt('espStatsBtn', tr('openEspStats'));
             txt('pollErrorsBtn', tr('openPollErrors'));
+            txt('pollErrorsModalTitle', tr('pollErrorsModalTitle'));
+            txt('pollErrorsModalHint', tr('pollErrorsModalHint'));
             txt('uptimeBadge', `${tr('uptime')}: -`);
             applyViewMode();
             txt('lblGrowPhase', tr('growPhase'));
