@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.225"
+APP_VERSION = "v0.226"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -2442,6 +2442,7 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "sysFreeHeap": _to_float(d.get("sys.freeHeap")),
                 "sysMinFreeHeap": _to_float(d.get("sys.minFreeHeap")),
                 "sysLargestFreeHeapBlock": _to_float(d.get("sys.largestFreeHeapBlock")),
+                "sysHeapSize": _to_float(d.get("sys.heapSize")),
             }
         )
 
@@ -5118,6 +5119,7 @@ def dashboard_page(request: Request):
               heapFree: 'Free heap',
               heapMin: 'Min free heap',
               heapLargest: 'Largest free block',
+              heapSize: 'Heap size',
               heapHistoryHint: 'Shows ESP memory trends over time. Free heap = currently available RAM; Min free heap = lowest value since boot; Largest free block = biggest contiguous memory block. Warnings trigger when values stay below configured limits for multiple samples (defaults: free < 120000 B, largest block < 60000 B, or largest/free < 0.35). Recovery is sent only after several stable samples and with cooldown to avoid spam.',
               exportCsv: 'Export JSON',
               consumptionToday: 'Consumption / cost today (0-24)',
@@ -5252,6 +5254,7 @@ def dashboard_page(request: Request):
               heapFree: 'Freier Heap',
               heapMin: 'Min. freier Heap',
               heapLargest: 'Größter freier Block',
+              heapSize: 'Heap-Größe',
               heapHistoryHint: 'Zeigt den ESP-Speicherverlauf über die Zeit. Freier Heap = aktuell verfügbarer RAM; Min. freier Heap = niedrigster Wert seit dem Boot; Größter freier Block = größter zusammenhängender Speicherblock. Warnungen kommen nur, wenn Werte über mehrere Messungen unter den Schwellwerten bleiben (Standard: free < 120000 B, largest block < 60000 B oder largest/free < 0.35). Recovery wird erst nach mehreren stabilen Messungen und mit Cooldown gesendet, damit es nicht spammt.',
               exportCsv: 'JSON exportieren',
               consumptionToday: 'Verbrauch / Kosten heute (0-24)',
@@ -6581,7 +6584,7 @@ def dashboard_page(request: Request):
             };
           }
 
-          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries){
+          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
               return;
@@ -6727,6 +6730,7 @@ def dashboard_page(request: Request):
                     { label: tr('heapFree'), data: heapFreeSeries, borderColor: '#38bdf8', tension: 0.15, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
                     { label: tr('heapMin'), data: heapMinSeries, borderColor: '#f59e0b', tension: 0.15, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
                     { label: tr('heapLargest'), data: heapLargestSeries, borderColor: '#a78bfa', tension: 0.15, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
+                    { label: tr('heapSize'), data: heapSizeSeries, borderColor: '#10b981', tension: 0.15, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
                     { label: '', data: heapFreeSeries, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.15, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' }
                   ]
                 },
@@ -7114,7 +7118,7 @@ def dashboard_page(request: Request):
             if (!points.length) {
               txt('status', currentLang === 'de' ? 'Keine Verlaufsdaten verfügbar.' : 'No history data available.');
               setHistoryOverlays('');
-              buildCharts([], [], [], [], [], [], [], [], [], [], [], [], []);
+              buildCharts([], [], [], [], [], [], [], [], [], [], [], [], [], []);
               return;
             }
             const historyWarmup = points.length < 30;
@@ -7192,7 +7196,11 @@ def dashboard_page(request: Request):
               const n = Number(p.sysLargestFreeHeapBlock);
               return Number.isFinite(n) ? Math.round(n) : null;
             });
-            buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries);
+            const heapSizeSeries = points.map(p => {
+              const n = Number(p.sysHeapSize);
+              return Number.isFinite(n) ? Math.round(n) : null;
+            });
+            buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries);
           }
 
           async function loadTentNav(){
