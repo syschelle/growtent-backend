@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.223"
+APP_VERSION = "v0.224"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1808,6 +1808,12 @@ def poll_errors_page(request: Request):
       .card { border:1px solid rgba(148,163,184,.2); border-radius:10px; padding:10px; margin-bottom:10px; background:#111827; }
       .ok { color:#22c55e; font-weight:700; }
       .bad { color:#ef4444; font-weight:700; }
+      .status-pill { display:inline-flex; align-items:center; margin-left:8px; padding:2px 6px; border-radius:999px; vertical-align:middle; }
+      .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+      .status-pill.online { background:rgba(34,197,94,.14); border:1px solid rgba(34,197,94,.35); }
+      .status-pill.offline { background:rgba(239,68,68,.14); border:1px solid rgba(239,68,68,.35); }
+      .status-pill.online .status-dot { background:#22c55e; }
+      .status-pill.offline .status-dot { background:#ef4444; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
       a { color:#93c5fd; }
     </style>
@@ -1832,12 +1838,12 @@ def poll_errors_page(request: Request):
           if (!items.length) { list.innerHTML = '<div class="card muted">Keine Polling-Fehlerdaten vorhanden.</div>'; return; }
           list.innerHTML = items.map(it => {
             const online = it.online === true;
-            const cls = online ? 'ok' : 'bad';
+            const statusClass = online ? 'online' : 'offline';
             const label = online ? 'online' : 'offline';
             const err = it.last_error ? `<div class="mono" style="margin-top:8px;">${esc(it.last_error)}</div>` : '<div class="muted" style="margin-top:8px;">Kein Fehlertext</div>';
             const src = it.source_url ? `<div><a href="${esc(it.source_url)}" target="_blank" rel="noopener">${esc(it.source_url)}</a></div>` : '';
             return `<div class="card">
-              <div><strong>${esc(it.tent_name || ('Tent ' + it.tent_id))}</strong> <span class="${cls}">${label}</span></div>
+              <div><strong>${esc(it.tent_name || ('Tent ' + it.tent_id))}</strong> <span class="status-pill ${statusClass}" title="${label}" aria-label="${label}"><span class="status-dot"></span></span></div>
               ${src}
               <div class="muted">last_ok: ${esc(it.last_ok || '-')} | offline_since: ${esc(it.offline_since || '-')}</div>
               ${err}
@@ -4396,6 +4402,12 @@ def app_shell_page():
           .frame { width:100%; height:calc(100vh - 52px); border:0; display:block; }
           .navlink { display:block; padding:8px 10px; margin-bottom:8px; border-radius:8px; color:var(--text); text-decoration:none; }
           .navlink.active { background:rgba(59,130,246,.2); }
+          .status-pill { display:inline-flex; align-items:center; margin-left:8px; padding:3px 6px; border-radius:999px; vertical-align:middle; }
+          .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+          .status-pill.online { color:#22c55e; background:rgba(34,197,94,.14); border:1px solid rgba(34,197,94,.35); }
+          .status-pill.offline { color:#ef4444; background:rgba(239,68,68,.14); border:1px solid rgba(239,68,68,.35); }
+          .status-pill.online .status-dot { background:#22c55e; }
+          .status-pill.offline .status-dot { background:#ef4444; }
           .muted { color:var(--muted); font-size:.84rem; margin-bottom:10px; }
           .header-btn { border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); border-radius:10px; padding:4px 8px; cursor:pointer; box-shadow:0 2px 10px rgba(2,6,23,.22); }
           .guest-badge-center { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); padding:4px 10px; border-radius:999px; border:1px solid rgba(239,68,68,.55); background:rgba(220,38,38,.22); color:#fecaca; font-size:.82rem; font-weight:700; white-space:nowrap; }
@@ -4476,13 +4488,39 @@ def app_shell_page():
             if (window.matchMedia('(max-width:1024px)').matches) sideNav?.classList.remove('open');
           }
 
+          function getTentOnlineState(capturedAt){
+            if (!capturedAt) return false;
+            const ts = Date.parse(String(capturedAt));
+            if (!Number.isFinite(ts)) return false;
+            return (Date.now() - ts) <= (2 * 60 * 1000);
+          }
+
           async function loadTentNav(){
             const nav = document.getElementById('tentNav');
+            const lang = getLang();
+            const onlineText = lang === 'de' ? 'online' : 'online';
+            const offlineText = lang === 'de' ? 'offline' : 'offline';
             try {
               const res = await fetch('/tents', { cache:'no-store' });
               const tents = await res.json();
               if (!Array.isArray(tents) || tents.length === 0){ nav.innerHTML=''; return; }
-              nav.innerHTML = tents.map(t => `<a class="navlink" href="/app?page=dashboard&tent=${t.id}">${t.name}</a>`).join('');
+
+              const enriched = await Promise.all(tents.map(async (t) => {
+                try {
+                  const lr = await fetch(`/tents/${t.id}/latest`, { cache: 'no-store' });
+                  if (!lr.ok) return { ...t, capturedAt: null };
+                  const lj = await lr.json();
+                  return { ...t, capturedAt: lj?.captured_at || null };
+                } catch {
+                  return { ...t, capturedAt: null };
+                }
+              }));
+
+              nav.innerHTML = enriched.map(t => {
+                const online = getTentOnlineState(t.capturedAt);
+                const statusClass = online ? 'online' : 'offline';
+                return `<a class="navlink" href="/app?page=dashboard&tent=${t.id}">${t.name}<span class="status-pill ${statusClass}" title="${online ? onlineText : offlineText}" aria-label="${online ? onlineText : offlineText}"><span class="status-dot"></span></span></a>`;
+              }).join('');
             } catch { nav.innerHTML=''; }
           }
 
@@ -4707,14 +4745,30 @@ def dashboard_page(request: Request):
           .relay:active { transform:translateY(1px) scale(.99); }
           .on { background:linear-gradient(180deg, rgba(34,197,94,.35), rgba(22,163,74,.28)); color:var(--text); }
           .off { background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); color:var(--text); }
-          .status-online { color:#22c55e; font-weight:700; }
-          .status-offline { color:#ef4444; font-weight:700; }
+          .status-pill { display:inline-flex; align-items:center; margin-left:8px; padding:2px 6px; border-radius:999px; vertical-align:middle; }
+          .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+          .status-pill.online { background:rgba(34,197,94,.14); border:1px solid rgba(34,197,94,.35); }
+          .status-pill.offline { background:rgba(239,68,68,.14); border:1px solid rgba(239,68,68,.35); }
+          .status-pill.online .status-dot { background:#22c55e; }
+          .status-pill.offline .status-dot { background:#ef4444; }
           .alpha-led { width:10px; height:10px; border-radius:50%; display:inline-block; margin-left:6px; box-shadow:0 0 6px rgba(0,0,0,.35) inset, 0 0 5px rgba(255,255,255,.15); vertical-align:middle; }
           .alpha-led-green { background:#22c55e; }
           .alpha-led-yellow { background:#facc15; }
           .alpha-led-red { background:#ef4444; }
           .alpha-led-off { background:#64748b; opacity:.55; }
           .status-meta { color:var(--muted); font-size:.92rem; font-weight:500; margin-left:8px; }
+          #status {
+            min-height:1.25em;
+            max-height:3.1em;
+            overflow:auto;
+            display:flex;
+            align-items:flex-start;
+            padding:6px 8px;
+            margin-bottom:10px;
+            border:1px solid var(--grid);
+            border-radius:8px;
+            background:color-mix(in srgb, var(--card) 88%, transparent);
+          }
           /* Current value colors aligned with history line colors */
           #temp { color:#22d3ee; }
           #hum { color:#a78bfa; }
@@ -5520,7 +5574,16 @@ def dashboard_page(request: Request):
             if (ev.target?.id === 'pollErrorsModal') closePollErrorsModal();
           });
 
-          function txt(id, val){ const el=document.getElementById(id); if(el) el.textContent=val; }
+          function txt(id, val){
+            const el=document.getElementById(id);
+            if(!el) return;
+            let out = val;
+            if (id === 'status') {
+              const s = String(val ?? '').trim();
+              out = s ? (s.startsWith('Status:') ? s : `Status: ${s}`) : 'Status:';
+            }
+            el.textContent = out;
+          }
           function html(id, val){ const el=document.getElementById(id); if(el) el.innerHTML=val; }
           function escHtml(v){ return String(v ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
 
@@ -5624,9 +5687,9 @@ def dashboard_page(request: Request):
             }
             const online = getTentOnlineState(currentTentMeta.capturedAt);
             const statusLabel = online ? tr('online') : tr('offline');
-            const statusClass = online ? 'status-online' : 'status-offline';
+            const statusClass = online ? 'online' : 'offline';
             const last = formatLastSuccess(currentTentMeta.capturedAt);
-            html('titleMain', `${escHtml(currentTentMeta.navName)} <span class="${statusClass}">${escHtml(statusLabel)}</span><span class="status-meta">${tr('lastChange')} ${escHtml(last)}</span>`);
+            html('titleMain', `${escHtml(currentTentMeta.navName)} <span class="status-pill ${statusClass}" title="${escHtml(statusLabel)}" aria-label="${escHtml(statusLabel)}"><span class="status-dot"></span></span><span class="status-meta">${tr('lastChange')} ${escHtml(last)}</span>`);
             html('sourceText', '');
 
             const espUrl = getControllerBaseUrl(currentTentMeta.source_url);
@@ -7152,8 +7215,8 @@ def dashboard_page(request: Request):
                 const active = Number(t.id) === Number(currentTentId);
                 const online = getTentOnlineState(t.capturedAt);
                 const statusLabel = online ? tr('online') : tr('offline');
-                const statusClass = online ? 'status-online' : 'status-offline';
-                return `<a class="navlink ${active ? 'active' : ''}" href="/app?page=dashboard&tent=${t.id}">${escHtml(t.navName)} <span class="${statusClass}">${escHtml(statusLabel)}</span></a>`;
+                const statusClass = online ? 'online' : 'offline';
+                return `<a class="navlink ${active ? 'active' : ''}" href="/app?page=dashboard&tent=${t.id}">${escHtml(t.navName)} <span class="status-pill ${statusClass}" title="${escHtml(statusLabel)}" aria-label="${escHtml(statusLabel)}"><span class="status-dot"></span></span></a>`;
               }).join('');
               if (nav.innerHTML !== nextNavHtml) nav.innerHTML = nextNavHtml;
 
