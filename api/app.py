@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.224"
+APP_VERSION = "v0.225"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -4769,6 +4769,8 @@ def dashboard_page(request: Request):
             border-radius:8px;
             background:color-mix(in srgb, var(--card) 88%, transparent);
           }
+          #status .status-ok { color:#22c55e; font-weight:700; }
+          #status .status-err { color:#ef4444; font-weight:700; }
           /* Current value colors aligned with history line colors */
           #temp { color:#22d3ee; }
           #hum { color:#a78bfa; }
@@ -5577,12 +5579,21 @@ def dashboard_page(request: Request):
           function txt(id, val){
             const el=document.getElementById(id);
             if(!el) return;
-            let out = val;
             if (id === 'status') {
+              if (typeof window.__statusKnown !== 'boolean') window.__statusKnown = false;
+              const esc = (v) => String(v ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
               const s = String(val ?? '').trim();
-              out = s ? (s.startsWith('Status:') ? s : `Status: ${s}`) : 'Status:';
+              if (s) {
+                window.__statusKnown = true;
+                el.innerHTML = `Status: <span class="status-err">${esc(s)}</span>`;
+              } else if (window.__statusKnown) {
+                el.innerHTML = `Status: <span class="status-ok">OK</span>`;
+              } else {
+                el.innerHTML = `Status:`;
+              }
+              return;
             }
-            el.textContent = out;
+            el.textContent = val;
           }
           function html(id, val){ const el=document.getElementById(id); if(el) el.innerHTML=val; }
           function escHtml(v){ return String(v ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
@@ -7108,6 +7119,7 @@ def dashboard_page(request: Request):
             }
             const historyWarmup = points.length < 30;
             if (historyWarmup) {
+              window.__statusKnown = true;
               txt('status', '');
               const remaining = Math.max(0, 30 - points.length);
               const warmupMsg = currentLang === 'de'
@@ -7116,6 +7128,7 @@ def dashboard_page(request: Request):
               setHistoryOverlays(warmupMsg);
             } else {
               setHistoryOverlays('');
+              window.__statusKnown = true;
               txt('status', usedMinutes !== minutes ? (currentLang === 'de' ? 'Keine aktuellen Daten im gewählten Zeitraum, zeige letzte verfügbare Daten.' : 'No recent data in selected range, showing last available data.') : '');
             }
 
