@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.227
+
+### History average line in charts
+- Added average lines to Temperature History and VPD History charts.
+- Added i18n label for `Average` / `Durchschnitt`.
+- Updated average line style to red/white dashed for better visibility.
+
 ## v0.223
 
 ### Pushover noise reduction
