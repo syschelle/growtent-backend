@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.231
+
+### Legend stats on average lines
+- Moved min/max range info to the `Average` legend entries (Temperature + VPD).
+- Legend now shows: average current value first, then `(min ... / max ...)` for the selected timeframe.
+
 ## v0.230
 
 ### VPD legend ordering
