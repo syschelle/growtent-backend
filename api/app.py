@@ -5101,6 +5101,7 @@ def dashboard_page(request: Request):
               extTempSensor: 'Sensor',
               // mainPower removed
               target: 'Target',
+              average: 'Average',
               relays: 'Relays',
               relaysExtra: 'Irrigation relays 6-8',
               shelly: 'Shelly Devices',
@@ -5236,6 +5237,7 @@ def dashboard_page(request: Request):
               extTempSensor: 'Sensor',
               // mainPower removed
               target: 'Sollwert',
+              average: 'Durchschnitt',
               relays: 'Relais',
               relaysExtra: 'Bewässerungsrelais 6-8',
               shelly: 'Shelly-Geräte',
@@ -6589,6 +6591,16 @@ def dashboard_page(request: Request):
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
               return;
             }
+
+            const calcSeriesAverage = (series, decimals = 2) => {
+              const valid = (Array.isArray(series) ? series : [])
+                .map((v) => Number(v))
+                .filter((v) => Number.isFinite(v));
+              if (!valid.length) return null;
+              const avg = valid.reduce((sum, value) => sum + value, 0) / valid.length;
+              return Number(avg.toFixed(decimals));
+            };
+
             if (tempChart) tempChart.destroy();
             if (humChart) humChart.destroy();
             if (vpdChart) vpdChart.destroy();
@@ -6603,6 +6615,8 @@ def dashboard_page(request: Request):
             if (tempCtx) {
               const tTarget = Number.isFinite(targetTempCChart) ? convertTempFromC(targetTempCChart) : null;
               const tempTargetLine = labels.map(() => (Number.isFinite(tTarget) ? Number(tTarget.toFixed(1)) : null));
+              const tempAvg = calcSeriesAverage(temp, 1);
+              const tempAvgLine = labels.map(() => (Number.isFinite(tempAvg) ? tempAvg : null));
               tempChart = new Chart(tempCtx, {
                 type: 'line',
                 data: {
@@ -6611,6 +6625,8 @@ def dashboard_page(request: Request):
                     { label: `${tr('temperature')} ${tempUnitLabel}`, data: temp, borderColor: '#22d3ee', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
                     { label: `${tr('rawValue')} ${tr('temperature')} ${tempUnitLabel}`, data: tempRawSeries, borderColor: '#67e8f9', borderDash: [6,4], tension: 0.2, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
                     { label: '', data: temp, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' },
+                    { label: `${tr('average')} ${tempUnitLabel}`, data: tempAvgLine, borderColor: '#000000', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
+                    { label: '', data: tempAvgLine, borderColor: '#ffffff', borderDash: [8,8], borderDashOffset: 8, borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: `${tr('target')} ${tempUnitLabel}`, data: tempTargetLine, borderColor: targetLineColor(), borderDash: [6,4], tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' }
                   ]
                 },
@@ -6659,6 +6675,8 @@ def dashboard_page(request: Request):
             const vpdCtx = document.getElementById('vpdChart');
             if (vpdCtx) {
               const vpdTargetLine = labels.map(() => (Number.isFinite(targetVpdChart) ? Number(targetVpdChart.toFixed(2)) : null));
+              const vpdAvg = calcSeriesAverage(vpd, 2);
+              const vpdAvgLine = labels.map(() => (Number.isFinite(vpdAvg) ? vpdAvg : null));
               vpdChart = new Chart(vpdCtx, {
                 type: 'line',
                 data: {
@@ -6666,6 +6684,8 @@ def dashboard_page(request: Request):
                   datasets: [
                     { label: `${tr('vpd')} kPa`, data: vpd, borderColor: '#f59e0b', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
                     { label: '', data: vpd, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' },
+                    { label: `${tr('average')} kPa`, data: vpdAvgLine, borderColor: '#000000', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
+                    { label: '', data: vpdAvgLine, borderColor: '#ffffff', borderDash: [8,8], borderDashOffset: 8, borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: `${tr('target')} kPa`, data: vpdTargetLine, borderColor: targetLineColor(), borderDash: [6,4], tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' }
                   ]
                 },
