@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.228
+
+### History range selector
+- Added `12h` option to dashboard history range selector.
+- Allowed `720` minutes as a valid range value in frontend range switching logic.
+
 ## v0.227
 
 ### History average line in charts

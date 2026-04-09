@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.227"
+APP_VERSION = "v0.228"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -4936,6 +4936,7 @@ def dashboard_page(request: Request):
           <span id=\"rangeLabelLive\">Range for history:</span>
           <select id=\"rangeSelectLive\" style=\"padding:4px 8px; border-radius:8px;\">
             <option value=\"60\">1h</option>
+            <option value=\"720\">12h</option>
             <option value=\"1440\">24h</option>
             <option value=\"2880\">48h</option>
           </select>
@@ -7316,7 +7317,7 @@ def dashboard_page(request: Request):
             localStorage.setItem('gt_range_minutes', activeRange);
             rangeLiveEl.value = activeRange;
             rangeLiveEl.addEventListener('change', async (ev) => {
-              const nextRange = ['60','1440','2880'].includes(ev.target.value) ? ev.target.value : '1440';
+              const nextRange = ['60','720','1440','2880'].includes(ev.target.value) ? ev.target.value : '1440';
               try {
                 const r = await fetch(`/tents/${currentTentId}/history?minutes=${encodeURIComponent(nextRange)}&filter_spikes=1`, { cache:'no-store' });
                 const j = await r.json().catch(() => ({}));
