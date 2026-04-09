@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.230
+
+### VPD legend ordering
+- Reordered VPD legend text to show current value first, then min/max for selected timeframe.
+- Example: `VPD kPa: 1.02 (min 0.82 / max 1.14)`.
+
 ## v0.229
 
 ### VPD legend stats
