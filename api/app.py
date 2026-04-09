@@ -6625,7 +6625,7 @@ def dashboard_page(request: Request):
                     { label: `${tr('temperature')} ${tempUnitLabel}`, data: temp, borderColor: '#22d3ee', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
                     { label: `${tr('rawValue')} ${tr('temperature')} ${tempUnitLabel}`, data: tempRawSeries, borderColor: '#67e8f9', borderDash: [6,4], tension: 0.2, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
                     { label: '', data: temp, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' },
-                    { label: `${tr('average')} ${tempUnitLabel}`, data: tempAvgLine, borderColor: '#000000', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
+                    { label: `${tr('average')} ${tempUnitLabel}`, data: tempAvgLine, borderColor: '#ef4444', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: '', data: tempAvgLine, borderColor: '#ffffff', borderDash: [8,8], borderDashOffset: 8, borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: `${tr('target')} ${tempUnitLabel}`, data: tempTargetLine, borderColor: targetLineColor(), borderDash: [6,4], tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' }
                   ]
@@ -6684,7 +6684,7 @@ def dashboard_page(request: Request):
                   datasets: [
                     { label: `${tr('vpd')} kPa`, data: vpd, borderColor: '#f59e0b', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
                     { label: '', data: vpd, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' },
-                    { label: `${tr('average')} kPa`, data: vpdAvgLine, borderColor: '#000000', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
+                    { label: `${tr('average')} kPa`, data: vpdAvgLine, borderColor: '#ef4444', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: '', data: vpdAvgLine, borderColor: '#ffffff', borderDash: [8,8], borderDashOffset: 8, borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: `${tr('target')} kPa`, data: vpdTargetLine, borderColor: targetLineColor(), borderDash: [6,4], tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' }
                   ]
