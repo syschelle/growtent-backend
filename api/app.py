@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.228"
+APP_VERSION = "v0.229"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -6675,6 +6675,14 @@ def dashboard_page(request: Request):
 
             const vpdCtx = document.getElementById('vpdChart');
             if (vpdCtx) {
+              const vpdValid = (Array.isArray(vpd) ? vpd : [])
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value));
+              const vpdMin = vpdValid.length ? Math.min(...vpdValid) : null;
+              const vpdMax = vpdValid.length ? Math.max(...vpdValid) : null;
+              const vpdMinMaxSuffix = (Number.isFinite(vpdMin) && Number.isFinite(vpdMax))
+                ? ` (min ${vpdMin.toFixed(2)} / max ${vpdMax.toFixed(2)})`
+                : '';
               const vpdTargetLine = labels.map(() => (Number.isFinite(targetVpdChart) ? Number(targetVpdChart.toFixed(2)) : null));
               const vpdAvg = calcSeriesAverage(vpd, 2);
               const vpdAvgLine = labels.map(() => (Number.isFinite(vpdAvg) ? vpdAvg : null));
@@ -6683,7 +6691,7 @@ def dashboard_page(request: Request):
                 data: {
                   labels,
                   datasets: [
-                    { label: `${tr('vpd')} kPa`, data: vpd, borderColor: '#f59e0b', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
+                    { label: `${tr('vpd')} kPa${vpdMinMaxSuffix}`, data: vpd, borderColor: '#f59e0b', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
                     { label: '', data: vpd, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' },
                     { label: `${tr('average')} kPa`, data: vpdAvgLine, borderColor: '#ef4444', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: '', data: vpdAvgLine, borderColor: '#ffffff', borderDash: [8,8], borderDashOffset: 8, borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },

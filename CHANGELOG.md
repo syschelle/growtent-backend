@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.229
+
+### VPD legend stats
+- Added min/max values for the selected timeframe directly into the VPD chart legend label.
+- Keeps existing current-value display in legend while adding range context (`min ... / max ...`).
+
 ## v0.228
 
 ### History range selector
