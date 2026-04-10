@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.232"
+APP_VERSION = "v0.233"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -7176,7 +7176,13 @@ def dashboard_page(request: Request):
             } else {
               setHistoryOverlays('');
               window.__statusKnown = true;
-              txt('status', usedMinutes !== minutes ? (currentLang === 'de' ? 'Zelt offline oder /api/stats aktuell nicht erreichbar.' : 'Tent offline or /api/stats currently unreachable.') : '');
+              const navCapturedAt = currentTentMeta?.capturedAt || null;
+              const tentLooksOffline = !getTentOnlineState(navCapturedAt);
+              if (tentLooksOffline) {
+                txt('status', currentLang === 'de' ? 'Zelt offline oder /api/stats aktuell nicht erreichbar.' : 'Tent offline or /api/stats currently unreachable.');
+              } else {
+                txt('status', usedMinutes !== minutes ? (currentLang === 'de' ? 'Keine aktuellen Daten im gewählten Zeitraum, zeige letzte verfügbare Daten.' : 'No recent data in selected range, showing last available data.') : '');
+              }
             }
 
             const labels = points.map(p => {

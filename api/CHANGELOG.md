@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.233
+
+### Keep offline status stable
+- Prevented dashboard status flicker between `OK` and offline message while a tent is offline.
+- History refresh no longer clears status to `OK` when tent is still considered offline.
+
 ## v0.232
 
 ### Offline status messaging alignment
