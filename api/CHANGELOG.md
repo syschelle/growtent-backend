@@ -2,6 +2,12 @@
 
 All entries are maintained in English only.
 
+## v0.234
+
+### Pushover online recovery notifications
+- Added `tent online` Pushover notification when a tent recovers from a previously notified offline episode.
+- Recovery message can include approximate offline duration.
+
 ## v0.233
 
 ### Keep offline status stable

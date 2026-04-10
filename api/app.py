@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.233"
+APP_VERSION = "v0.234"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1146,8 +1146,28 @@ def poll_loop():
 
                         save_state(tent["id"], payload)
 
-                        # status reset on successful fetch (no online push to avoid noise)
+                        # status reset on successful fetch
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
+                        was_offline = (st.get("online") is False)
+                        was_offline_notified = bool(st.get("offline_notified"))
+                        offline_since_prev = st.get("offline_since")
+
+                        # send recovery notification once when an offline episode was notified
+                        if was_offline and was_offline_notified:
+                            mins_txt = ""
+                            try:
+                                if offline_since_prev:
+                                    since_dt = datetime.fromisoformat(str(offline_since_prev).replace('Z', '+00:00'))
+                                    offline_mins = max(0, int((datetime.now(timezone.utc) - since_dt).total_seconds() // 60))
+                                    mins_txt = f" (offline for ~{offline_mins} min)"
+                            except Exception:
+                                mins_txt = ""
+                            _send_pushover(
+                                "CanopyOps: tent online",
+                                f"Tent #{tent['id']} is reachable again{mins_txt} ({tent['source_url']}).",
+                                priority=0,
+                            )
+
                         st["online"] = True
                         st["offline_since"] = None
                         st["offline_notified"] = False
