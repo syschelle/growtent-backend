@@ -2,6 +2,14 @@
 
 All entries are maintained in English only.
 
+## v0.232
+
+### Offline status messaging alignment
+- Aligned dashboard status messaging with the red offline dot threshold (`> 2 min` without fresh data).
+- Updated delayed-source message to explicitly mention `/api/stats` data staleness.
+- Shortened offline fallback status text to:
+  - `Tent offline or /api/stats currently unreachable.`
+
 ## v0.231
 
 ### Legend stats on average lines

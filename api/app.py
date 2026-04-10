@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.231"
+APP_VERSION = "v0.232"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -6837,8 +6837,11 @@ def dashboard_page(request: Request):
             txt('status', '');
             if (j?.captured_at) {
               const ageMs = Date.now() - new Date(j.captured_at).getTime();
-              if (Number.isFinite(ageMs) && ageMs > (15 * 60 * 1000)) {
-                txt('status', currentLang === 'de' ? 'Zeige letzte bekannte Werte (Quelle verzögert/nicht erreichbar).' : 'Showing last known values (source delayed/unreachable).');
+              // Keep this threshold aligned with the red online/offline dot logic (2 minutes).
+              if (Number.isFinite(ageMs) && ageMs > (2 * 60 * 1000)) {
+                txt('status', currentLang === 'de'
+                  ? 'Zeige letzte bekannte Werte (seit >2 Min keine erfolgreichen Daten von /api/stats).' 
+                  : 'Showing last known values (no successful /api/stats data for >2 min).');
               }
             }
             try {
@@ -7173,7 +7176,7 @@ def dashboard_page(request: Request):
             } else {
               setHistoryOverlays('');
               window.__statusKnown = true;
-              txt('status', usedMinutes !== minutes ? (currentLang === 'de' ? 'Keine aktuellen Daten im gewählten Zeitraum, zeige letzte verfügbare Daten.' : 'No recent data in selected range, showing last available data.') : '');
+              txt('status', usedMinutes !== minutes ? (currentLang === 'de' ? 'Zelt offline oder /api/stats aktuell nicht erreichbar.' : 'Tent offline or /api/stats currently unreachable.') : '');
             }
 
             const labels = points.map(p => {
