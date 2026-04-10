@@ -2,6 +2,11 @@
 
 All entries are maintained in English only.
 
+## v0.235
+
+### Shelly schedule visibility for all devices
+- Dashboard now shows parsed `ON/OFF` schedule info for all Shelly cards (when a `settings.shelly.<device>.line` schedule exists), not only for `light`.
+
 ## v0.234
 
 ### Pushover online recovery notifications

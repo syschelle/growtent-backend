@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.234"
+APP_VERSION = "v0.235"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -6402,7 +6402,7 @@ def dashboard_page(request: Request):
               const scheduleText = (onMatch || offMatch)
                 ? `${onMatch ? `${tr('scheduleOn')} ${onMatch[1].trim()}` : ''}${(onMatch && offMatch) ? ' | ' : ''}${offMatch ? `${tr('scheduleOff')} ${offMatch[1].trim()}` : ''}`
                 : '';
-              const scheduleRight = (dev.key === 'light' && scheduleText)
+              const scheduleRight = scheduleText
                 ? `<span class="small" style="white-space:nowrap; font-weight:400;">${scheduleText}</span>`
                 : '';
               const changeTs = (dev.key === 'main' && shellyMainDirectTs) ? shellyMainDirectTs : shellyLastSwitches?.[dev.key];
