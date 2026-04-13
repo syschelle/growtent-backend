@@ -2,6 +2,15 @@
 
 All entries are maintained in English only.
 
+## v0.236
+
+### Irrigation plan: editable last run date + robust run tracking
+- Added editable `last_run_date` support to irrigation-plan updates (`PUT /tents/{tent_id}/irrigation-plan`).
+- Added date input in both irrigation plan modals (Setup + Dashboard), prefilled with current last run date.
+- Scheduler/plan start date can now be adjusted directly by selecting a date.
+- Added automatic `irrigation_last_run_date` update when watering actually starts (`irrigation.runsLeft` transition `0 -> >0`).
+- Kept existing manual start date updates and schedule-trigger updates in place.
+
 ## v0.235
 
 ### Shelly schedule visibility for all devices
