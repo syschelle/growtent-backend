@@ -4,7 +4,7 @@ A Dockerized backend + web app to monitor and control one or more GrowTent contr
 
 This project only works with controller firmware/API compatible with the `syschelle/GrowTent` repository: https://github.com/syschelle/GrowTent
 
-<img width="1846" height="1027" alt="image" src="https://github.com/user-attachments/assets/c0d59dec-b54a-470a-88fa-2ebb1f875bfd" />
+<img width="1851" height="1038" alt="image" src="https://github.com/user-attachments/assets/8fc28274-daa2-48d6-93c0-1ed54d989c6e" />
 
 ## What this project is for
 
