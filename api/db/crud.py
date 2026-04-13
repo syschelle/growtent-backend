@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 from fastapi import HTTPException
 
@@ -154,6 +155,14 @@ def update_irrigation_plan_raw(tent_id: int, payload: dict):
     except Exception:
         raise HTTPException(status_code=400, detail="invalid schedule values")
 
+    raw_last_run_date = payload.get("last_run_date", None)
+    manual_last_run_date = None
+    if raw_last_run_date is not None and str(raw_last_run_date).strip() != "":
+        try:
+            manual_last_run_date = date.fromisoformat(str(raw_last_run_date).strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid last_run_date (expected YYYY-MM-DD)")
+
     plan_json = json.dumps(
         {
             "enabled": enabled,
@@ -173,13 +182,15 @@ def update_irrigation_plan_raw(tent_id: int, payload: dict):
             prev_enabled = bool(prev_plan.get("enabled", False))
             last_run_date = prev[1]
 
-            # On first enable, start schedule from "tomorrow" by treating today as last run.
-            # If it already ran today, keep today's date.
-            if enabled and not prev_enabled:
-                from datetime import date
-                today = date.today()
-                if not last_run_date or last_run_date < today:
-                    last_run_date = today
+            if manual_last_run_date is not None:
+                last_run_date = manual_last_run_date
+            else:
+                # On first enable, start schedule from "tomorrow" by treating today as last run.
+                # If it already ran today, keep today's date.
+                if enabled and not prev_enabled:
+                    today = date.today()
+                    if not last_run_date or last_run_date < today:
+                        last_run_date = today
 
             cur.execute(
                 """

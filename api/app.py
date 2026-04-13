@@ -59,6 +59,7 @@ PUSHOVER_USER_KEY = (os.getenv("PUSHOVER_USER_KEY") or "").strip()
 PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_DEVICE = (os.getenv("PUSHOVER_DEVICE") or "").strip()
 POLL_NOTIFY_STATE: dict[int, dict] = {}
+WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1088,6 +1089,28 @@ def _try_run_irrigation_schedule(tent: dict, payload: dict):
             cur.execute("UPDATE tents SET irrigation_last_run_date=%s WHERE id=%s", (today, tent["id"]))
 
 
+def _track_watering_run_from_payload(tent_id: int, payload: dict):
+    """Mark last_run_date when a watering cycle starts, independent of trigger source."""
+    try:
+        runs_left = int((payload or {}).get("irrigation.runsLeft") or 0)
+    except Exception:
+        runs_left = 0
+
+    is_active = runs_left > 0
+    was_active = bool(WATERING_ACTIVE_BY_TENT.get(tent_id, False))
+
+    if is_active and not was_active:
+        today = date.today()
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE tents SET irrigation_last_run_date=%s WHERE id=%s", (today, tent_id))
+        except Exception as e:
+            print(f"[irrigation] tent #{tent_id} last_run_date auto-update failed: {e}")
+
+    WATERING_ACTIVE_BY_TENT[tent_id] = is_active
+
+
 
 def _heap_warning_reason(payload: dict):
     try:
@@ -1145,6 +1168,7 @@ def poll_loop():
                         _refresh_main_shelly_in_payload(payload, tent)
 
                         save_state(tent["id"], payload)
+                        _track_watering_run_from_payload(tent["id"], payload)
 
                         # status reset on successful fetch
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
@@ -2145,6 +2169,14 @@ def update_irrigation_plan(tent_id: int, payload: dict):
     except Exception:
         raise HTTPException(status_code=400, detail="invalid schedule values")
 
+    raw_last_run_date = payload.get("last_run_date", None)
+    manual_last_run_date = None
+    if raw_last_run_date is not None and str(raw_last_run_date).strip() != "":
+        try:
+            manual_last_run_date = date.fromisoformat(str(raw_last_run_date).strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid last_run_date (expected YYYY-MM-DD)")
+
     plan_json = json.dumps(
         {
             "enabled": enabled,
@@ -2155,14 +2187,32 @@ def update_irrigation_plan(tent_id: int, payload: dict):
 
     with get_conn() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT irrigation_plan_json, irrigation_last_run_date FROM tents WHERE id=%s", (tent_id,))
+            prev = cur.fetchone()
+            if not prev:
+                raise HTTPException(status_code=404, detail="tent not found")
+
+            prev_plan = json.loads(prev[0] or '{}') if prev[0] else {}
+            prev_enabled = bool(prev_plan.get("enabled", False))
+            last_run_date = prev[1]
+
+            if manual_last_run_date is not None:
+                last_run_date = manual_last_run_date
+            else:
+                if enabled and not prev_enabled:
+                    today = date.today()
+                    if not last_run_date or last_run_date < today:
+                        last_run_date = today
+
             cur.execute(
                 """
                 UPDATE tents
-                SET irrigation_plan_json=%s
+                SET irrigation_plan_json=%s,
+                    irrigation_last_run_date=%s
                 WHERE id=%s
                 RETURNING id
                 """,
-                (plan_json, tent_id),
+                (plan_json, last_run_date, tent_id),
             )
             row = cur.fetchone()
             if not row:
@@ -2176,6 +2226,7 @@ def update_irrigation_plan(tent_id: int, payload: dict):
             "every_n_days": every_n_days,
             "offset_after_light_on_min": offset_after_light_on_min,
         },
+        "last_run_date": last_run_date.isoformat() if last_run_date else None,
     }
 
 
@@ -3295,6 +3346,8 @@ def setup_page(request: Request):
                 <input id=\"irPlanEveryDays\" type=\"number\" min=\"1\" step=\"1\" style=\"padding:8px 10px; border-radius:8px; width:160px; margin-bottom:10px;\" />
                 <div id=\"irPlanOffsetLabel\" style=\"margin-bottom:6px;\">Minuten nach Licht an</div>
                 <input id=\"irPlanOffset\" type=\"number\" min=\"0\" step=\"1\" style=\"padding:8px 10px; border-radius:8px; width:160px; margin-bottom:10px;\" />
+                <div id=\"irPlanLastRunDateLabel\" style=\"margin-bottom:6px;\">Letztes Bewässerungsdatum</div>
+                <input id=\"irPlanLastRunDate\" type=\"date\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
                 <div style=\"display:flex; gap:8px; flex-wrap:wrap;\">
                   <button type=\"button\" id=\"irPlanSaveBtn\">Plan speichern</button>
                   <button type=\"button\" id=\"irPlanCancelBtn\">Abbrechen</button>
@@ -3371,6 +3424,7 @@ def setup_page(request: Request):
               irrigationPlan: 'Irrigation plan',
               everyDays: 'Every N days',
               offsetAfterLight: 'Minutes after light on',
+              lastWateringDate: 'Last watering date',
               savePlan: 'Save plan',
               active: 'Active',
               guestTitle: 'Guest mode (read-only)',
@@ -3427,6 +3481,7 @@ def setup_page(request: Request):
               irrigationPlan: 'Bewässerungsplan',
               everyDays: 'Alle N Tage',
               offsetAfterLight: 'Minuten nach Licht an',
+              lastWateringDate: 'Letztes Bewässerungsdatum',
               savePlan: 'Plan speichern',
               active: 'Aktiv',
               guestTitle: 'Gastmodus (nur lesen)',
@@ -3500,6 +3555,7 @@ def setup_page(request: Request):
             set('irPlanEnabledLabel', tSetup('active'));
             set('irPlanEveryDaysLabel', tSetup('everyDays'));
             set('irPlanOffsetLabel', tSetup('offsetAfterLight'));
+            set('irPlanLastRunDateLabel', tSetup('lastWateringDate'));
             set('irPlanSaveBtn', tSetup('savePlan'));
             set('guestTitle', tSetup('guestTitle'));
             set('guestEnabledLabel', tSetup('guestEnabled'));
@@ -3551,7 +3607,8 @@ def setup_page(request: Request):
             const enabledEl = document.getElementById('irPlanEnabled');
             const everyEl = document.getElementById('irPlanEveryDays');
             const offsetEl = document.getElementById('irPlanOffset');
-            if (!modal || !enabledEl || !everyEl || !offsetEl) return;
+            const lastRunDateEl = document.getElementById('irPlanLastRunDate');
+            if (!modal || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl) return;
 
             currentPlanTentId = Number(tent.id || 0);
             if (title) title.textContent = `#${tent.id} ${tent.name}`;
@@ -3565,11 +3622,13 @@ def setup_page(request: Request):
               enabledEl.checked = !!p.enabled;
               everyEl.value = Number(p.every_n_days || 1);
               offsetEl.value = Number(p.offset_after_light_on_min || 0);
+              lastRunDateEl.value = j?.last_run_date || '';
               if (msg && j?.last_run_date) msg.textContent = `Last run: ${j.last_run_date}`;
             } catch {
               enabledEl.checked = false;
               everyEl.value = 1;
               offsetEl.value = 0;
+              lastRunDateEl.value = '';
               if (msg) msg.textContent = 'Failed to load plan.';
             }
           }
@@ -3579,12 +3638,14 @@ def setup_page(request: Request):
             const enabledEl = document.getElementById('irPlanEnabled');
             const everyEl = document.getElementById('irPlanEveryDays');
             const offsetEl = document.getElementById('irPlanOffset');
-            if (!currentPlanTentId || !enabledEl || !everyEl || !offsetEl) return;
+            const lastRunDateEl = document.getElementById('irPlanLastRunDate');
+            if (!currentPlanTentId || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl) return;
 
             const payload = {
               enabled: !!enabledEl.checked,
               every_n_days: Math.max(1, Number(everyEl.value || 1)),
               offset_after_light_on_min: Math.max(0, Number(offsetEl.value || 0)),
+              last_run_date: (lastRunDateEl.value || '').trim() || null,
             };
 
             try {
@@ -5032,6 +5093,8 @@ def dashboard_page(request: Request):
             <input id=\"dbIrPlanEveryDays\" type=\"number\" min=\"1\" step=\"1\" style=\"padding:8px 10px; border-radius:8px; width:160px; margin-bottom:10px;\" />
             <div id=\"dbIrPlanOffsetLabel\" style=\"margin-bottom:6px;\">Minutes after light on</div>
             <input id=\"dbIrPlanOffset\" type=\"number\" min=\"0\" step=\"1\" style=\"padding:8px 10px; border-radius:8px; width:160px; margin-bottom:10px;\" />
+            <div id=\"dbIrPlanLastRunDateLabel\" style=\"margin-bottom:6px;\">Last watering date</div>
+            <input id=\"dbIrPlanLastRunDate\" type=\"date\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
             <div style=\"display:flex; gap:8px; flex-wrap:wrap;\">
               <button type=\"button\" id=\"dbIrPlanSaveBtn\">Save plan</button>
               <button type=\"button\" id=\"dbIrPlanCancelBtn\">Cancel</button>
@@ -5200,7 +5263,7 @@ def dashboard_page(request: Request):
               irEndAt: 'End time',
               irLastRun: 'Last irrigation',
               lastShort: 'Last',
-              irAmount: 'Amount per task',
+              irAmount: 'Amount per 10s',
               irTimePerTask: 'Time/task',
               irBetweenTasks: 'Between tasks',
               irAmountTotal: 'Amount per pot',
@@ -5219,6 +5282,7 @@ def dashboard_page(request: Request):
               irrigationPlan: 'Irrigation plan',
               everyDays: 'Every N days',
               offsetAfterLight: 'Minutes after light on',
+              lastWateringDate: 'Last watering date',
               savePlan: 'Save plan',
               cancel: 'Cancel',
               active: 'Active',
@@ -5336,7 +5400,7 @@ def dashboard_page(request: Request):
               irEndAt: 'Endzeit',
               irLastRun: 'Letzte Bewässerung',
               lastShort: 'Letzte',
-              irAmount: 'Menge pro Task',
+              irAmount: 'Menge pro 10s',
               irTimePerTask: 'Zeit/Task',
               irBetweenTasks: 'Pause zwischen Tasks',
               irAmountTotal: 'Menge pro Topf',
@@ -5355,6 +5419,7 @@ def dashboard_page(request: Request):
               irrigationPlan: 'Bewässerungsplan',
               everyDays: 'Alle N Tage',
               offsetAfterLight: 'Minuten nach Licht an',
+              lastWateringDate: 'Letztes Bewässerungsdatum',
               savePlan: 'Plan speichern',
               cancel: 'Abbrechen',
               active: 'Aktiv',
@@ -5538,6 +5603,7 @@ def dashboard_page(request: Request):
             txt('dbIrPlanEnabledLabel', tr('active'));
             txt('dbIrPlanEveryDaysLabel', tr('everyDays'));
             txt('dbIrPlanOffsetLabel', tr('offsetAfterLight'));
+            txt('dbIrPlanLastRunDateLabel', tr('lastWateringDate'));
             txt('dbIrPlanSaveBtn', tr('savePlan'));
             txt('dbIrPlanCancelBtn', tr('cancel'));
             txt('dbExhPlanTitle', tr('exhaustVpdPlan'));
@@ -6033,7 +6099,8 @@ def dashboard_page(request: Request):
             const enabledEl = document.getElementById('dbIrPlanEnabled');
             const everyEl = document.getElementById('dbIrPlanEveryDays');
             const offsetEl = document.getElementById('dbIrPlanOffset');
-            if (!modal || !enabledEl || !everyEl || !offsetEl || !currentTentId) return;
+            const lastRunDateEl = document.getElementById('dbIrPlanLastRunDate');
+            if (!modal || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl || !currentTentId) return;
 
             if (title) title.textContent = `#${currentTentId}`;
             if (msg) msg.textContent = '';
@@ -6046,11 +6113,13 @@ def dashboard_page(request: Request):
               enabledEl.checked = !!p.enabled;
               everyEl.value = Number(p.every_n_days || 1);
               offsetEl.value = Number(p.offset_after_light_on_min || 0);
+              lastRunDateEl.value = j?.last_run_date || '';
               if (msg && j?.last_run_date) msg.textContent = `Last run: ${j.last_run_date}`;
             } catch {
               enabledEl.checked = false;
               everyEl.value = 1;
               offsetEl.value = 0;
+              lastRunDateEl.value = '';
               if (msg) msg.textContent = tr('loadFailed');
             }
           }
@@ -6060,12 +6129,14 @@ def dashboard_page(request: Request):
             const enabledEl = document.getElementById('dbIrPlanEnabled');
             const everyEl = document.getElementById('dbIrPlanEveryDays');
             const offsetEl = document.getElementById('dbIrPlanOffset');
-            if (!currentTentId || !enabledEl || !everyEl || !offsetEl) return;
+            const lastRunDateEl = document.getElementById('dbIrPlanLastRunDate');
+            if (!currentTentId || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl) return;
 
             const payload = {
               enabled: !!enabledEl.checked,
               every_n_days: Math.max(1, Number(everyEl.value || 1)),
               offset_after_light_on_min: Math.max(0, Number(offsetEl.value || 0)),
+              last_run_date: (lastRunDateEl.value || '').trim() || null,
             };
 
             try {
