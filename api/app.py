@@ -192,6 +192,20 @@ def _send_pushover(title: str, message: str, priority: int = 0, device: str | No
         return False
 
 
+def _tent_label_for_notify(tent: dict, payload: dict | None = None) -> str:
+    try:
+        if payload:
+            box_name = str(payload.get("settings.ui.boxName") or "").strip()
+            if box_name:
+                return box_name
+    except Exception:
+        pass
+    name = str((tent or {}).get("name") or "").strip()
+    if name:
+        return name
+    return f"Tent #{(tent or {}).get('id')}"
+
+
 @app.post("/auth/login")
 def auth_login(payload: LoginPayload):
     cfg = load_auth_config()
@@ -1201,6 +1215,8 @@ def poll_loop():
                         save_state(tent["id"], payload)
                         _track_watering_run_from_payload(tent["id"], payload)
 
+                        label = _tent_label_for_notify(tent, payload)
+
                         # status reset on successful fetch
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
                         was_offline = (st.get("online") is False)
@@ -1219,7 +1235,7 @@ def poll_loop():
                                 mins_txt = ""
                             _send_pushover(
                                 "CanopyOps: tent online",
-                                f"Tent #{tent['id']} is reachable again{mins_txt} ({tent['source_url']}).",
+                                f"{label} is reachable again{mins_txt} ({tent['source_url']}).",
                                 priority=0,
                             )
 
@@ -1254,7 +1270,7 @@ def poll_loop():
                                 _send_pushover(
                                     "CanopyOps: heap warning",
                                     (
-                                        f"Tent #{tent['id']} heap looks problematic: {heap_reason}. "
+                                        f"{label} heap looks problematic: {heap_reason}. "
                                         f"free={int(free_b) if free_b is not None else '-'} B, "
                                         f"min={int(min_b) if min_b is not None else '-'} B, "
                                         f"largest={int(largest_b) if largest_b is not None else '-'} B, "
@@ -1281,7 +1297,7 @@ def poll_loop():
                                 if allow_recover:
                                     _send_pushover(
                                         "CanopyOps: heap recovered",
-                                        f"Tent #{tent['id']} heap metrics are stable again.",
+                                        f"{label} heap metrics are stable again.",
                                         priority=0,
                                     )
                                     st["heap_recover_sent_at"] = now.isoformat()
@@ -1317,9 +1333,10 @@ def poll_loop():
 
                         if delay_elapsed and not bool(st.get("offline_notified")):
                             mins = max(0, int(OFFLINE_NOTIFY_DELAY_SECONDS // 60))
+                            label = _tent_label_for_notify(tent)
                             _send_pushover(
                                 "CanopyOps: tent offline",
-                                f"Tent #{tent['id']} is unreachable for ~{mins} min ({tent['source_url']}). Last error: {tent_err}",
+                                f"{label} is unreachable for ~{mins} min ({tent['source_url']}). Last error: {tent_err}",
                                 priority=0,
                             )
                             st["offline_notified"] = True
