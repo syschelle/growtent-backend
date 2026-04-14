@@ -43,7 +43,8 @@ app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 SESSIONS: dict[str, dict] = {}
 TWOFA_ENROLL: dict[str, dict] = {}
-SESSION_TTL_SECONDS = 60 * 60 * 12
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(60 * 60 * 72)))
+SESSION_REFRESH_THRESHOLD_SECONDS = int(os.getenv("SESSION_REFRESH_THRESHOLD_SECONDS", "900"))
 EMA_ALPHA = float(os.getenv("EMA_ALPHA", "0.3"))
 EMA_STATE: dict[int, dict] = {}
 SENSOR_INIT: dict[int, bool] = {}
@@ -60,6 +61,33 @@ PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_DEVICE = (os.getenv("PUSHOVER_DEVICE") or "").strip()
 POLL_NOTIFY_STATE: dict[int, dict] = {}
 WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
+
+
+def _refresh_session_if_needed(token: str | None, session: dict | None) -> int | None:
+    if not token or not session:
+        return None
+    if not bool(session.get("authenticated")) or bool(session.get("preauth")):
+        return None
+    now = time.time()
+    current_exp = float(session.get("expires_at") or 0)
+    if current_exp <= now:
+        return None
+    # Reduce write churn: only refresh when remaining time is below threshold.
+    if (current_exp - now) > SESSION_REFRESH_THRESHOLD_SECONDS:
+        return None
+    new_exp = now + SESSION_TTL_SECONDS
+    max_exp = session.get("max_expires_at")
+    if max_exp is not None:
+        try:
+            new_exp = min(float(max_exp), new_exp)
+        except Exception:
+            pass
+    # Avoid no-op writes.
+    if new_exp <= current_exp + 1:
+        return None
+    session["expires_at"] = new_exp
+    SESSIONS[token] = session
+    return max(1, int(new_exp - now))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -188,7 +216,7 @@ def auth_login(payload: LoginPayload):
                 raise HTTPException(status_code=401, detail="guest access expired")
             token = secrets.token_urlsafe(32)
             exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
-            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp}
+            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp, "max_expires_at": guest_exp_ts}
             resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": legacy_guest_exp})
             resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
             return resp
@@ -206,7 +234,7 @@ def auth_login(payload: LoginPayload):
                 raise HTTPException(status_code=401, detail="guest access expired")
             token = secrets.token_urlsafe(32)
             exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
-            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp}
+            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp, "max_expires_at": guest_exp_ts}
             resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": g.get("expires_at")})
             resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
             return resp
@@ -246,7 +274,7 @@ def auth_login(payload: LoginPayload):
             raise HTTPException(status_code=401, detail="guest access expired")
         token = secrets.token_urlsafe(32)
         exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
-        SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp}
+        SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp, "max_expires_at": guest_exp_ts}
         resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": src_expires})
         resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
         return resp
@@ -496,6 +524,9 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "guest mode: write actions disabled"})
 
     response = await call_next(request)
+    refreshed_max_age = _refresh_session_if_needed(token, session)
+    if refreshed_max_age is not None:
+        response.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=refreshed_max_age)
     if request.method == "GET" and (
         path.startswith("/app") or path.startswith("/setup") or path.startswith("/dashboard") or path.startswith("/changelog")
     ):
