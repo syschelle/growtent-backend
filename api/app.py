@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.237"
+APP_VERSION = "v0.238"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -4681,7 +4681,6 @@ def app_shell_page():
 
           function setFrame(){
             let src = '/dashboard?embed=1';
-            if (userRole === 'guest' && page === 'setup') page = 'dashboard';
             if (page === 'setup') src = '/setup?embed=1';
             else if (page === 'changelog') src = '/changelog?embed=1';
             else if (page === 'grow-guide') src = '/grow-guide?embed=1';
@@ -4774,9 +4773,6 @@ def app_shell_page():
                   const vm = (pj?.view_mode === 'mobile' || pj?.view_mode === 'desktop') ? pj.view_mode : null;
                   if (vm) localStorage.setItem('gt_view_mode', vm);
                 } catch {}
-                const setupLink = document.querySelector('.sidebar .navlink[data-page="setup"], .sidebar a[href="/app?page=setup"]');
-                if (setupLink) setupLink.style.display = 'none';
-                if (page === 'setup') page = 'dashboard';
               } else {
                 if (guestBadge) guestBadge.style.display = 'none';
                 localStorage.removeItem('gt_view_mode');

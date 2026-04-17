@@ -2,6 +2,13 @@
 
 All entries are maintained in English only.
 
+## v0.238
+
+### Guest setup link visibility in app shell
+- Restored `Setup` navigation link visibility for guest users in `/app` shell.
+- Removed guest-only forced redirect from `setup` page to `dashboard` in shell routing.
+- Guest write restrictions remain enforced server-side.
+
 ## v0.237
 
 ### Guest-only display mode + per-user persistence
