@@ -1,6 +1,14 @@
 # Changelog
 
-All entries are maintained in English only.
+Entries are maintained in project language (English/German as needed).
+
+## v0.239
+
+### Guest UX follow-up adjustments
+- Setup page in guest mode now shows only the `Appearance` tile; all other setup cards/sections are hidden for guests.
+- Restored `Open fullscreen` availability for guest users in dashboard stream actions.
+- Improved guest badge (`Gastmodus aktiv`) contrast for light theme.
+- Unified action button typography so link-style action buttons (e.g. `Open fullscreen`) match regular button weight/style.
 
 ## v0.238
 

@@ -593,7 +593,7 @@ async def auth_middleware(request: Request, call_next):
     # Guest restrictions must always apply when a guest session exists,
     # regardless of global auth enabled/disabled.
     if session and (session.get("role") or "admin") == "guest":
-        if path.startswith("/config") or path.startswith("/setup") or (path.startswith("/app") and request.query_params.get("page") == "setup"):
+        if path.startswith("/config"):
             if "text/html" in (request.headers.get("accept") or ""):
                 return RedirectResponse(url="/app?page=dashboard", status_code=302)
             return JSONResponse(status_code=403, content={"detail": "guest mode: access denied"})
@@ -3703,12 +3703,26 @@ def setup_page(request: Request):
           const browserLang = (navigator.language || 'en').toLowerCase();
           const initialLang = (localStorage.getItem('gt_lang') || (browserLang.startsWith('de') ? 'de' : 'en'));
           const initialUnit = (localStorage.getItem('gt_temp_unit') || 'C');
+          let setupIsGuest = false;
 
           sel.value = initialTheme;
           langSel.value = (initialLang === 'de') ? 'de' : 'en';
           unitSel.value = (initialUnit === 'F') ? 'F' : 'C';
           applyTheme(initialTheme);
           applySetupI18n();
+
+          function applySetupGuestModeUi(){
+            const keepIds = new Set(['setupTitle', 'rubricAppearance', 'appearanceCard']);
+            document.querySelectorAll('.setup-content .section-title, .setup-content .card').forEach(el => {
+              if (!setupIsGuest) {
+                el.style.display = '';
+                return;
+              }
+              el.style.display = keepIds.has(el.id) ? '' : 'none';
+            });
+            const navTents = document.getElementById('tentNavSetup');
+            if (navTents) navTents.style.display = setupIsGuest ? 'none' : '';
+          }
 
           langSel.addEventListener('change', () => {
             applySetupI18n();
@@ -4324,10 +4338,26 @@ def setup_page(request: Request):
             }
           }
 
-          loadTents();
-          loadSetupNavTents();
-          loadAuthConfigUi();
-          loadGuestUsers();
+          (async () => {
+            try {
+              const r = await fetch('/auth/whoami', { cache: 'no-store' });
+              const j = await r.json().catch(() => ({}));
+              setupIsGuest = (j?.role === 'guest');
+            } catch {
+              setupIsGuest = false;
+            }
+
+            applySetupGuestModeUi();
+
+            if (setupIsGuest) {
+              return;
+            }
+
+            loadTents();
+            loadSetupNavTents();
+            loadAuthConfigUi();
+            loadGuestUsers();
+          })();
         </script>
       </body>
     </html>
@@ -4613,6 +4643,11 @@ def app_shell_page():
           .muted { color:var(--muted); font-size:.84rem; margin-bottom:10px; }
           .header-btn { border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); border-radius:10px; padding:4px 8px; cursor:pointer; box-shadow:0 2px 10px rgba(2,6,23,.22); }
           .guest-badge-center { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); padding:4px 10px; border-radius:999px; border:1px solid rgba(239,68,68,.55); background:rgba(220,38,38,.22); color:#fecaca; font-size:.82rem; font-weight:700; white-space:nowrap; }
+          :root[data-theme='light'] .guest-badge-center {
+            border:1px solid rgba(185,28,28,.65);
+            background:rgba(239,68,68,.18);
+            color:#7f1d1d;
+          }
           @media (max-width:1024px){
             .sidebar{
               width:100%;
@@ -4840,7 +4875,7 @@ def dashboard_page(request: Request):
           .phase-cost { font-size:2rem; font-weight:800; line-height:1.1; }
           .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
           .status-badge { padding:2px 8px; border-radius:999px; font-size:.75rem; font-weight:700; }
-          .stream-open-btn { display:inline-block; padding:6px 9px; border-radius:10px; border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); text-decoration:none; font-size:.82rem; font-weight:800; box-shadow:0 2px 10px rgba(2,6,23,.22); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; }
+          .stream-open-btn { display:inline-block; padding:7px 11px; border-radius:9px; border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); text-decoration:none; font-size:.8rem; font-weight:700; box-shadow:0 2px 10px rgba(2,6,23,.22); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; }
           #espOpenBtn, #espStatsBtn, #pollErrorsBtn { font-weight:400; }
           .mobile-nav-toggle { display:none; }
           .title-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
@@ -4852,8 +4887,8 @@ def dashboard_page(request: Request):
           body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle) {
             pointer-events:none; opacity:.55; cursor:not-allowed;
           }
-          body.role-pending #espOpenBtn, body.role-pending #espStatsBtn, body.role-pending #pollErrorsBtn, body.role-pending #streamOpenBtn,
-          body.role-guest #espOpenBtn, body.role-guest #espStatsBtn, body.role-guest #pollErrorsBtn, body.role-guest #streamOpenBtn,
+          body.role-pending #espOpenBtn, body.role-pending #espStatsBtn, body.role-pending #pollErrorsBtn,
+          body.role-guest #espOpenBtn, body.role-guest #espStatsBtn, body.role-guest #pollErrorsBtn,
           body.role-pending .shelly-open-btn, body.role-guest .shelly-open-btn {
             pointer-events:none; opacity:.55; cursor:not-allowed;
           }
