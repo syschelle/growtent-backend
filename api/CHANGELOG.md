@@ -2,6 +2,16 @@
 
 All entries are maintained in English only.
 
+## v0.237
+
+### Guest-only display mode + per-user persistence
+- Display mode toggle (`mobile/desktop`) is now restricted to guest users only.
+- Added backend endpoints for UI preferences:
+  - `GET /ui/preferences`
+  - `POST /ui/preferences`
+- Display mode is now persisted per logged-in user (role+username key) in DB table `app_user_ui_prefs`.
+- Shell and dashboard now load/store guest display mode via backend preferences instead of only browser-local state.
+
 ## v0.236
 
 ### Irrigation plan: editable last run date + robust run tracking

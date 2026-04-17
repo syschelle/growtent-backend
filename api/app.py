@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.236"
+APP_VERSION = "v0.237"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -373,6 +373,69 @@ def auth_whoami(request: Request):
     }
 
 
+def _session_user_key(session: dict | None) -> str | None:
+    if not session:
+        return None
+    role = str(session.get("role") or "admin").strip() or "admin"
+    username = str(session.get("username") or "").strip()
+    if not username:
+        username = "_default"
+    return f"{role}:{username}"
+
+
+@app.get("/ui/preferences")
+def get_ui_preferences(request: Request):
+    session = get_session(request.cookies.get("caop_session"))
+    if not session:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    user_key = _session_user_key(session)
+    view_mode = None
+    if user_key:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT view_mode FROM app_user_ui_prefs WHERE user_key=%s", (user_key,))
+                    row = cur.fetchone()
+                    if row and row[0] in ("mobile", "desktop"):
+                        view_mode = row[0]
+        except Exception:
+            view_mode = None
+    return {"view_mode": view_mode}
+
+
+class UiPreferencesPayload(BaseModel):
+    view_mode: str
+
+
+@app.post("/ui/preferences")
+def save_ui_preferences(payload: UiPreferencesPayload, request: Request):
+    session = get_session(request.cookies.get("caop_session"))
+    if not session:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    role = str(session.get("role") or "admin")
+    # Requirement: display option is only for guest users.
+    if role != "guest":
+        raise HTTPException(status_code=403, detail="display option only allowed for guest users")
+    mode = str(payload.view_mode or "").strip().lower()
+    if mode not in ("mobile", "desktop"):
+        raise HTTPException(status_code=400, detail="view_mode must be 'mobile' or 'desktop'")
+    user_key = _session_user_key(session)
+    if not user_key:
+        raise HTTPException(status_code=400, detail="invalid session user")
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO app_user_ui_prefs(user_key, view_mode, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (user_key)
+                DO UPDATE SET view_mode=EXCLUDED.view_mode, updated_at=NOW()
+                """,
+                (user_key, mode),
+            )
+    return {"ok": True, "view_mode": mode}
+
+
 @app.get("/auth/qr.png")
 def auth_qr_png(u: str):
     img = qrcode.make(u)
@@ -635,6 +698,15 @@ def init_db():
                 """
             )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_app_guest_users_enabled_exp ON app_guest_users(enabled, expires_at);")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_user_ui_prefs (
+                    user_key TEXT PRIMARY KEY,
+                    view_mode TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tent_state_tent_time ON tent_state(tent_id, captured_at DESC);")
             cur.execute(
                 """
@@ -4596,6 +4668,7 @@ def app_shell_page():
             viewBtn.textContent = mode === 'mobile'
               ? (de ? 'Desktop Ansicht' : 'Desktop view')
               : (de ? 'Mobile Ansicht' : 'Mobile view');
+            viewBtn.style.display = (userRole === 'guest') ? 'inline-block' : 'none';
             const gb = document.getElementById('guestModeBadge');
             if (gb) gb.textContent = de ? 'Gastmodus aktiv' : 'Guest mode active';
           }
@@ -4671,10 +4744,18 @@ def app_shell_page():
             sideNav?.classList.toggle('open');
           });
 
-          viewBtn?.addEventListener('click', () => {
+          viewBtn?.addEventListener('click', async () => {
+            if (userRole !== 'guest') return;
             const cur = localStorage.getItem('gt_view_mode') || 'auto';
             const next = cur === 'mobile' ? 'desktop' : 'mobile';
             localStorage.setItem('gt_view_mode', next);
+            try {
+              await fetch('/ui/preferences', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ view_mode: next })
+              });
+            } catch {}
             updateViewBtnLabel();
             try { frame.contentWindow?.location.reload(); } catch { frame.setAttribute('src', frame.getAttribute('src') || '/dashboard?embed=1'); }
           });
@@ -4687,11 +4768,18 @@ def app_shell_page():
               const guestBadge = document.getElementById('guestModeBadge');
               if (userRole === 'guest') {
                 if (guestBadge) guestBadge.style.display = 'inline-block';
+                try {
+                  const pr = await fetch('/ui/preferences', { cache:'no-store' });
+                  const pj = await pr.json().catch(() => ({}));
+                  const vm = (pj?.view_mode === 'mobile' || pj?.view_mode === 'desktop') ? pj.view_mode : null;
+                  if (vm) localStorage.setItem('gt_view_mode', vm);
+                } catch {}
                 const setupLink = document.querySelector('.sidebar .navlink[data-page="setup"], .sidebar a[href="/app?page=setup"]');
                 if (setupLink) setupLink.style.display = 'none';
                 if (page === 'setup') page = 'dashboard';
               } else {
                 if (guestBadge) guestBadge.style.display = 'none';
+                localStorage.removeItem('gt_view_mode');
               }
             } catch {}
             loadTentNav();
@@ -5521,7 +5609,10 @@ def dashboard_page(request: Request):
             if (viewMode === 'mobile') document.body.classList.add('force-mobile');
             if (viewMode === 'desktop') document.body.classList.add('force-desktop');
             const btn = document.getElementById('viewModeBtn');
-            if (btn) btn.textContent = viewMode === 'mobile' ? tr('viewDesktop') : tr('viewMobile');
+            if (btn) {
+              btn.textContent = viewMode === 'mobile' ? tr('viewDesktop') : tr('viewMobile');
+              btn.style.display = isGuestMode ? 'inline-block' : 'none';
+            }
             if (viewMode !== 'mobile') mobileNavExpanded = false;
             syncMobileNavUi();
           }
@@ -7512,9 +7603,17 @@ def dashboard_page(request: Request):
 
           const viewModeBtnEl = document.getElementById('viewModeBtn');
           if (viewModeBtnEl) {
-            viewModeBtnEl.addEventListener('click', () => {
+            viewModeBtnEl.addEventListener('click', async () => {
+              if (!isGuestMode) return;
               viewMode = (viewMode === 'mobile') ? 'desktop' : 'mobile';
               localStorage.setItem('gt_view_mode', viewMode);
+              try {
+                await fetch('/ui/preferences', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ view_mode: viewMode })
+                });
+              } catch {}
               applyViewMode();
             });
           }
@@ -7565,6 +7664,20 @@ def dashboard_page(request: Request):
               const r = await fetch('/auth/whoami', { cache:'no-store' });
               const j = await r.json().catch(() => ({}));
               isGuestMode = (j?.role === 'guest');
+              if (isGuestMode) {
+                try {
+                  const pr = await fetch('/ui/preferences', { cache:'no-store' });
+                  const pj = await pr.json().catch(() => ({}));
+                  const vm = (pj?.view_mode === 'mobile' || pj?.view_mode === 'desktop') ? pj.view_mode : null;
+                  if (vm) {
+                    viewMode = vm;
+                    localStorage.setItem('gt_view_mode', vm);
+                  }
+                } catch {}
+              } else {
+                viewMode = 'auto';
+                localStorage.removeItem('gt_view_mode');
+              }
             } catch {
               isGuestMode = false;
             }
