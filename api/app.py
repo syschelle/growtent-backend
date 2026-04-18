@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.238"
+APP_VERSION = "v0.240"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -6699,6 +6699,7 @@ def dashboard_page(request: Request):
           let targetVpdChart = NaN;
           let lastGoodLatestPayload = null;
           let lastGoodCapturedAt = null;
+          let shellyDirectFallbackUsed = false;
 
           function buildSingleChart(canvasId, labels, datasetLabel, values, color, unitLabel, lineTension = 0.25){
             const ctx = document.getElementById(canvasId);
@@ -7074,25 +7075,31 @@ def dashboard_page(request: Request):
               if (!j?.captured_at && lastGoodCapturedAt) j.captured_at = lastGoodCapturedAt;
             }
 
-            // Read configured Shelly devices directly, but do not block initial UI render.
-            // Slow/unreachable Shelly calls must not delay first values on page load.
-            (async () => {
-              try {
-                const ctrl = new AbortController();
-                const to = setTimeout(() => ctrl.abort(), 1200);
-                const dr = await fetch(`/tents/${currentTentId}/shelly/direct-all`, { cache:'no-store', signal: ctrl.signal });
-                clearTimeout(to);
-                const dj = await dr.json().catch(() => ({}));
-                if (dr.ok && dj?.ok && dj?.states) {
-                  Object.entries(dj.states).forEach(([k, st]) => {
-                    d[`cur.shelly.${k}.isOn`] = st?.isOn;
-                    if (Number.isFinite(Number(st?.Watt))) d[`cur.shelly.${k}.Watt`] = st.Watt;
-                    if (Number.isFinite(Number(st?.Wh))) d[`cur.shelly.${k}.Wh`] = st.Wh;
-                  });
-                  if (dj?.states?.main) shellyMainDirectTs = dj?.checked_at || new Date().toISOString();
-                }
-              } catch {}
-            })();
+            // Prefer direct Shelly device values for dashboard cards.
+            // One-time fallback: if direct call fails, keep current /latest values once
+            // so cards are not empty during temporary network hiccups.
+            let gotDirectShelly = false;
+            try {
+              const ctrl = new AbortController();
+              const to = setTimeout(() => ctrl.abort(), 1200);
+              const dr = await fetch(`/tents/${currentTentId}/shelly/direct-all`, { cache:'no-store', signal: ctrl.signal });
+              clearTimeout(to);
+              const dj = await dr.json().catch(() => ({}));
+              if (dr.ok && dj?.ok && dj?.states) {
+                gotDirectShelly = true;
+                Object.entries(dj.states).forEach(([k, st]) => {
+                  d[`cur.shelly.${k}.isOn`] = st?.isOn;
+                  if (Number.isFinite(Number(st?.Watt))) d[`cur.shelly.${k}.Watt`] = st.Watt;
+                  if (Number.isFinite(Number(st?.Wh))) d[`cur.shelly.${k}.Wh`] = st.Wh;
+                });
+                if (dj?.states?.main) shellyMainDirectTs = dj?.checked_at || new Date().toISOString();
+              }
+            } catch {}
+
+            if (!gotDirectShelly && !shellyDirectFallbackUsed) {
+              shellyDirectFallbackUsed = true;
+              // Keep existing values from /latest once.
+            }
 
             renderStream(j.rtsp_url, j.webrtc_url, j.player_url, j.preview_url);
             txt('status', '');

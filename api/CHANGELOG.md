@@ -10,6 +10,13 @@ Entries are maintained in project language (English/German as needed).
 - Improved guest badge (`Gastmodus aktiv`) contrast for light theme.
 - Unified action button typography so link-style action buttons (e.g. `Open fullscreen`) match regular button weight/style.
 
+## v0.240
+
+### Shelly cards: direct-read first with safe one-time fallback
+- Dashboard Shelly cards now await direct Shelly device reads (`/tents/{tent_id}/shelly/direct-all`) before rendering values.
+- This prevents Shelly card state/power display from being sourced primarily from stale controller `/api/state` payload values.
+- Added a one-time fallback guard so UI can still show existing values once if direct Shelly read is temporarily unreachable.
+
 ## v0.238
 
 ### Guest setup link visibility in app shell
