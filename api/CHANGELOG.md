@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.241
+
+### VPD parity: Live tile aligned with VPD history channel
+- Dashboard live VPD tile now prefers `sensors.smoothed.vpdKpa` (with fallback to `sensors.cur.vpdKpa`) to match history semantics.
+- History pipeline now avoids backend re-calculating VPD from temperature/humidity when VPD channel is missing.
+- History fallback order is now explicit and channel-based: `vpd_smoothed -> vpd_cur -> vpd_raw`.
+- Goal: prevent systematic offsets between `VPD` tile and last point in `VPD History`.
+
 ## v0.239
 
 ### Guest UX follow-up adjustments

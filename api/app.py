@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.240"
+APP_VERSION = "v0.241"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -2620,6 +2620,7 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "temperature_raw": temp_raw,
                 "humidity_raw": hum_raw,
                 "vpd_raw": vpd_raw,
+                "vpd_cur": _to_float(d.get("sensors.cur.vpdKpa")),
                 "temperature_smoothed": _to_float(d.get("sensors.smoothed.temperatureC")),
                 "humidity_smoothed": _to_float(d.get("sensors.smoothed.humidityPct")),
                 "vpd_smoothed": _to_float(d.get("sensors.smoothed.vpdKpa")),
@@ -2653,9 +2654,14 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
 
     vpd_sm = []
     for i, p in enumerate(points):
+        # Keep history channel consistent with live tile: prefer smoothed VPD,
+        # then controller "cur" VPD, then raw VPD. Avoid backend re-calculation
+        # from temp/humidity here to prevent channel drift between tile and chart.
         v = _to_float(p.get("vpd_smoothed"))
         if v is None:
-            v = _calc_vpd_kpa(temp_sm[i], _to_float(p.get("leafOffsetC")) or 0.0, hum_sm[i])
+            v = _to_float(p.get("vpd_cur"))
+        if v is None:
+            v = _to_float(p.get("vpd_raw"))
         vpd_sm.append(v)
 
     if filter_spikes:
@@ -7129,7 +7135,8 @@ def dashboard_page(request: Request):
             }
             const tempCur = firstNum(d, ['sensors.cur.temperatureC', 'curTemperature']);
             const humCur  = firstNum(d, ['sensors.cur.humidityPct', 'curHumidity']);
-            const vpdRaw  = firstNum(d, ['sensors.cur.vpdKpa', 'curVpd']);
+            // Keep live tile aligned with history pipeline: prefer smoothed VPD channel.
+            const vpdRaw  = firstNum(d, ['sensors.smoothed.vpdKpa', 'sensors.cur.vpdKpa', 'curVpd']);
             const extTempRaw = firstNum(d, ['sensors.cur.extTempC']);
             const alphaTemp = firstNum(d, ['sensors.cur.effectiveAlfaTempC']);
             const alphaHum = firstNum(d, ['sensors.cur.effectiveAlfaHumPct']);
