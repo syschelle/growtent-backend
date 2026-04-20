@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.242
+
+### Shelly “Last update” now prefers direct activity timestamps
+- Dashboard Shelly cards now prefer a direct Shelly-derived activity timestamp for the `Update` line.
+- Activity is tracked when direct poll reports `isOn=true` or `Watt > 0.5`.
+- Fallback remains safe: if no direct activity timestamp is available, UI falls back to DB-derived `last_activity` / `last_switches`.
+- This reduces stale-looking timestamps during short on/off cycles that are missed in `/api/state` snapshots.
+
 ## v0.241
 
 ### VPD parity: Live tile aligned with VPD history channel
@@ -10,6 +18,13 @@ Entries are maintained in project language (English/German as needed).
 - History fallback order is now explicit and channel-based: `vpd_smoothed -> vpd_cur -> vpd_raw`.
 - Goal: prevent systematic offsets between `VPD` tile and last point in `VPD History`.
 
+## v0.240
+
+### Shelly cards: direct-read first with safe one-time fallback
+- Dashboard Shelly cards now await direct Shelly device reads (`/tents/{tent_id}/shelly/direct-all`) before rendering values.
+- This prevents Shelly card state/power display from being sourced primarily from stale controller `/api/state` payload values.
+- Added a one-time fallback guard so UI can still show existing values once if direct Shelly read is temporarily unreachable.
+
 ## v0.239
 
 ### Guest UX follow-up adjustments
@@ -17,13 +32,6 @@ Entries are maintained in project language (English/German as needed).
 - Restored `Open fullscreen` availability for guest users in dashboard stream actions.
 - Improved guest badge (`Gastmodus aktiv`) contrast for light theme.
 - Unified action button typography so link-style action buttons (e.g. `Open fullscreen`) match regular button weight/style.
-
-## v0.240
-
-### Shelly cards: direct-read first with safe one-time fallback
-- Dashboard Shelly cards now await direct Shelly device reads (`/tents/{tent_id}/shelly/direct-all`) before rendering values.
-- This prevents Shelly card state/power display from being sourced primarily from stale controller `/api/state` payload values.
-- Added a one-time fallback guard so UI can still show existing values once if direct Shelly read is temporarily unreachable.
 
 ## v0.238
 

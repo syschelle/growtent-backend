@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.241"
+APP_VERSION = "v0.242"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -2505,6 +2505,15 @@ def shelly_last_switches(tent_id: int, max_rows: int = 5000):
         s = str(v).strip().lower()
         return s in {"1", "true", "on", "yes"}
 
+    def to_float(v):
+        try:
+            n = float(v)
+            if math.isfinite(n):
+                return n
+        except Exception:
+            pass
+        return None
+
     max_rows = max(100, min(max_rows, 20000))
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -2521,26 +2530,40 @@ def shelly_last_switches(tent_id: int, max_rows: int = 5000):
             rows = cur.fetchall()
 
     if not rows:
-        return {"tent_id": tent_id, "last_switches": {k: None for k in keys}}
+        return {
+            "tent_id": tent_id,
+            "last_switches": {k: None for k in keys},
+            "last_activity": {k: None for k in keys},
+        }
 
-    # Process oldest -> newest to find last state transitions.
+    # Process oldest -> newest.
+    # - last_switch: last observed ON/OFF transition
+    # - last_activity: last observed "device was active" sample
+    #   (isOn=true or power draw > 0.5W). This helps with short ON pulses
+    #   that may not always be captured as a clean state transition.
     prev = {k: None for k in keys}
     last_switch = {k: None for k in keys}
+    last_activity = {k: None for k in keys}
 
     for captured_at, payload in reversed(rows):
         p = payload or {}
         for k in keys:
             cur_state = to_bool(p.get(f"cur.shelly.{k}.isOn"))
+            watt = to_float(p.get(f"cur.shelly.{k}.Watt"))
             if prev[k] is None:
                 prev[k] = cur_state
-                continue
-            if cur_state != prev[k]:
-                last_switch[k] = captured_at
-                prev[k] = cur_state
+            else:
+                if cur_state != prev[k]:
+                    last_switch[k] = captured_at
+                    prev[k] = cur_state
+
+            if cur_state or (watt is not None and watt > 0.5):
+                last_activity[k] = captured_at
 
     return {
         "tent_id": tent_id,
         "last_switches": {k: (last_switch[k].isoformat() if last_switch[k] else None) for k in keys},
+        "last_activity": {k: (last_activity[k].isoformat() if last_activity[k] else None) for k in keys},
     }
 
 
@@ -5607,6 +5630,8 @@ def dashboard_page(request: Request):
           let currentTentId = Number.isFinite(qTent) && qTent > 0 ? qTent : Number(localStorage.getItem('gt_tent_id') || '1');
           let currentTentMeta = null;
           let shellyLastSwitches = {};
+          let shellyLastActivity = {};
+          let shellyLastActivityDirect = {};
           let shellyMainDirectTs = null;
           let currentIrPlan = null;
           let currentIrLastRunDate = null;
@@ -6652,7 +6677,17 @@ def dashboard_page(request: Request):
               const scheduleRight = scheduleText
                 ? `<span class="small" style="white-space:nowrap; font-weight:400;">${scheduleText}</span>`
                 : '';
-              const changeTs = (dev.key === 'main' && shellyMainDirectTs) ? shellyMainDirectTs : shellyLastSwitches?.[dev.key];
+              const switchTs = shellyLastSwitches?.[dev.key] || null;
+              const activityTs = shellyLastActivity?.[dev.key] || null;
+              const directActivityTs = shellyLastActivityDirect?.[dev.key] || null;
+              const switchMs = switchTs ? new Date(switchTs).getTime() : NaN;
+              const activityMs = activityTs ? new Date(activityTs).getTime() : NaN;
+              const directActivityMs = directActivityTs ? new Date(directActivityTs).getTime() : NaN;
+              const bestDbTs = Number.isFinite(switchMs) && Number.isFinite(activityMs)
+                ? (activityMs > switchMs ? activityTs : switchTs)
+                : (Number.isFinite(activityMs) ? activityTs : switchTs);
+              const bestTs = Number.isFinite(directActivityMs) ? directActivityTs : bestDbTs;
+              const changeTs = (dev.key === 'main' && shellyMainDirectTs) ? shellyMainDirectTs : bestTs;
               return `
                 <div class="card ${cardStateClass}" style="margin-bottom:0;">
                   <div class="card-head">
@@ -7093,12 +7128,21 @@ def dashboard_page(request: Request):
               const dj = await dr.json().catch(() => ({}));
               if (dr.ok && dj?.ok && dj?.states) {
                 gotDirectShelly = true;
+                const directCheckedAt = dj?.checked_at || new Date().toISOString();
                 Object.entries(dj.states).forEach(([k, st]) => {
                   d[`cur.shelly.${k}.isOn`] = st?.isOn;
                   if (Number.isFinite(Number(st?.Watt))) d[`cur.shelly.${k}.Watt`] = st.Watt;
                   if (Number.isFinite(Number(st?.Wh))) d[`cur.shelly.${k}.Wh`] = st.Wh;
+
+                  // Direct-Shelly activity marker (independent from /latest history):
+                  // remember the last poll timestamp where device was active.
+                  const wattNum = Number(st?.Watt);
+                  const isActive = (st?.isOn === true) || (Number.isFinite(wattNum) && wattNum > 0.5);
+                  if (isActive) {
+                    shellyLastActivityDirect[k] = directCheckedAt;
+                  }
                 });
-                if (dj?.states?.main) shellyMainDirectTs = dj?.checked_at || new Date().toISOString();
+                if (dj?.states?.main) shellyMainDirectTs = directCheckedAt;
               }
             } catch {}
 
@@ -7122,8 +7166,10 @@ def dashboard_page(request: Request):
               const sr = await fetch(`/tents/${currentTentId}/shelly/last-switches`, { cache:'no-store' });
               const sj = await sr.json();
               shellyLastSwitches = sj?.last_switches || {};
+              shellyLastActivity = sj?.last_activity || {};
             } catch {
               shellyLastSwitches = {};
+              shellyLastActivity = {};
             }
 
             const boxName = (d['settings.ui.boxName'] || '').toString().trim();
