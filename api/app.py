@@ -2652,6 +2652,8 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "effectiveAlfaHumPct": _to_float(d.get("sensors.cur.effectiveAlfaHumPct")),
                 "extTemp": d.get("sensors.cur.extTempC"),
                 "mainW": d.get("cur.shelly.main.Watt"),
+                "lightW": d.get("cur.shelly.light.Watt"),
+                "humidifierW": d.get("cur.shelly.humidifier.Watt") if d.get("cur.shelly.humidifier.Watt") is not None else d.get("cur.shelly.hum.Watt"),
                 "mainWh": d.get("cur.shelly.main.Wh"),
                 "mainCost": d.get("cur.shelly.main.Cost"),
                 "sysFreeHeap": _to_float(d.get("sys.freeHeap")),
@@ -5257,6 +5259,18 @@ def dashboard_page(request: Request):
         </div>
 
         <div class=\"card history-card\">
+          <div class=\"label\" id=\"lblLightWHistory\">Light consumption</div>
+          <canvas id=\"lightWChart\"></canvas>
+          <div id=\"historyOverlayLightW\" class=\"history-overlay\"></div>
+        </div>
+
+        <div class=\"card history-card\">
+          <div class=\"label\" id=\"lblHumidifierWHistory\">Humidifier consumption</div>
+          <canvas id=\"humidifierWChart\"></canvas>
+          <div id=\"historyOverlayHumidifierW\" class=\"history-overlay\"></div>
+        </div>
+
+        <div class=\"card history-card\">
           <div class=\"label\" id=\"lblHeapHistory\"><span id=\"lblHeapHistoryText\">ESP Heap history</span> <span id=\"heapHistoryHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"heapChart\"></canvas>
         </div>
@@ -5396,6 +5410,10 @@ def dashboard_page(request: Request):
               extTempHistory: 'Tank Temperature History',
               totalConsumption: 'Total consumption',
               totalConsumptionHistory: 'Total consumption history',
+              lightConsumption: 'Light consumption',
+              lightConsumptionHistory: 'Light consumption history',
+              humidifierConsumption: 'Humidifier consumption',
+              humidifierConsumptionHistory: 'Humidifier consumption history',
               heapHistory: 'ESP Heap history',
               heapFree: 'Free heap',
               heapMin: 'Min free heap',
@@ -5533,6 +5551,10 @@ def dashboard_page(request: Request):
               extTempHistory: 'Wassertank-Temperaturverlauf',
               totalConsumption: 'Gesamtverbrauch',
               totalConsumptionHistory: 'Gesamtverbrauchsverlauf',
+              lightConsumption: 'Lichtverbrauch',
+              lightConsumptionHistory: 'Lichtverbrauchsverlauf',
+              humidifierConsumption: 'Luftbefeuchterverbrauch',
+              humidifierConsumptionHistory: 'Luftbefeuchterverbrauchsverlauf',
               heapHistory: 'ESP-Heap Verlauf',
               heapFree: 'Freier Heap',
               heapMin: 'Min. freier Heap',
@@ -5774,6 +5796,8 @@ def dashboard_page(request: Request):
             }
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
             txt('lblMainWHistory', tr('totalConsumptionHistory'));
+            txt('lblLightWHistory', tr('lightConsumptionHistory'));
+            txt('lblHumidifierWHistory', tr('humidifierConsumptionHistory'));
             txt('lblHeapHistoryText', tr('heapHistory'));
             const heapHistoryHintEl = document.getElementById('heapHistoryHint');
             if (heapHistoryHintEl) {
@@ -6046,7 +6070,8 @@ def dashboard_page(request: Request):
           function setHistoryOverlays(message){
             const ids = [
               'historyOverlayTemp', 'historyOverlayHum', 'historyOverlayVpd',
-              'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW'
+              'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW',
+              'historyOverlayLightW', 'historyOverlayHumidifierW'
             ];
             ids.forEach((id) => {
               const el = document.getElementById(id);
@@ -6732,6 +6757,8 @@ def dashboard_page(request: Request):
           let alphaChart;
           let extTempChart;
           let mainWChart;
+          let lightWChart;
+          let humidifierWChart;
           let heapChart;
           let previewTimer = null;
           let currentPreviewBase = '';
@@ -6893,7 +6920,7 @@ def dashboard_page(request: Request):
             };
           }
 
-          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries){
+          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
               return;
@@ -6913,6 +6940,8 @@ def dashboard_page(request: Request):
             if (vpdChart) vpdChart.destroy();
             if (extTempChart) extTempChart.destroy();
             if (mainWChart) mainWChart.destroy();
+            if (lightWChart) lightWChart.destroy();
+            if (humidifierWChart) humidifierWChart.destroy();
             if (alphaChart) alphaChart.destroy();
             if (heapChart) heapChart.destroy();
 
@@ -7053,6 +7082,8 @@ def dashboard_page(request: Request):
             }
             extTempChart = buildSingleChart('extTempChart', labels, `${extTempLabelBase()} ${tempUnitLabel}`, extTemp, '#10b981', tempUnitLabel);
             mainWChart = buildSingleChart('mainWChart', labels, `${tr('totalConsumption')} W`, mainW, '#ef4444', 'W', 0);
+            lightWChart = buildSingleChart('lightWChart', labels, `${tr('lightConsumption')} W`, lightW, '#eab308', 'W', 0);
+            humidifierWChart = buildSingleChart('humidifierWChart', labels, `${tr('humidifierConsumption')} W`, humidifierW, '#3b82f6', 'W', 0);
 
             const heapCtx = document.getElementById('heapChart');
             if (heapCtx) {
@@ -7482,7 +7513,7 @@ def dashboard_page(request: Request):
             if (!points.length) {
               txt('status', currentLang === 'de' ? 'Keine Verlaufsdaten verfügbar.' : 'No history data available.');
               setHistoryOverlays('');
-              buildCharts([], [], [], [], [], [], [], [], [], [], [], [], [], []);
+              buildCharts([], [], [], [], [], [], [], [], [], [], [], [], [], [], [], []);
               return;
             }
             const historyWarmup = points.length < 30;
@@ -7546,6 +7577,14 @@ def dashboard_page(request: Request):
               const w = Number(p.mainW);
               return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
             });
+            const lightW = points.map(p => {
+              const w = Number(p.lightW);
+              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
+            });
+            const humidifierW = points.map(p => {
+              const w = Number(p.humidifierW);
+              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
+            });
             const alphaTemp = points.map(p => {
               const a = Number(p.effectiveAlfaTempC);
               return Number.isFinite(a) ? Number(a.toFixed(3)) : null;
@@ -7570,7 +7609,7 @@ def dashboard_page(request: Request):
               const n = Number(p.sysHeapSize);
               return Number.isFinite(n) ? Math.round(n) : null;
             });
-            buildCharts(labels, temp, hum, vpd, extTemp, mainW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries);
+            buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries);
           }
 
           async function loadTentNav(){
