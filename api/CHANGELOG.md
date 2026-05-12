@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.243
+
+### Irrigation plan update no longer triggers immediate auto-run
+- Updating irrigation plan values no longer causes an immediate schedule-triggered watering.
+- If no manual `last_run_date` is provided while saving plan changes, backend now baselines `last_run_date` to today for enabled/changed plans.
+- This prevents the scheduler from treating the plan as overdue right after edits.
+- Manual `last_run_date` input remains fully respected.
+
 ## v0.242
 
 ### Shelly “Last update” now prefers direct activity timestamps
