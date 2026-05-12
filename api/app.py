@@ -2316,10 +2316,18 @@ def update_irrigation_plan(tent_id: int, payload: dict):
             prev_enabled = bool(prev_plan.get("enabled", False))
             last_run_date = prev[1]
 
+            plan_changed = (
+                bool(prev_plan.get("enabled", False)) != enabled
+                or int(prev_plan.get("every_n_days", 1) or 1) != every_n_days
+                or int(prev_plan.get("offset_after_light_on_min", 0) or 0) != offset_after_light_on_min
+            )
+
             if manual_last_run_date is not None:
                 last_run_date = manual_last_run_date
             else:
-                if enabled and not prev_enabled:
+                # Prevent immediate schedule-triggered watering right after plan edits.
+                # When an enabled plan is newly enabled or changed, baseline to "today".
+                if enabled and (not prev_enabled or plan_changed):
                     today = date.today()
                     if not last_run_date or last_run_date < today:
                         last_run_date = today
