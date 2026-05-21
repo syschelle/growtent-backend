@@ -6511,7 +6511,8 @@ def dashboard_page(request: Request):
             };
             const inlinePreviewBase = basePreview ? withPreviewParams(basePreview, 1280, 720, 80) : '';
             const fullscreenPreviewBaseReduced = basePreview ? withPreviewParams(basePreview, 1920, 1080, 88) : '';
-            const fullscreenPreviewBaseZoomSource2k = basePreview ? withPreviewParams(basePreview, 2560, 1440, 95) : '';
+            // Smart-zoom source: pull 2K with max JPEG quality to reduce input artifacts.
+            const fullscreenPreviewBaseZoomSource2k = basePreview ? withPreviewParams(basePreview, 2560, 1440, 100) : '';
             if (!basePreview) {
               info.textContent = tr('noRtsp');
               currentPreviewBase = '';
