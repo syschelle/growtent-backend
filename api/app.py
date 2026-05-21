@@ -6599,8 +6599,8 @@ def dashboard_page(request: Request):
               helpBtn.title = currentLang === 'de' ? 'Anleitung anzeigen' : 'Show instructions';
               helpBtn.onclick = () => {
                 const msg = currentLang === 'de'
-                  ? 'Vollbild-Hinweis:\n• Mausrad/Pinch: Zoomen\n• Ziehen: Bild verschieben\n• Doppelklick: Reset\n• Ab ~180% Zoom wird automatisch ein 2K-Frame geladen, intern auf 4K hochskaliert und als Standbild gehalten.'
-                  : 'Fullscreen hint:\n• Wheel/pinch: zoom\n• Drag: pan image\n• Double click: reset\n• From ~180% zoom a 2K frame is fetched, upscaled to 4K and held as a still image.';
+                  ? 'Vollbild-Hinweis:\\n• Mausrad/Pinch: Zoomen\\n• Ziehen: Bild verschieben\\n• Doppelklick: Reset\\n• Ab ~180% Zoom wird automatisch ein 2K-Frame geladen, intern auf 4K hochskaliert und als Standbild gehalten.'
+                  : 'Fullscreen hint:\\n• Wheel/pinch: zoom\\n• Drag: pan image\\n• Double click: reset\\n• From ~180% zoom a 2K frame is fetched, upscaled to 4K and held as a still image.';
                 w.alert(msg);
               };
 
