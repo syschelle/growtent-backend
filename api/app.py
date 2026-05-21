@@ -6510,7 +6510,8 @@ def dashboard_page(request: Request):
               return `${url}${sep}w=${w}&h=${h}&q=${q}`;
             };
             const inlinePreviewBase = basePreview ? withPreviewParams(basePreview, 1280, 720, 80) : '';
-            const fullPreviewBase = basePreview ? withPreviewParams(basePreview, 1920, 1080, 90) : '';
+            const fullscreenPreviewBaseReduced = basePreview ? withPreviewParams(basePreview, 1920, 1080, 88) : '';
+            const fullscreenPreviewBaseQuality = basePreview ? withPreviewParams(basePreview, 2560, 1440, 95) : '';
             if (!basePreview) {
               info.textContent = tr('noRtsp');
               currentPreviewBase = '';
@@ -6533,7 +6534,7 @@ def dashboard_page(request: Request):
               info.textContent = `${tr('streamUpdate')}: ${new Date(lastPreviewOkTs).toLocaleTimeString()}`;
             };
             updateStreamInfo();
-            currentPreviewBase = fullPreviewBase;
+            currentPreviewBase = fullscreenPreviewBaseReduced;
             openBtn.href = '#';
             openBtn.style.display = 'inline-block';
             openBtn.onclick = (ev) => {
@@ -6574,9 +6575,45 @@ def dashboard_page(request: Request):
               header.style.background = colors.headerBg;
               header.style.borderBottom = `1px solid ${colors.border}`;
 
+              const titleWrap = doc.createElement('div');
+              titleWrap.style.display = 'flex';
+              titleWrap.style.alignItems = 'center';
+              titleWrap.style.gap = '10px';
+
               const title = doc.createElement('div');
               title.textContent = currentLang === 'de' ? 'CanopyOps · Vorschau' : 'CanopyOps · Preview';
               title.style.fontWeight = '700';
+
+              let qualityModeEnabled = false;
+              let popupPreviewBase = fullscreenPreviewBaseReduced;
+
+              const qualityBtn = doc.createElement('button');
+              qualityBtn.textContent = 'Quality Mode';
+              qualityBtn.style.padding = '5px 9px';
+              qualityBtn.style.borderRadius = '8px';
+              qualityBtn.style.border = `1px solid ${colors.btnBorder}`;
+              qualityBtn.style.background = 'transparent';
+              qualityBtn.style.color = colors.btnText;
+              qualityBtn.style.cursor = 'pointer';
+
+              const updateQualityButton = () => {
+                qualityBtn.style.background = qualityModeEnabled ? colors.btnBg : 'transparent';
+                qualityBtn.style.fontWeight = qualityModeEnabled ? '700' : '500';
+                qualityBtn.title = qualityModeEnabled
+                  ? (currentLang === 'de' ? '2K aktiv (zum Deaktivieren klicken)' : '2K active (click to disable)')
+                  : (currentLang === 'de' ? 'Reduzierter Modus aktiv (für 2K klicken)' : 'Reduced mode active (click for 2K)');
+              };
+              updateQualityButton();
+
+              qualityBtn.onclick = () => {
+                qualityModeEnabled = !qualityModeEnabled;
+                popupPreviewBase = qualityModeEnabled ? fullscreenPreviewBaseQuality : fullscreenPreviewBaseReduced;
+                updateQualityButton();
+                tick();
+              };
+
+              titleWrap.appendChild(title);
+              titleWrap.appendChild(qualityBtn);
 
               const stamp = doc.createElement('div');
               stamp.style.fontSize = '.82rem';
@@ -6600,7 +6637,7 @@ def dashboard_page(request: Request):
               right.appendChild(stamp);
               right.appendChild(closeBtn);
 
-              header.appendChild(title);
+              header.appendChild(titleWrap);
               header.appendChild(right);
 
               const stage = doc.createElement('div');
@@ -6748,9 +6785,10 @@ def dashboard_page(request: Request):
               updateTransform();
 
               let popupLastOkTs = 0;
-              const tick = () => {
-                const sep = currentPreviewBase.includes('?') ? '&' : '?';
-                const nextSrc = `${currentPreviewBase}${sep}t=${Date.now()}`;
+              function tick(){
+                if (!popupPreviewBase) return;
+                const sep = popupPreviewBase.includes('?') ? '&' : '?';
+                const nextSrc = `${popupPreviewBase}${sep}t=${Date.now()}`;
                 const pre = new w.Image();
                 pre.onload = () => {
                   img.src = nextSrc;
@@ -6761,7 +6799,7 @@ def dashboard_page(request: Request):
                   // Keep last good image, retry on next tick.
                 };
                 pre.src = nextSrc;
-              };
+              }
               tick();
               w.setInterval(tick, 2500);
             };
