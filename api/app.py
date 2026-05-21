@@ -6511,7 +6511,7 @@ def dashboard_page(request: Request):
             };
             const inlinePreviewBase = basePreview ? withPreviewParams(basePreview, 1280, 720, 80) : '';
             const fullscreenPreviewBaseReduced = basePreview ? withPreviewParams(basePreview, 1920, 1080, 88) : '';
-            const fullscreenPreviewBaseQuality = basePreview ? withPreviewParams(basePreview, 2560, 1440, 95) : '';
+            const fullscreenPreviewBaseQuality = basePreview ? withPreviewParams(basePreview, 3840, 2160, 98) : '';
             if (!basePreview) {
               info.textContent = tr('noRtsp');
               currentPreviewBase = '';
@@ -6600,8 +6600,8 @@ def dashboard_page(request: Request):
                 qualityBtn.style.background = qualityModeEnabled ? colors.btnBg : 'transparent';
                 qualityBtn.style.fontWeight = qualityModeEnabled ? '700' : '500';
                 qualityBtn.title = qualityModeEnabled
-                  ? (currentLang === 'de' ? '2K aktiv (zum Deaktivieren klicken)' : '2K active (click to disable)')
-                  : (currentLang === 'de' ? 'Reduzierter Modus aktiv (für 2K klicken)' : 'Reduced mode active (click for 2K)');
+                  ? (currentLang === 'de' ? '4K aktiv (zum Deaktivieren klicken)' : '4K active (click to disable)')
+                  : (currentLang === 'de' ? 'Reduzierter Modus aktiv (für 4K klicken)' : 'Reduced mode active (click for 4K)');
               };
               updateQualityButton();
 
