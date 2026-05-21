@@ -6593,19 +6593,47 @@ def dashboard_page(request: Request):
               helpBtn.style.opacity = '.9';
               helpBtn.style.userSelect = 'none';
               helpBtn.title = currentLang === 'de' ? 'Anleitung anzeigen' : 'Show instructions';
+
+              const helpPopover = doc.createElement('div');
+              helpPopover.style.position = 'fixed';
+              helpPopover.style.zIndex = '9999';
+              helpPopover.style.display = 'none';
+              helpPopover.style.maxWidth = '460px';
+              helpPopover.style.padding = '10px 12px';
+              helpPopover.style.borderRadius = '10px';
+              helpPopover.style.border = `1px solid ${colors.border}`;
+              helpPopover.style.background = colors.headerBg;
+              helpPopover.style.color = colors.bodyText;
+              helpPopover.style.boxShadow = '0 8px 24px rgba(0,0,0,.25)';
+              helpPopover.style.fontSize = '.9rem';
+              helpPopover.style.lineHeight = '1.45';
+              helpPopover.style.whiteSpace = 'pre-wrap';
+              doc.body.appendChild(helpPopover);
+
               const showHelpHint = () => {
                 const msg = currentLang === 'de'
                   ? 'Vollbild-Hinweis:\\n• Mausrad/Pinch: Zoomen\\n• Ziehen: Bild verschieben\\n• Doppelklick: Reset\\n• Ab ~180% Zoom wird automatisch ein 2K-Frame geladen, intern auf 4K hochskaliert und als Standbild gehalten.'
                   : 'Fullscreen hint:\\n• Wheel/pinch: zoom\\n• Drag: pan image\\n• Double click: reset\\n• From ~180% zoom a 2K frame is fetched, upscaled to 4K and held as a still image.';
-                w.alert(msg);
+                helpPopover.textContent = msg;
+                helpPopover.style.display = 'block';
+                const r = helpBtn.getBoundingClientRect();
+                const top = Math.min(w.innerHeight - 20, r.bottom + 10);
+                const left = Math.min(w.innerWidth - 20, Math.max(10, r.left));
+                helpPopover.style.top = `${top}px`;
+                helpPopover.style.left = `${left}px`;
               };
-              helpBtn.onclick = showHelpHint;
+              helpBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showHelpHint(); };
               helpBtn.onkeydown = (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   showHelpHint();
                 }
               };
+              doc.addEventListener('click', (e) => {
+                if (e.target === helpBtn || helpBtn.contains(e.target)) return;
+                if (helpPopover.contains(e.target)) return;
+                helpPopover.style.display = 'none';
+              });
 
               titleWrap.appendChild(title);
               titleWrap.appendChild(helpBtn);
