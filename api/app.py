@@ -6584,24 +6584,27 @@ def dashboard_page(request: Request):
               title.textContent = currentLang === 'de' ? 'CanopyOps · Vorschau' : 'CanopyOps · Preview';
               title.style.fontWeight = '700';
 
-              const helpBtn = doc.createElement('button');
-              helpBtn.textContent = 'i';
+              const helpBtn = doc.createElement('span');
+              helpBtn.textContent = 'ℹ️';
+              helpBtn.setAttribute('role', 'button');
+              helpBtn.setAttribute('tabindex', '0');
               helpBtn.setAttribute('aria-label', currentLang === 'de' ? 'Anleitung' : 'Help');
-              helpBtn.style.width = '24px';
-              helpBtn.style.height = '24px';
-              helpBtn.style.padding = '0';
-              helpBtn.style.borderRadius = '50%';
-              helpBtn.style.border = `1px solid ${colors.btnBorder}`;
-              helpBtn.style.background = 'transparent';
-              helpBtn.style.color = colors.btnText;
-              helpBtn.style.cursor = 'pointer';
-              helpBtn.style.fontWeight = '700';
+              helpBtn.style.cursor = 'help';
+              helpBtn.style.opacity = '.9';
+              helpBtn.style.userSelect = 'none';
               helpBtn.title = currentLang === 'de' ? 'Anleitung anzeigen' : 'Show instructions';
-              helpBtn.onclick = () => {
+              const showHelpHint = () => {
                 const msg = currentLang === 'de'
                   ? 'Vollbild-Hinweis:\\n• Mausrad/Pinch: Zoomen\\n• Ziehen: Bild verschieben\\n• Doppelklick: Reset\\n• Ab ~180% Zoom wird automatisch ein 2K-Frame geladen, intern auf 4K hochskaliert und als Standbild gehalten.'
                   : 'Fullscreen hint:\\n• Wheel/pinch: zoom\\n• Drag: pan image\\n• Double click: reset\\n• From ~180% zoom a 2K frame is fetched, upscaled to 4K and held as a still image.';
                 w.alert(msg);
+              };
+              helpBtn.onclick = showHelpHint;
+              helpBtn.onkeydown = (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  showHelpHint();
+                }
               };
 
               titleWrap.appendChild(title);
