@@ -6588,7 +6588,7 @@ def dashboard_page(request: Request):
               let popupPreviewBase = fullscreenPreviewBaseReduced;
 
               const qualityBtn = doc.createElement('button');
-              qualityBtn.textContent = 'Quality Mode';
+              qualityBtn.textContent = '4K Mode';
               qualityBtn.style.padding = '5px 9px';
               qualityBtn.style.borderRadius = '8px';
               qualityBtn.style.border = `1px solid ${colors.btnBorder}`;
