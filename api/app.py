@@ -6511,7 +6511,7 @@ def dashboard_page(request: Request):
             };
             const inlinePreviewBase = basePreview ? withPreviewParams(basePreview, 1280, 720, 80) : '';
             const fullscreenPreviewBaseReduced = basePreview ? withPreviewParams(basePreview, 1920, 1080, 88) : '';
-            const fullscreenPreviewBaseQuality = basePreview ? withPreviewParams(basePreview, 3840, 2160, 98) : '';
+            const fullscreenPreviewBaseZoomSource2k = basePreview ? withPreviewParams(basePreview, 2560, 1440, 95) : '';
             if (!basePreview) {
               info.textContent = tr('noRtsp');
               currentPreviewBase = '';
@@ -6584,36 +6584,28 @@ def dashboard_page(request: Request):
               title.textContent = currentLang === 'de' ? 'CanopyOps · Vorschau' : 'CanopyOps · Preview';
               title.style.fontWeight = '700';
 
-              let qualityModeEnabled = false;
-              let popupPreviewBase = fullscreenPreviewBaseReduced;
-
-              const qualityBtn = doc.createElement('button');
-              qualityBtn.textContent = '4K Mode';
-              qualityBtn.style.padding = '5px 9px';
-              qualityBtn.style.borderRadius = '8px';
-              qualityBtn.style.border = `1px solid ${colors.btnBorder}`;
-              qualityBtn.style.background = 'transparent';
-              qualityBtn.style.color = colors.btnText;
-              qualityBtn.style.cursor = 'pointer';
-
-              const updateQualityButton = () => {
-                qualityBtn.style.background = qualityModeEnabled ? colors.btnBg : 'transparent';
-                qualityBtn.style.fontWeight = qualityModeEnabled ? '700' : '500';
-                qualityBtn.title = qualityModeEnabled
-                  ? (currentLang === 'de' ? '4K aktiv (zum Deaktivieren klicken)' : '4K active (click to disable)')
-                  : (currentLang === 'de' ? 'Reduzierter Modus aktiv (für 4K klicken)' : 'Reduced mode active (click for 4K)');
-              };
-              updateQualityButton();
-
-              qualityBtn.onclick = () => {
-                qualityModeEnabled = !qualityModeEnabled;
-                popupPreviewBase = qualityModeEnabled ? fullscreenPreviewBaseQuality : fullscreenPreviewBaseReduced;
-                updateQualityButton();
-                tick();
+              const helpBtn = doc.createElement('button');
+              helpBtn.textContent = 'i';
+              helpBtn.setAttribute('aria-label', currentLang === 'de' ? 'Anleitung' : 'Help');
+              helpBtn.style.width = '24px';
+              helpBtn.style.height = '24px';
+              helpBtn.style.padding = '0';
+              helpBtn.style.borderRadius = '50%';
+              helpBtn.style.border = `1px solid ${colors.btnBorder}`;
+              helpBtn.style.background = 'transparent';
+              helpBtn.style.color = colors.btnText;
+              helpBtn.style.cursor = 'pointer';
+              helpBtn.style.fontWeight = '700';
+              helpBtn.title = currentLang === 'de' ? 'Anleitung anzeigen' : 'Show instructions';
+              helpBtn.onclick = () => {
+                const msg = currentLang === 'de'
+                  ? 'Vollbild-Hinweis:\n• Mausrad/Pinch: Zoomen\n• Ziehen: Bild verschieben\n• Doppelklick: Reset\n• Ab ~180% Zoom wird automatisch ein 2K-Frame geladen, intern auf 4K hochskaliert und als Standbild gehalten.'
+                  : 'Fullscreen hint:\n• Wheel/pinch: zoom\n• Drag: pan image\n• Double click: reset\n• From ~180% zoom a 2K frame is fetched, upscaled to 4K and held as a still image.';
+                w.alert(msg);
               };
 
               titleWrap.appendChild(title);
-              titleWrap.appendChild(qualityBtn);
+              titleWrap.appendChild(helpBtn);
 
               const stamp = doc.createElement('div');
               stamp.style.fontSize = '.82rem';
@@ -6685,8 +6677,12 @@ def dashboard_page(request: Request):
               let dragging = false;
               let pinchStartDist = 0;
               let pinchStartZoom = 1;
+              let popupPreviewBase = fullscreenPreviewBaseReduced;
               const ZOOM_MIN = 1;
               const ZOOM_MAX = 6;
+              const SMART_ZOOM_THRESHOLD = 1.8;
+              let smartFreezeActive = false;
+              let smartFreezeLoading = false;
 
               const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
               const updateTransform = () => {
@@ -6694,6 +6690,36 @@ def dashboard_page(request: Request):
                   panX = 0;
                   panY = 0;
                 }
+                const wantFreeze = zoom >= SMART_ZOOM_THRESHOLD;
+                if (wantFreeze && !smartFreezeActive && !smartFreezeLoading) {
+                  smartFreezeLoading = true;
+                  const sep = fullscreenPreviewBaseZoomSource2k.includes('?') ? '&' : '?';
+                  const src2k = `${fullscreenPreviewBaseZoomSource2k}${sep}t=${Date.now()}`;
+                  const hi = new w.Image();
+                  hi.onload = () => {
+                    try {
+                      const c = doc.createElement('canvas');
+                      c.width = 3840;
+                      c.height = 2160;
+                      const cx = c.getContext('2d');
+                      cx.imageSmoothingEnabled = true;
+                      cx.imageSmoothingQuality = 'high';
+                      cx.drawImage(hi, 0, 0, c.width, c.height);
+                      img.src = c.toDataURL('image/jpeg', 0.95);
+                      smartFreezeActive = true;
+                      popupPreviewBase = '';
+                    } finally {
+                      smartFreezeLoading = false;
+                    }
+                  };
+                  hi.onerror = () => { smartFreezeLoading = false; };
+                  hi.src = src2k;
+                } else if (!wantFreeze && smartFreezeActive) {
+                  smartFreezeActive = false;
+                  popupPreviewBase = fullscreenPreviewBaseReduced;
+                  tick();
+                }
+
                 img.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
                 zoomBadge.textContent = `${Math.round(zoom * 100)}%`;
                 img.style.cursor = zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'default';
