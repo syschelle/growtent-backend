@@ -6604,20 +6604,148 @@ def dashboard_page(request: Request):
               header.appendChild(right);
 
               const stage = doc.createElement('div');
+              stage.style.position = 'relative';
               stage.style.display = 'flex';
               stage.style.alignItems = 'center';
               stage.style.justifyContent = 'center';
               stage.style.background = colors.stageBg;
+              stage.style.overflow = 'hidden';
+              stage.style.touchAction = 'none';
 
               const img = doc.createElement('img');
               img.alt = 'Preview';
               img.style.maxWidth = '100vw';
               img.style.maxHeight = 'calc(100vh - 48px)';
               img.style.objectFit = 'contain';
+              img.style.transformOrigin = 'center center';
+              img.style.userSelect = 'none';
+              img.style.webkitUserDrag = 'none';
+              img.draggable = false;
+
+              const zoomBadge = doc.createElement('div');
+              zoomBadge.style.position = 'absolute';
+              zoomBadge.style.left = '12px';
+              zoomBadge.style.bottom = '12px';
+              zoomBadge.style.padding = '4px 8px';
+              zoomBadge.style.fontSize = '.78rem';
+              zoomBadge.style.borderRadius = '8px';
+              zoomBadge.style.border = `1px solid ${colors.btnBorder}`;
+              zoomBadge.style.background = colors.btnBg;
+              zoomBadge.style.color = colors.btnText;
+              zoomBadge.style.pointerEvents = 'none';
+              zoomBadge.textContent = '100%';
 
               stage.appendChild(img);
+              stage.appendChild(zoomBadge);
               doc.body.appendChild(header);
               doc.body.appendChild(stage);
+
+              let zoom = 1;
+              let panX = 0;
+              let panY = 0;
+              let dragStartX = 0;
+              let dragStartY = 0;
+              let dragging = false;
+              let pinchStartDist = 0;
+              let pinchStartZoom = 1;
+              const ZOOM_MIN = 1;
+              const ZOOM_MAX = 6;
+
+              const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+              const updateTransform = () => {
+                if (zoom <= 1) {
+                  panX = 0;
+                  panY = 0;
+                }
+                img.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+                zoomBadge.textContent = `${Math.round(zoom * 100)}%`;
+                img.style.cursor = zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'default';
+              };
+
+              const zoomAt = (clientX, clientY, nextZoom) => {
+                const rect = img.getBoundingClientRect();
+                if (!rect.width || !rect.height) return;
+                const prevZoom = zoom;
+                zoom = clamp(nextZoom, ZOOM_MIN, ZOOM_MAX);
+                const ratio = zoom / prevZoom;
+                const cx = clientX - (rect.left + rect.width / 2);
+                const cy = clientY - (rect.top + rect.height / 2);
+                panX = (panX - cx) * ratio + cx;
+                panY = (panY - cy) * ratio + cy;
+                updateTransform();
+              };
+
+              const dist = (t1, t2) => Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+
+              stage.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const step = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+                zoomAt(e.clientX, e.clientY, zoom * step);
+              }, { passive: false });
+
+              stage.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                if (zoom > 1.01) {
+                  zoom = 1;
+                  panX = 0;
+                  panY = 0;
+                  updateTransform();
+                } else {
+                  zoomAt(e.clientX, e.clientY, 2);
+                }
+              });
+
+              stage.addEventListener('pointerdown', (e) => {
+                if (e.pointerType !== 'touch' && zoom <= 1) return;
+                stage.setPointerCapture?.(e.pointerId);
+                dragging = true;
+                dragStartX = e.clientX - panX;
+                dragStartY = e.clientY - panY;
+                updateTransform();
+              });
+
+              stage.addEventListener('pointermove', (e) => {
+                if (!dragging || zoom <= 1) return;
+                panX = e.clientX - dragStartX;
+                panY = e.clientY - dragStartY;
+                updateTransform();
+              });
+
+              const stopDrag = (e) => {
+                if (!dragging) return;
+                dragging = false;
+                stage.releasePointerCapture?.(e.pointerId);
+                updateTransform();
+              };
+              stage.addEventListener('pointerup', stopDrag);
+              stage.addEventListener('pointercancel', stopDrag);
+              stage.addEventListener('pointerleave', stopDrag);
+
+              stage.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                  pinchStartDist = dist(e.touches[0], e.touches[1]);
+                  pinchStartZoom = zoom;
+                }
+              }, { passive: true });
+
+              stage.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 2) {
+                  e.preventDefault();
+                  const currentDist = dist(e.touches[0], e.touches[1]);
+                  if (!pinchStartDist) return;
+                  const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                  const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                  zoomAt(centerX, centerY, pinchStartZoom * (currentDist / pinchStartDist));
+                }
+              }, { passive: false });
+
+              stage.addEventListener('touchend', (e) => {
+                if (e.touches.length < 2) {
+                  pinchStartDist = 0;
+                }
+              });
+
+              updateTransform();
 
               let popupLastOkTs = 0;
               const tick = () => {
