@@ -130,6 +130,40 @@ Open:
 - Setup: `http://<server-ip>:8088/setup`
 - Changelog: `http://<server-ip>:8088/changelog`
 
+## Admin password reset / Docker command
+
+If you lock yourself out, you can inspect or reset the admin login from inside the API container.
+
+Check current auth status without exposing password hashes:
+
+```bash
+docker compose exec api python manage_auth.py status
+```
+
+Reset the password for the currently configured admin username and disable 2FA recovery state in one step:
+
+```bash
+printf '%s' 'DeinNeuesPasswort' | docker compose exec -T api python manage_auth.py set-admin --password-stdin --disable-2fa
+```
+
+Reset password and set/change the admin username at the same time:
+
+```bash
+printf '%s' 'DeinNeuesPasswort' | docker compose exec -T api python manage_auth.py set-admin --username 'MeinAdminName' --password-stdin --disable-2fa
+```
+
+Alternatively, use the fixed container name:
+
+```bash
+printf '%s' 'DeinNeuesPasswort' | docker exec -i gt_api python /app/manage_auth.py set-admin --username 'MeinAdminName' --password-stdin --disable-2fa
+```
+
+For an interactive prompt while keeping the currently configured username:
+
+```bash
+docker compose exec api python manage_auth.py set-admin --prompt-password --disable-2fa
+```
+
 ---
 
 ## Requirements

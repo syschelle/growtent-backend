@@ -36,7 +36,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.243"
+APP_VERSION = "v0.245"
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -1478,6 +1478,7 @@ class AuthConfigPayload(BaseModel):
     enabled: bool = False
     username: str | None = None
     password: str | None = None
+    password_confirm: str | None = None
     twofa_enabled: bool | None = None
     regenerate_recovery_codes: bool = False
     guest_enabled: bool | None = None
@@ -1538,6 +1539,8 @@ def set_auth_config(payload: AuthConfigPayload):
 
             new_hash = current_hash
             if isinstance(password, str) and password != "":
+                if payload.password_confirm is not None and password != payload.password_confirm:
+                    raise HTTPException(status_code=400, detail="password confirmation does not match")
                 new_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
 
             guest_enabled = current_guest_enabled if payload.guest_enabled is None else as_bool(payload.guest_enabled)
@@ -1610,6 +1613,7 @@ def set_auth_config(payload: AuthConfigPayload):
             "expires_at": time.time() + 600,
             "username": username,
         }
+        cfg_after_auth_save = load_auth_config()
         return {
             "ok": True,
             "enabled": True,
@@ -1621,7 +1625,7 @@ def set_auth_config(payload: AuthConfigPayload):
             "otpauth_url": otpauth_url,
             "qr_png_url": f"/auth/qr.png?u={quote_plus(otpauth_url)}",
             "recovery_codes": recovery_codes,
-            "pushover_device": cfg.get("pushover_device") or "",
+            "pushover_device": cfg_after_auth_save.get("pushover_device") or "",
         }
 
     cfg = load_auth_config()
@@ -3396,11 +3400,14 @@ def setup_page(request: Request):
                 <input type=\"checkbox\" id=\"authEnabled\" />
                 <span id=\"authEnabledLabel\">Enable user authentication</span>
               </label>
-              <form id=\"authForm\" onsubmit=\"return false;\" autocomplete=\"on\">
+              <form id=\"authForm\" onsubmit=\"return false;\" autocomplete=\"off\">
               <div id=\"authUserLabel\" style=\"margin-bottom:6px;\">Username</div>
-              <input id=\"authUsername\" autocomplete=\"username\" placeholder=\"admin\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
-              <div id=\"authPassLabel\" style=\"margin-bottom:6px;\">Password (leave empty to keep unchanged)</div>
-              <input id=\"authPassword\" autocomplete=\"current-password\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
+              <input id=\"authUsername\" name=\"admin-username\" autocomplete=\"username\" placeholder=\"admin\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
+              <div id=\"authPassLabel\" style=\"margin-bottom:6px;\">New password (leave empty to keep unchanged)</div>
+              <input id=\"authPassword\" name=\"new-admin-password\" autocomplete=\"new-password\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
+              <div id=\"authPassConfirmLabel\" style=\"margin-bottom:6px;\">Repeat new password</div>
+              <input id=\"authPasswordConfirm\" name=\"new-admin-password-confirm\" autocomplete=\"new-password\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:8px;\" />
+              <div id=\"authPassNote\" class=\"muted\" style=\"margin-bottom:10px; max-width:420px;\">Saving non-empty password fields changes the admin password. Use both fields to avoid accidental autofill changes.</div>
               <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
                 <input type=\"checkbox\" id=\"showAuthPassword\" />
                 <span id=\"showAuthPasswordLabel\">Show password</span>
@@ -3530,6 +3537,7 @@ def setup_page(request: Request):
           const authEnabledEl = document.getElementById('authEnabled');
           const authUsernameEl = document.getElementById('authUsername');
           const authPasswordEl = document.getElementById('authPassword');
+          const authPasswordConfirmEl = document.getElementById('authPasswordConfirm');
           const auth2faEnabledEl = document.getElementById('auth2faEnabled');
           const regenRecoveryCodesEl = document.getElementById('regenRecoveryCodes');
           const authMsgEl = document.getElementById('authMsg');
@@ -3553,6 +3561,7 @@ def setup_page(request: Request):
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
           let pending2faToken = '';
           let currentPlanTentId = 0;
+          let authHasPassword = false;
 
           const I18N_SETUP = {
             en: {
@@ -3568,7 +3577,9 @@ def setup_page(request: Request):
               access: 'Admin mode',
               enableAuth: 'Enable user authentication',
               username: 'Username',
-              passwordHint: 'Password (leave empty to keep unchanged)',
+              passwordHint: 'New password (leave empty to keep unchanged)',
+              passwordConfirm: 'Repeat new password',
+              passwordNote: 'Saving non-empty password fields changes the admin password. Use both fields to avoid accidental autofill changes.',
               saveAccess: 'Save',
               genPassword: 'Generate password',
               showPassword: 'Show password',
@@ -3625,7 +3636,9 @@ def setup_page(request: Request):
               access: 'Adminmodus',
               enableAuth: 'Benutzerauth aktivieren',
               username: 'Benutzername',
-              passwordHint: 'Passwort (leer lassen = unverändert)',
+              passwordHint: 'Neues Passwort (beide Felder leer = unverändert)',
+              passwordConfirm: 'Neues Passwort wiederholen',
+              passwordNote: 'Nicht-leere Passwortfelder ändern das Adminpasswort. Beide Felder verhindern versehentliche Autofill-Änderungen.',
               saveAccess: 'Speichern',
               genPassword: 'Passwort generieren',
               showPassword: 'Passwort anzeigen',
@@ -3696,6 +3709,8 @@ def setup_page(request: Request):
             set('authEnabledLabel', tSetup('enableAuth'));
             set('authUserLabel', tSetup('username'));
             set('authPassLabel', tSetup('passwordHint'));
+            set('authPassConfirmLabel', tSetup('passwordConfirm'));
+            set('authPassNote', tSetup('passwordNote'));
             set('showAuthPasswordLabel', tSetup('showPassword'));
             set('showGuestPasswordLabel', tSetup('showPassword'));
             set('pushoverTitle', tSetup('pushoverTitle'));
@@ -4005,6 +4020,9 @@ def setup_page(request: Request):
               const cfg = await res.json();
               authEnabledEl.checked = !!cfg.enabled;
               authUsernameEl.value = cfg.username || 'admin';
+              authHasPassword = !!cfg.has_password;
+              if (authPasswordEl) authPasswordEl.value = '';
+              if (authPasswordConfirmEl) authPasswordConfirmEl.value = '';
               if (auth2faEnabledEl) auth2faEnabledEl.checked = !!cfg.twofa_enabled;
               if (guestEnabledEl) guestEnabledEl.checked = !!cfg.guest_enabled;
               if (guestUsernameEl) guestUsernameEl.value = cfg.guest_username || '';
@@ -4017,6 +4035,7 @@ def setup_page(request: Request):
               if (pushoverDeviceEl) pushoverDeviceEl.value = cfg.pushover_device || '';
               authUsernameEl.classList.remove('input-missing');
               authPasswordEl?.classList.remove('input-missing');
+              authPasswordConfirmEl?.classList.remove('input-missing');
               if (twofaInfoEl) {
                 const parts = [];
                 parts.push(`Password set: ${cfg.has_password ? 'yes' : 'no'}.`);
@@ -4029,8 +4048,9 @@ def setup_page(request: Request):
           }
 
           document.getElementById('showAuthPassword')?.addEventListener('change', (ev) => {
-            if (!authPasswordEl) return;
-            authPasswordEl.type = ev.target.checked ? 'text' : 'password';
+            const inputType = ev.target.checked ? 'text' : 'password';
+            if (authPasswordEl) authPasswordEl.type = inputType;
+            if (authPasswordConfirmEl) authPasswordConfirmEl.type = inputType;
           });
 
           document.getElementById('showGuestPassword')?.addEventListener('change', (ev) => {
@@ -4039,6 +4059,15 @@ def setup_page(request: Request):
           });
 
           authFormEl?.addEventListener('submit', (ev) => ev.preventDefault());
+
+          function trimAuthUsernameInput(){
+            if (!authUsernameEl) return '';
+            const value = (authUsernameEl.value || '').trim();
+            authUsernameEl.value = value;
+            return value;
+          }
+
+          authUsernameEl?.addEventListener('blur', trimAuthUsernameInput);
 
           auth2faEnabledEl?.addEventListener('change', () => {
             if (auth2faEnabledEl.checked && authEnabledEl) authEnabledEl.checked = true;
@@ -4059,7 +4088,9 @@ def setup_page(request: Request):
 
           document.getElementById('genAuthPassBtn')?.addEventListener('click', () => {
             if (!authPasswordEl) return;
-            authPasswordEl.value = generateStrongPassword(20);
+            const generated = generateStrongPassword(20);
+            authPasswordEl.value = generated;
+            if (authPasswordConfirmEl) authPasswordConfirmEl.value = generated;
             if (authMsgEl) authMsgEl.textContent = 'Password generated. Please save access settings.';
           });
 
@@ -4074,16 +4105,21 @@ def setup_page(request: Request):
               const pre = await fetch('/config/auth');
               let pcfg = await pre.json().catch(() => ({}));
               if (!pcfg?.enabled || !pcfg?.has_password) {
-                const u = (authUsernameEl?.value || '').trim();
-                const p = (authPasswordEl?.value || '').trim();
+                const u = trimAuthUsernameInput();
+                const p = authPasswordEl?.value || '';
+                const pc = authPasswordConfirmEl?.value || '';
                 if (!u || !p) {
                   if (twofaMsgEl) twofaMsgEl.textContent = 'Bitte zuerst Username + Passwort eintragen (Access), dann Save 2FA.';
+                  return;
+                }
+                if (p !== pc) {
+                  if (twofaMsgEl) twofaMsgEl.textContent = 'Passwort und Wiederholung stimmen nicht überein.';
                   return;
                 }
                 const bootstrap = await fetch('/config/auth', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ enabled: true, username: u, password: p })
+                  body: JSON.stringify({ enabled: true, username: u, password: p, password_confirm: pc })
                 });
                 const bbody = await bootstrap.json().catch(() => ({}));
                 if (!bootstrap.ok) {
@@ -4198,18 +4234,30 @@ def setup_page(request: Request):
 
             authUsernameEl.classList.remove('input-missing');
             authPasswordEl.classList.remove('input-missing');
+            authPasswordConfirmEl?.classList.remove('input-missing');
+
+            const trimmedUsername = trimAuthUsernameInput();
 
             // Validate required fields when auth is enabled.
             if (authEnabledEl.checked) {
               let hasError = false;
-              if (!authUsernameEl.value.trim()) {
+              if (!trimmedUsername) {
                 authUsernameEl.classList.add('input-missing');
                 hasError = true;
               }
-              // Require password only for first setup: we cannot know first-setup state reliably here,
-              // so we enforce when field is empty and let backend handle update cases.
-              if (!authPasswordEl.value.trim()) {
+              const passwordValue = authPasswordEl.value || '';
+              const passwordConfirmValue = authPasswordConfirmEl?.value || '';
+              const wantsPasswordChange = passwordValue !== '' || passwordConfirmValue !== '';
+              if (!authHasPassword && !passwordValue) {
                 authPasswordEl.classList.add('input-missing');
+                if (authPasswordConfirmEl) authPasswordConfirmEl.classList.add('input-missing');
+                hasError = true;
+              }
+              if (wantsPasswordChange && passwordValue !== passwordConfirmValue) {
+                authPasswordEl.classList.add('input-missing');
+                if (authPasswordConfirmEl) authPasswordConfirmEl.classList.add('input-missing');
+                if (authMsgEl) authMsgEl.textContent = 'Passwort und Wiederholung stimmen nicht überein.';
+                return;
               }
               if (hasError) {
                 if (authMsgEl) authMsgEl.textContent = 'Bitte fehlende Pflichtfelder ausfüllen.';
@@ -4224,8 +4272,9 @@ def setup_page(request: Request):
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   enabled: authEnabledEl.checked,
-                  username: authUsernameEl.value.trim(),
-                  password: authPasswordEl.value,
+                  username: trimmedUsername,
+                  password: (authPasswordEl.value || authPasswordConfirmEl?.value) ? authPasswordEl.value : '',
+                  password_confirm: (authPasswordEl.value || authPasswordConfirmEl?.value) ? (authPasswordConfirmEl?.value || '') : '',
                   guest_enabled: !!guestEnabledEl?.checked,
                   guest_username: (guestUsernameEl?.value || '').trim(),
                   guest_password: guestPasswordEl?.value || '',
@@ -4239,15 +4288,20 @@ def setup_page(request: Request):
               if (!res.ok) {
                 const detail = body?.detail || 'Failed to save access settings.';
                 if (String(detail).toLowerCase().includes('username')) authUsernameEl.classList.add('input-missing');
-                if (String(detail).toLowerCase().includes('password')) authPasswordEl.classList.add('input-missing');
+                if (String(detail).toLowerCase().includes('password')) {
+                  authPasswordEl.classList.add('input-missing');
+                  authPasswordConfirmEl?.classList.add('input-missing');
+                }
                 if (authMsgEl) authMsgEl.textContent = detail;
                 return;
               }
               authPasswordEl.value = '';
+              if (authPasswordConfirmEl) authPasswordConfirmEl.value = '';
+              if (body?.has_password !== undefined) authHasPassword = !!body.has_password;
               if (guestPasswordEl) guestPasswordEl.value = '';
               const persistedEnabled = !!body?.enabled;
               authEnabledEl.checked = persistedEnabled;
-              authUsernameEl.value = body?.username || authUsernameEl.value;
+              authUsernameEl.value = (body?.username || trimmedUsername || authUsernameEl.value || '').trim();
               if (guestEnabledEl) guestEnabledEl.checked = !!body?.guest_enabled;
               if (guestUsernameEl) guestUsernameEl.value = body?.guest_username || guestUsernameEl.value;
               if (guestExpiresAtEl && body?.guest_expires_at) guestExpiresAtEl.value = String(body.guest_expires_at).slice(0,16);

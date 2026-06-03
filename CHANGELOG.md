@@ -2,6 +2,20 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.245
+
+### Admin username handling for setup and Docker reset helper
+- Setup UI now trims the admin username in-place before validation and saving, so accidental leading/trailing spaces are not persisted or shown after save.
+- `api/manage_auth.py set-admin` now preserves the currently configured admin username when `--username` is omitted.
+- Docker reset examples now distinguish between keeping the existing username and explicitly setting/changing it.
+
+## v0.244
+
+### Admin password setup hardening and Docker reset helper
+- Setup now uses dedicated new-password fields instead of current-password autofill hints for the admin password.
+- Added password confirmation before the admin password is changed from Setup.
+- Added `api/manage_auth.py` for Docker-based auth status checks and admin password resets, including optional 2FA reset.
+
 ## v0.242
 
 ### Shelly “Last update” now prefers direct activity timestamps
