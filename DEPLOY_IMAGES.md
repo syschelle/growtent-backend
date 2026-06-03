@@ -1,6 +1,7 @@
 # Deploying GrowTent Backend with prebuilt images
 
-This deployment mode pulls the prebuilt API image from GHCR instead of building on the target host.
+This deployment mode pulls a prebuilt API image from GHCR instead of building the API on the target host.
+It is intended for Raspberry Pi / ARM systems as well as x86 servers.
 
 ## Published host ports
 
@@ -13,32 +14,27 @@ The following services are internal-only in Docker Compose:
 - PostgreSQL: internal `db:5432`, no host port
 - go2rtc: internal `go2rtc:1984` / `go2rtc:8554`, no host port
 
-## Release build
+## Image tags
 
-Commit and tag the release:
+The image-based Compose file defaults to:
 
-```bash
-git add .
-git commit -m "fix(compose): keep go2rtc internal"
-git push origin main
-git tag -a v0.247 -m "Release v0.247"
-git push origin v0.247
+```text
+ghcr.io/syschelle/growtent-backend-api:latest
 ```
 
-The GitHub Actions workflow builds and pushes:
+For deterministic deployments, pin a specific version with `GT_API_IMAGE`, for example:
 
-- `ghcr.io/syschelle/growtent-backend-api:v0.247`
-- `ghcr.io/syschelle/growtent-backend-api:latest`
-
-for `linux/amd64` and `linux/arm64`.
+```text
+ghcr.io/syschelle/growtent-backend-api:v0.248
+```
 
 ## Server deployment
 
 Use the pinned release image:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.247 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.247 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.248 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.248 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Or use `latest`:
@@ -74,3 +70,15 @@ Expected:
 - `gt_db` prints no published ports
 - `/health` returns HTTP 200
 - for this stack, only `8088` is listening on the host
+
+## If go2rtc ports are still visible
+
+Docker does not remove port mappings from an already-created container. Recreate the stack:
+
+```bash
+docker compose -f docker-compose.images.yml down --remove-orphans
+docker rm -f gt_go2rtc gt_api gt_db 2>/dev/null || true
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.248 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+```
+
+Then verify again with `docker port` and `ss`.

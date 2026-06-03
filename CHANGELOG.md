@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.248
+
+### Documentation update for water-pump based irrigation
+- Updated the README to document normal water pumps for irrigation instead of peristaltic pumps.
+- Expanded deployment, networking, authentication, backup and troubleshooting documentation.
+- Kept publication-specific GitHub push/tag/release instructions out of the README.
+
 ## v0.247
 
 ### Docker network exposure hardening
