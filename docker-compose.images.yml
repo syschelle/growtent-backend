@@ -37,7 +37,7 @@ services:
 
   go2rtc:
     restart: unless-stopped
-    image: alexxit/go2rtc:latest
+    image: "${GO2RTC_IMAGE:-alexxit/go2rtc:1.9.14@sha256:f0579db234b4f9e8630493777dbf8581630d5d942d27b884ac9186f3d688e7bf}"
     container_name: gt_go2rtc
     expose:
       - "1984"

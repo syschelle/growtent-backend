@@ -37,7 +37,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.251"
+APP_VERSION = "v0.252"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 
 app = FastAPI(title="GrowTent Backend PoC")
@@ -1113,6 +1113,13 @@ def cleanup_old_data():
             )
 
 
+def _stored_shelly_main_password(tent: dict | None) -> str:
+    """Return the internal stored Shelly password without exposing the public API field name."""
+    if not isinstance(tent, dict):
+        return ""
+    return str(tent.get("_shelly_main_password") or tent.get("shelly_main_password") or "").strip()
+
+
 def list_tent_sources():
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -1125,7 +1132,7 @@ def list_tent_sources():
                     "source_url": r[2],
                     "rtsp_url": r[3],
                     "shelly_main_user": r[4] or "",
-                    "shelly_main_password": r[5] or "",
+                    "_shelly_main_password": r[5] or "",
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 }
@@ -1151,7 +1158,7 @@ def _refresh_main_shelly_in_payload(payload: dict, tent: dict):
         gen = int((payload or {}).get("settings.shelly.main.gen") or 2)
         base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
         user = (tent.get("shelly_main_user") or "").strip()
-        pw = (tent.get("shelly_main_password") or "").strip()
+        pw = _stored_shelly_main_password(tent)
         auth_candidates = _shelly_auth_candidates(user, pw)
 
         with httpx.Client(timeout=4.0) as client:
@@ -1218,7 +1225,7 @@ def _read_exhaust_shelly_output(payload: dict, tent: dict | None = None) -> bool
     gen = int((payload or {}).get("settings.shelly.exhaust.gen") or 2)
     base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
     user = ((tent or {}).get("shelly_main_user") or "").strip() if tent else ""
-    pw = ((tent or {}).get("shelly_main_password") or "").strip() if tent else ""
+    pw = _stored_shelly_main_password(tent)
     auth_candidates = _shelly_auth_candidates(user, pw)
     tried = set()
 
@@ -1253,7 +1260,7 @@ def _get_exhaust_shelly_direct_state_from_payload(payload: dict, tent: dict | No
     gen = int((payload or {}).get("settings.shelly.exhaust.gen") or 2)
     base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
     user = ((tent or {}).get("shelly_main_user") or "").strip() if tent else ""
-    pw = ((tent or {}).get("shelly_main_password") or "").strip() if tent else ""
+    pw = _stored_shelly_main_password(tent)
     auth_candidates = _shelly_auth_candidates(user, pw)
     tried = set()
     with httpx.Client(timeout=4.0) as client:
@@ -1293,7 +1300,7 @@ def _set_exhaust_shelly_output(payload: dict, turn_on: bool, tent: dict | None =
     gen = int((payload or {}).get("settings.shelly.exhaust.gen") or 2)
     base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
     user = ((tent or {}).get("shelly_main_user") or "").strip() if tent else ""
-    pw = ((tent or {}).get("shelly_main_password") or "").strip() if tent else ""
+    pw = _stored_shelly_main_password(tent)
     auth_candidates = _shelly_auth_candidates(user, pw)
     tried = set()
     with httpx.Client(timeout=4.0) as client:
@@ -2124,12 +2131,10 @@ def list_tents():
                     "source_url": r[2],
                     "rtsp_url": r[3],
                     "shelly_main_user": r[4] or "",
-                    "shelly_main_password": r[5] or "",
+                    "has_shelly_main_password": bool(r[5]),
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
-                    "exhaust_vpd_plan": json.loads(r[8] or '{}') if r[8] else {},
-                    "exhaust_vpd_triggered": bool(r[9]),
-                    "created_at": r[10].isoformat(),
+                    "created_at": r[8].isoformat(),
                 }
                 for r in rows
             ]
@@ -2326,7 +2331,8 @@ def export_config_backup():
                 "source_url": r[2],
                 "rtsp_url": r[3],
                 "shelly_main_user": r[4],
-                "shelly_main_password": r[5],
+                "shelly_main_password": None,
+                "has_shelly_main_password": bool(r[5]),
                 "irrigation_plan_json": r[6],
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "created_at": r[8].isoformat() if r[8] else None,
@@ -2466,14 +2472,14 @@ def create_tent(payload: dict):
                 INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
                 """,
                 (name, source_url, rtsp_url, shelly_main_user, shelly_main_password),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=409, detail="tent with same source_url already exists")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "shelly_main_password": row[5] or "", "created_at": row[6].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "created_at": row[6].isoformat()}
 
 
 @app.put("/tents/{tent_id}")
@@ -2482,7 +2488,10 @@ def update_tent(tent_id: int, payload: dict):
     source_url = str(payload.get("source_url", "")).strip()
     rtsp_url = str(payload.get("rtsp_url", "")).strip() or None
     shelly_main_user = str(payload.get("shelly_main_user", "")).strip() or None
-    shelly_main_password = str(payload.get("shelly_main_password", "")).strip() or None
+    shelly_main_password_raw = str(payload.get("shelly_main_password", "")).strip()
+    shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
+    shelly_password_clear = bool(payload.get("shelly_main_password_clear", False))
+    shelly_main_password = shelly_main_password_raw or None
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -2492,16 +2501,24 @@ def update_tent(tent_id: int, payload: dict):
             cur.execute(
                 """
                 UPDATE tents
-                SET name=%s, source_url=%s, rtsp_url=%s, shelly_main_user=%s, shelly_main_password=%s
+                SET name=%s,
+                    source_url=%s,
+                    rtsp_url=%s,
+                    shelly_main_user=%s,
+                    shelly_main_password=CASE
+                        WHEN %s THEN NULL
+                        WHEN %s THEN %s
+                        ELSE shelly_main_password
+                    END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, tent_id),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, tent_id),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "shelly_main_password": row[5] or "", "created_at": row[6].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "created_at": row[6].isoformat()}
 
 
 @app.get("/tents/{tent_id}/irrigation-plan")
@@ -3135,7 +3152,7 @@ def get_tent_by_id(tent_id: int):
             row = cur.fetchone()
             if not row:
                 return None
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "shelly_main_password": row[5] or ""}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "_shelly_main_password": row[5] or ""}
 
 
 def derive_controller_base_url(source_url: str) -> str:
@@ -3167,7 +3184,7 @@ def _get_shelly_direct_state_for_key(payload: dict, tent: dict | None, key: str)
     gen = int((payload or {}).get(f"settings.shelly.{key}.gen") or 2)
     base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
     user = ((tent or {}).get("shelly_main_user") or "").strip() if tent else ""
-    pw = ((tent or {}).get("shelly_main_password") or "").strip() if tent else ""
+    pw = _stored_shelly_main_password(tent)
     auth_candidates = _shelly_auth_candidates(user, pw)
     with httpx.Client(timeout=4.0) as client:
         for a in auth_candidates:
@@ -3230,7 +3247,7 @@ def _extract_main_shelly_conn(tent_id: int):
 
     base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
     user = (tent.get("shelly_main_user") or "").strip()
-    pw = (tent.get("shelly_main_password") or "").strip()
+    pw = _stored_shelly_main_password(tent)
     auth = (user, pw) if user else None
     return base, gen, auth, latest
 
@@ -3299,7 +3316,7 @@ def _toggle_shelly_direct_for_key(tent_id: int, key: str):
     gen = int((latest or {}).get(f"settings.shelly.{key}.gen") or 2)
     base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
     user = (tent.get("shelly_main_user") or "").strip()
-    pw = (tent.get("shelly_main_password") or "").strip()
+    pw = _stored_shelly_main_password(tent)
     auth_candidates = _shelly_auth_candidates(user, pw)
 
     with httpx.Client(timeout=5.0) as client:
@@ -4118,7 +4135,7 @@ def setup_page(request: Request):
                   <strong>#${t.id} ${t.name}</strong><br>
                   <span style="opacity:.85">API: ${t.source_url}</span><br>
                   <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
-                  <span style="opacity:.85">Shelly Main Auth: ${t.shelly_main_user ? 'set' : '-'}</span><br>
+                  <span style="opacity:.85">Shelly Main Auth: ${(t.shelly_main_user || t.has_shelly_main_password) ? 'set' : '-'}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
                   <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">Edit</button>
@@ -4137,7 +4154,8 @@ def setup_page(request: Request):
                   document.getElementById('tentUrl').value = tent.source_url;
                   document.getElementById('tentRtsp').value = tent.rtsp_url || '';
                   document.getElementById('tentMainUser').value = tent.shelly_main_user || '';
-                  document.getElementById('tentMainPass').value = tent.shelly_main_password || '';
+                  document.getElementById('tentMainPass').value = '';
+                  document.getElementById('tentMainPass').placeholder = tent.has_shelly_main_password ? 'Stored - leave blank to keep' : 'Optional Shelly password';
                   document.getElementById('addTentBtn').setAttribute('data-edit-id', String(id));
                   document.getElementById('addTentBtn').textContent = 'Save tent';
                 });

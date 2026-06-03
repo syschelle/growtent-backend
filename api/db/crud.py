@@ -29,7 +29,7 @@ def list_tents_raw():
                 "source_url": r[2],
                 "rtsp_url": r[3],
                 "shelly_main_user": r[4] or "",
-                "shelly_main_password": r[5] or "",
+                "has_shelly_main_password": bool(r[5]),
                 "irrigation_plan": json.loads(r[6] or "{}") if r[6] else {},
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "created_at": r[8].isoformat(),
@@ -55,7 +55,7 @@ def create_tent_raw(payload: dict):
                 INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
                 """,
                 (name, source_url, rtsp_url, shelly_main_user, shelly_main_password),
             )
@@ -69,7 +69,7 @@ def create_tent_raw(payload: dict):
         "source_url": row[2],
         "rtsp_url": row[3],
         "shelly_main_user": row[4] or "",
-        "shelly_main_password": row[5] or "",
+        "has_shelly_main_password": bool(row[5]),
         "created_at": row[6].isoformat(),
     }
 
@@ -97,7 +97,10 @@ def update_tent_raw(tent_id: int, payload: dict):
     source_url = str(payload.get("source_url", "")).strip()
     rtsp_url = str(payload.get("rtsp_url", "")).strip() or None
     shelly_main_user = str(payload.get("shelly_main_user", "")).strip() or None
-    shelly_main_password = str(payload.get("shelly_main_password", "")).strip() or None
+    shelly_main_password_raw = str(payload.get("shelly_main_password", "")).strip()
+    shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
+    shelly_password_clear = bool(payload.get("shelly_main_password_clear", False))
+    shelly_main_password = shelly_main_password_raw or None
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -107,11 +110,19 @@ def update_tent_raw(tent_id: int, payload: dict):
             cur.execute(
                 """
                 UPDATE tents
-                SET name=%s, source_url=%s, rtsp_url=%s, shelly_main_user=%s, shelly_main_password=%s
+                SET name=%s,
+                    source_url=%s,
+                    rtsp_url=%s,
+                    shelly_main_user=%s,
+                    shelly_main_password=CASE
+                        WHEN %s THEN NULL
+                        WHEN %s THEN %s
+                        ELSE shelly_main_password
+                    END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, tent_id),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, tent_id),
             )
             row = cur.fetchone()
             if not row:
@@ -123,7 +134,7 @@ def update_tent_raw(tent_id: int, payload: dict):
         "source_url": row[2],
         "rtsp_url": row[3],
         "shelly_main_user": row[4] or "",
-        "shelly_main_password": row[5] or "",
+        "has_shelly_main_password": bool(row[5]),
         "created_at": row[6].isoformat(),
     }
 

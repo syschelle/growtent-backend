@@ -186,7 +186,19 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.251
+ghcr.io/syschelle/growtent-backend-api:v0.252
+```
+
+The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
+
+```text
+alexxit/go2rtc:1.9.14@sha256:f0579db234b4f9e8630493777dbf8581630d5d942d27b884ac9186f3d688e7bf
+```
+
+Override it only deliberately, for example during controlled testing:
+
+```bash
+GO2RTC_IMAGE=alexxit/go2rtc:1.9.14@sha256:f0579db234b4f9e8630493777dbf8581630d5d942d27b884ac9186f3d688e7bf docker compose -f docker-compose.images.yml up -d --force-recreate go2rtc
 ```
 
 ### `docker-compose.yml`
@@ -224,8 +236,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 Use a pinned image tag instead of `latest`:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.251 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.251 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -458,6 +470,14 @@ POST /tents/{tent_id}/actions/shelly/reset-energy
 
 Shelly data quality depends on the configured Shelly addresses, controller settings, and network reachability from the backend/controller environment.
 
+Shelly credential handling:
+
+- `shelly_main_password` may be submitted when creating or updating a tent.
+- Tent list/create/update responses do not return the stored plaintext password.
+- Responses expose only `has_shelly_main_password` so clients can show whether a password is configured.
+- When editing a tent, leave the Shelly password field empty to keep the existing stored password.
+- Send `shelly_main_password_clear: true` in an update payload only if the stored Shelly password should be removed.
+
 ---
 
 ## Camera and go2rtc integration
@@ -471,6 +491,14 @@ GO2RTC_BASE_URL=http://go2rtc:1984
 ```
 
 go2rtc is intentionally not published to the host by default. The browser should access camera previews through the API/UI path, not by directly opening `:1984` or `:8554` on the host.
+
+The Compose files pin go2rtc to an immutable image reference by default:
+
+```text
+alexxit/go2rtc:1.9.14@sha256:f0579db234b4f9e8630493777dbf8581630d5d942d27b884ac9186f3d688e7bf
+```
+
+This avoids silently pulling a newer upstream `latest` image with changed behavior or newly introduced vulnerabilities.
 
 Related endpoint:
 
@@ -515,6 +543,8 @@ POST /config/backup/import
 ```
 
 The setup page also provides backup/import controls.
+
+Security note: configuration backup exports do not include plaintext Shelly passwords. They include `has_shelly_main_password` metadata only. After importing a configuration backup, re-enter Shelly device passwords in Setup if those credentials are required. Database-level backups created with `pg_dump` still contain the complete database content and should be protected accordingly.
 
 ### Database backup with pg_dump
 
@@ -697,7 +727,7 @@ The `go2rtc` service should not contain `ports:`. It may contain only `expose:` 
 ```yaml
 go2rtc:
   restart: unless-stopped
-  image: alexxit/go2rtc:latest
+  image: "${GO2RTC_IMAGE:-alexxit/go2rtc:1.9.14@sha256:f0579db234b4f9e8630493777dbf8581630d5d942d27b884ac9186f3d688e7bf}"
   container_name: gt_go2rtc
   expose:
     - "1984"
@@ -753,7 +783,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use `latest` or a tag that actually exists:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.251 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

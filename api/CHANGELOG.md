@@ -2,6 +2,20 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.252
+
+### Security hardening
+- Redacted `shelly_main_password` from tent list/create/update API responses.
+- Added `has_shelly_main_password` so clients can display whether Shelly credentials are configured without exposing the secret.
+- Tent updates now keep the stored Shelly password when the password field is omitted or left empty; send `shelly_main_password_clear=true` to remove it explicitly.
+- Redacted Shelly passwords from configuration backup exports.
+- Replaced `alexxit/go2rtc:latest` with a pinned immutable go2rtc image reference in both Compose variants.
+
+### Dashboard version sync
+- Bumped the application version to `v0.252`.
+- Ensured the dashboard/setup version display uses the current `APP_VERSION` value.
+- Updated deployment documentation examples to reference the `v0.252` image tag.
+
 ## v0.251
 
 ### Authentication password hashing hardening
