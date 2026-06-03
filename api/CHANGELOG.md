@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.246
+
+### Multi-arch image release workflow
+- Added GitHub Actions workflow to build and push the API image for `linux/amd64` and `linux/arm64`.
+- Release tags like `v0.246` now publish both the version tag and `latest` to GHCR.
+- Added `docker-compose.images.yml` for production deployments that pull a prebuilt image instead of rebuilding on the target host.
+- `docker-compose.images.yml` defaults to `ghcr.io/syschelle/growtent-backend-api:latest` and can be pinned with `GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.246`.
+
 ## v0.245
 
 ### Admin username handling for setup and Docker reset helper

@@ -94,6 +94,39 @@ cd growtent-backend
 docker compose up -d --build
 ```
 
+
+## Production deployment with prebuilt images
+
+For releases, prefer the image-based Compose file so the target host does not rebuild the API container.
+The image is published as a multi-arch manifest for `linux/amd64` and `linux/arm64`.
+
+Use the latest published release image:
+
+```bash
+docker compose -f docker-compose.images.yml pull
+docker compose -f docker-compose.images.yml up -d
+```
+
+Pin a specific release image instead of using `latest`:
+
+```bash
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.246 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.246 docker compose -f docker-compose.images.yml up -d
+```
+
+If the GHCR package is private, log in first with a GitHub classic PAT that has `read:packages`:
+
+```bash
+echo "$CR_PAT" | docker login ghcr.io -u syschelle --password-stdin
+```
+
+Verify:
+
+```bash
+curl http://localhost:8088/health
+docker exec gt_api python /app/manage_auth.py status
+```
+
 ## Updating from GitHub (production)
 
 If your production folder is already connected to this repository:
