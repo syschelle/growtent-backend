@@ -21,6 +21,21 @@ def health():
     return legacy.health()
 
 
+@router.get('/install', response_class=HTMLResponse)
+def install_page():
+    return legacy.install_page()
+
+
+@router.get('/api/install')
+def install_status():
+    return legacy.install_status()
+
+
+@router.post('/api/install')
+def install_create_admin(payload: legacy.InstallPayload):
+    return legacy.install_create_admin(payload)
+
+
 @router.get('/setup', response_class=HTMLResponse)
 def setup_page(request: Request):
     return legacy.setup_page(request)

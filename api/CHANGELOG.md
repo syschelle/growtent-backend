@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.250
+
+### Initial install API
+- Added a first-start `/install` page for creating the initial admin username and password.
+- Added `/api/install` bootstrap endpoints that are available only until the first admin password is stored.
+- The install API enables authentication, stores the trimmed admin username, validates password confirmation, and creates an admin session after setup.
+- Added `INSTALL_API_ENABLED=false` as an optional environment switch to disable the bootstrap endpoint entirely.
+- Updated documentation for the first-start installation flow.
+
 ## v0.249
 
 ### English README refresh

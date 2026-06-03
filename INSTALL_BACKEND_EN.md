@@ -38,13 +38,16 @@ Expected health response:
 
 ## 5) Open UI
 
-- Dashboard: `http://<server-ip>:8088/dashboard`
+- Initial install: `http://<server-ip>:8088/install` (fresh database only)
+- Dashboard: `http://<server-ip>:8088/app?page=dashboard`
 - Setup: `http://<server-ip>:8088/setup`
 - Changelog: `http://<server-ip>:8088/changelog`
 
-## 6) Configure tents
+## 6) Initial admin account and tent configuration
 
-Open **Setup** and add one or more tents with:
+On a fresh installation, open **Initial install** first and create the first admin username and password. After that, `/install` and `/api/install` are no longer available.
+
+Then open **Setup** and add one or more tents with:
 
 - Tent name
 - Source URL (ESP32): `http://<esp-ip>/api/state`

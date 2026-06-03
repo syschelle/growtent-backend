@@ -17,7 +17,7 @@ The project is intended for controller firmware/API versions compatible with the
 - [Compose files](#compose-files)
 - [Run with prebuilt images](#run-with-prebuilt-images)
 - [Run with a local build](#run-with-a-local-build)
-- [First setup](#first-setup)
+- [Initial installation and first setup](#initial-installation-and-first-setup)
 - [Authentication, guests, and 2FA](#authentication-guests-and-2fa)
 - [Admin recovery from Docker](#admin-recovery-from-docker)
 - [Controller configuration](#controller-configuration)
@@ -51,6 +51,7 @@ Main features:
 - camera preview support through internal go2rtc access
 - configuration export/import
 - Docker CLI helper for admin credential recovery
+- first-start install page/API for creating the initial admin account
 
 ---
 
@@ -185,7 +186,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.249
+ghcr.io/syschelle/growtent-backend-api:v0.250
 ```
 
 ### `docker-compose.yml`
@@ -223,8 +224,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 Use a pinned image tag instead of `latest`:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.249 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.249 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -275,9 +276,36 @@ curl -i http://127.0.0.1:8088/health
 
 ---
 
-## First setup
+## Initial installation and first setup
 
-After the stack is running, open:
+On a fresh installation, before an admin password exists, open:
+
+```text
+http://<server-ip>:8088/install
+```
+
+The initial installation page creates the first administrator account. It asks for:
+
+- admin username
+- admin password
+- password confirmation
+
+After the first admin password is stored, the install page/API is no longer available. Requests to the install API then return `404`, so the bootstrap endpoint cannot be reused for later credential changes.
+
+Initial install API endpoints:
+
+```text
+GET  /api/install      available only before the first admin password exists
+POST /api/install      creates the initial admin account and enables authentication
+```
+
+The install API can be disabled completely with the environment variable:
+
+```text
+INSTALL_API_ENABLED=false
+```
+
+After the initial admin account has been created, continue with the normal setup page:
 
 ```text
 http://<server-ip>:8088/setup
@@ -285,7 +313,7 @@ http://<server-ip>:8088/setup
 
 Typical first setup tasks:
 
-1. configure admin authentication
+1. sign in with the admin account created during initial installation
 2. optionally enable two-factor authentication
 3. add one or more tent/controller entries
 4. configure controller base URLs
@@ -310,6 +338,8 @@ The backend supports:
 
 Important admin-password behavior:
 
+- on a fresh database, admin login is blocked until the initial install page creates the first admin account
+- after the first admin password exists, `/install` and `/api/install` return `404`
 - leaving the password field empty keeps the current password unchanged
 - entering a new password changes the admin password
 - password confirmation must match before a password change is saved
@@ -510,6 +540,7 @@ Browser pages:
 
 ```text
 /                         redirect/helper entry
+/install                  initial admin account bootstrap page; first start only
 /app?page=dashboard       main app shell/dashboard
 /setup                    setup UI
 /changelog                changelog page
@@ -521,6 +552,8 @@ Browser pages:
 Authentication/config:
 
 ```text
+GET  /api/install       initial install status; first start only
+POST /api/install       create initial admin account; first start only
 GET  /auth/whoami
 POST /auth/login
 POST /auth/login/2fa
@@ -718,7 +751,34 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use `latest` or a tag that actually exists:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.249 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml pull
+```
+
+### Initial install page is not available
+
+The `/install` page and `/api/install` endpoint are available only before the first admin password has been stored. This is expected after installation is complete.
+
+Check auth status from inside the API container:
+
+```bash
+docker exec -it gt_api python /app/manage_auth.py status
+```
+
+If an admin password already exists, use the normal login page or the Docker recovery helper.
+
+If this is a fresh test system and no data needs to be kept, recreate the database volume and start again:
+
+```bash
+docker compose -f docker-compose.images.yml down -v
+docker compose -f docker-compose.images.yml up -d
+```
+
+Warning: `down -v` deletes the database volume for this stack.
+
+If the install API should be disabled even on fresh systems, set:
+
+```text
+INSTALL_API_ENABLED=false
 ```
 
 ### PostgreSQL says `role "growtent" does not exist`

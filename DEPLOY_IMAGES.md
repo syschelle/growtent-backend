@@ -25,7 +25,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 For deterministic deployments, pin a specific version with `GT_API_IMAGE`, for example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.249
+ghcr.io/syschelle/growtent-backend-api:v0.250
 ```
 
 ## Server deployment
@@ -33,8 +33,8 @@ ghcr.io/syschelle/growtent-backend-api:v0.249
 Use the pinned release image:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.249 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.249 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Or use `latest`:
@@ -51,6 +51,16 @@ echo "$CR_PAT" | docker login ghcr.io -u syschelle --password-stdin
 ```
 
 The token needs `read:packages`.
+
+## First browser access
+
+On a fresh database volume, open the initial install page first:
+
+```text
+http://<server-ip>:8088/install
+```
+
+Create the first admin username and password there. After this step, `/install` and `/api/install` are no longer available and normal access continues through `/auth/login`, `/app`, and `/setup`.
 
 ## Verify
 
@@ -78,7 +88,7 @@ Docker does not remove port mappings from an already-created container. Recreate
 ```bash
 docker compose -f docker-compose.images.yml down --remove-orphans
 docker rm -f gt_go2rtc gt_api gt_db 2>/dev/null || true
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.249 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Then verify again with `docker port` and `ss`.

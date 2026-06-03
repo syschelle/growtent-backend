@@ -36,7 +36,8 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.249"
+APP_VERSION = "v0.250"
+INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -92,6 +93,11 @@ def _refresh_session_if_needed(token: str | None, session: dict | None) -> int |
 
 @app.get("/", response_class=HTMLResponse)
 def root_page():
+    try:
+        if is_initial_install_available():
+            return RedirectResponse(url="/install", status_code=302)
+    except Exception:
+        pass
     return RedirectResponse(url="/app?page=dashboard", status_code=302)
 
 
@@ -116,6 +122,11 @@ def favicon_svg():
 
 @app.get("/auth/login", response_class=HTMLResponse)
 def auth_login_page():
+    try:
+        if is_initial_install_available():
+            return RedirectResponse(url="/install", status_code=302)
+    except Exception:
+        pass
     return """
     <html><head><title>CanopyOps Login</title><meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
@@ -153,6 +164,12 @@ def auth_login_page():
 class LoginPayload(BaseModel):
     username: str
     password: str
+
+
+class InstallPayload(BaseModel):
+    username: str
+    password: str
+    password_confirm: str
 
 
 class Login2FAPayload(BaseModel):
@@ -208,6 +225,13 @@ def _tent_label_for_notify(tent: dict, payload: dict | None = None) -> str:
 
 @app.post("/auth/login")
 def auth_login(payload: LoginPayload):
+    try:
+        if is_initial_install_available():
+            raise HTTPException(status_code=403, detail="initial installation required")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     cfg = load_auth_config()
     if not cfg.get("enabled"):
         # If auth is globally disabled, keep local convenience login,
@@ -475,6 +499,170 @@ def load_auth_config():
 
 
 
+def is_initial_install_available() -> bool:
+    """Return True only before the first admin password has been configured."""
+    if not INSTALL_API_ENABLED:
+        return False
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash FROM app_auth_config WHERE id=1")
+            row = cur.fetchone()
+            if not row:
+                return True
+            return not bool(row[0])
+
+
+def _create_admin_session_response(username: str):
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = {
+        "authenticated": True,
+        "role": "admin",
+        "username": username,
+        "expires_at": time.time() + SESSION_TTL_SECONDS,
+    }
+    resp = JSONResponse({"ok": True, "installed": True, "username": username})
+    resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
+    return resp
+
+
+def _not_installable():
+    # Behave as if the bootstrap endpoint does not exist once installation is complete.
+    raise HTTPException(status_code=404, detail="install API is not available")
+
+
+@app.get("/api/install")
+def install_status():
+    if not is_initial_install_available():
+        _not_installable()
+    return {"available": True, "app_version": APP_VERSION}
+
+
+@app.post("/api/install")
+def install_create_admin(payload: InstallPayload):
+    if not is_initial_install_available():
+        _not_installable()
+
+    username = (payload.username or "").strip()
+    password = payload.password or ""
+    password_confirm = payload.password_confirm or ""
+
+    if not username:
+        raise HTTPException(status_code=400, detail="admin username is required")
+    if len(username) > 150:
+        raise HTTPException(status_code=400, detail="admin username is too long")
+    if not password:
+        raise HTTPException(status_code=400, detail="admin password is required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="admin password must be at least 8 characters")
+    if password != password_confirm:
+        raise HTTPException(status_code=400, detail="password confirmation does not match")
+
+    password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password_hash FROM app_auth_config WHERE id=1 FOR UPDATE")
+            row = cur.fetchone()
+            if row and row[0]:
+                _not_installable()
+            if not row:
+                cur.execute(
+                    """
+                    INSERT INTO app_auth_config(id, enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, updated_at)
+                    VALUES (1, TRUE, %s, %s, FALSE, NULL, '[]', NOW())
+                    """,
+                    (username, password_hash),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE app_auth_config
+                    SET enabled=TRUE,
+                        username=%s,
+                        password_hash=%s,
+                        twofa_enabled=FALSE,
+                        totp_secret=NULL,
+                        recovery_codes_json='[]',
+                        updated_at=NOW()
+                    WHERE id=1
+                    """,
+                    (username, password_hash),
+                )
+
+    return _create_admin_session_response(username)
+
+
+@app.get("/install", response_class=HTMLResponse)
+def install_page():
+    if not is_initial_install_available():
+        _not_installable()
+    return f"""
+    <html><head><title>CanopyOps Initial Setup</title><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root{{--bg:#0f172a;--text:#e2e8f0;--card:#1e293b;--muted:#94a3b8;--input:#0b1220;--inputBorder:rgba(148,163,184,.25);--btn:#2563eb;--err:#fca5a5;--ok:#86efac}}
+      :root[data-theme='light']{{--bg:#eef2f5;--text:#0f172a;--card:#f8fafc;--muted:#64748b;--input:#ffffff;--inputBorder:rgba(51,65,85,.22);--btn:#1d4ed8;--err:#b91c1c;--ok:#15803d}}
+      *{{box-sizing:border-box}}
+      body{{font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:18px}}
+      .card{{background:var(--card);padding:20px;border-radius:14px;max-width:440px;width:100%;box-shadow:0 2px 14px rgba(2,6,23,.25)}}
+      h1{{font-size:22px;margin:0 0 8px}}
+      p{{color:var(--muted);line-height:1.45;margin:8px 0 16px}}
+      label{{display:block;font-weight:700;margin-top:12px}}
+      input,button{{width:100%;padding:11px;border-radius:9px;margin-top:7px;font-size:15px}}
+      input{{background:var(--input);color:var(--text);border:1px solid var(--inputBorder)}}
+      button{{background:var(--btn);color:#fff;border:0;font-weight:700;cursor:pointer;margin-top:16px}}
+      button:disabled{{opacity:.65;cursor:wait}}
+      .hint{{font-size:13px;color:var(--muted)}}
+      #m{{margin-top:12px;min-height:20px}}
+      .err{{color:var(--err)}} .ok{{color:var(--ok)}}
+    </style></head>
+    <body><div class="card">
+      <h1>Initial installation</h1>
+      <p>Create the first administrator account. This installation endpoint is only available until the first admin password has been stored.</p>
+      <label for="u">Admin username</label>
+      <input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="admin" autofocus />
+      <div class="hint">Leading and trailing spaces are removed before saving.</div>
+      <label for="p">Admin password</label>
+      <input id="p" type="password" autocomplete="new-password" placeholder="At least 8 characters" />
+      <label for="pc">Repeat password</label>
+      <input id="pc" type="password" autocomplete="new-password" placeholder="Repeat password" />
+      <button id="b">Create admin account</button>
+      <div id="m"></div>
+      <p class="hint">Version: {APP_VERSION}</p>
+    </div>
+    <script>
+      try {{
+        const t = (localStorage.getItem('gt_theme') || 'dark');
+        document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+      }} catch {{}}
+      async function submitInstall() {{
+        const username = (u.value || '').trim();
+        const password = p.value || '';
+        const password_confirm = pc.value || '';
+        m.className=''; m.textContent='';
+        if(!username){{m.className='err';m.textContent='Admin username is required.';u.focus();return;}}
+        if(password.length < 8){{m.className='err';m.textContent='Admin password must be at least 8 characters.';p.focus();return;}}
+        if(password !== password_confirm){{m.className='err';m.textContent='Password confirmation does not match.';pc.focus();return;}}
+        b.disabled = true;
+        try {{
+          const res = await fetch('/api/install', {{
+            method:'POST',
+            headers:{{'Content-Type':'application/json'}},
+            body:JSON.stringify({{username,password,password_confirm}})
+          }});
+          const j = await res.json().catch(()=>({{}}));
+          if(!res.ok){{m.className='err';m.textContent=j.detail || 'Installation failed.';b.disabled=false;return;}}
+          m.className='ok'; m.textContent='Admin account created. Opening dashboard...';
+          setTimeout(()=>{{ location.href='/app?page=dashboard'; }}, 350);
+        }} catch(e) {{
+          m.className='err'; m.textContent='Installation failed.'; b.disabled=false;
+        }}
+      }}
+      b.onclick=submitInstall;
+      [u,p,pc].forEach(el=>el.addEventListener('keydown',e=>{{if(e.key==='Enter'){{e.preventDefault();submitInstall();}}}}));
+    </script></body></html>
+    """
+
+
 def _parse_iso_datetime(value: str | None):
     try:
         if not value:
@@ -567,7 +755,7 @@ def require_admin(request: Request):
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt_prefixes = ("/health", "/favicon.svg", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/")
+    exempt_prefixes = ("/health", "/favicon.svg", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/", "/install", "/api/install")
     if path.startswith(exempt_prefixes):
         return await call_next(request)
 
@@ -575,6 +763,13 @@ async def auth_middleware(request: Request, call_next):
         cfg = load_auth_config()
     except Exception:
         cfg = {"enabled": False}
+
+    try:
+        install_available = is_initial_install_available()
+    except Exception:
+        install_available = False
+    if install_available and "text/html" in (request.headers.get("accept") or ""):
+        return RedirectResponse(url="/install", status_code=302)
 
     token = request.cookies.get("caop_session")
     session = get_session(token)
