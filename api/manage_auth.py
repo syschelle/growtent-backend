@@ -5,13 +5,13 @@ Admin passwords are stored as Argon2id hashes. Legacy password hashes are not wr
 
 Run inside the API container, for example:
   docker compose exec api python manage_auth.py status
-  docker compose exec api python manage_auth.py set-admin --username 'admin' --password 'new-password' --disable-2fa
+  docker compose exec api python manage_auth.py set-admin --username '<admin-user>' --prompt-password --disable-2fa
 
 For safer shell history handling. If --username is omitted, the existing configured username is kept:
-  printf '%s' 'new-password' | docker compose exec -T api python manage_auth.py set-admin --password-stdin --disable-2fa
+  printf '%s' '<new-admin-password>' | docker compose exec -T api python manage_auth.py set-admin --password-stdin --disable-2fa
 
 To change the username and password together:
-  printf '%s' 'new-password' | docker compose exec -T api python manage_auth.py set-admin --username 'new-admin-name' --password-stdin --disable-2fa
+  printf '%s' '<new-admin-password>' | docker compose exec -T api python manage_auth.py set-admin --username '<new-admin-name>' --password-stdin --disable-2fa
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from getpass import getpass
 from argon2 import PasswordHasher
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://growtent:growtent@db:5432/growtent")
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
 
 PASSWORD_HASHER = PasswordHasher()
@@ -36,6 +36,11 @@ def _hash_password(value: str) -> str:
 
 
 def _connect():
+    if not DATABASE_URL:
+        raise SystemExit("DATABASE_URL is required. Run inside a configured API container or export a deployment-specific DATABASE_URL.")
+    lowered = DATABASE_URL.lower()
+    if "postgresql://growtent:growtent@" in lowered or "replace_with" in lowered or "change-me" in lowered:
+        raise SystemExit("Refusing to use placeholder or weak default database credentials. Replace DATABASE_URL first.")
     try:
         import psycopg2
     except ModuleNotFoundError as exc:

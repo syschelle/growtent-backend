@@ -1,31 +1,61 @@
 # Deploying GrowTent Backend with prebuilt images
 
-This deployment mode pulls a prebuilt API image from GHCR instead of building the API on the target host.
-It is intended for Raspberry Pi / ARM systems as well as x86 servers.
+This deployment mode pulls a prebuilt API image from GHCR instead of building the API on the target host. It is intended for Raspberry Pi / ARM systems as well as x86 servers.
 
-## Published host ports
+## Security model
 
-Only the API is published to the host:
+Only the API is published to the host by default:
 
-- API: `8088:8080`
+- API/UI: `8088:8080`
 
-The following services are internal-only in Docker Compose:
+The following services stay internal to the Docker Compose network:
 
-- PostgreSQL: internal `db:5432`, no host port
-- go2rtc: internal `go2rtc:1984` / `go2rtc:8554`, no host port, pinned image reference
+- PostgreSQL: `db:5432`, no host port
+- go2rtc: `go2rtc:1984` / `go2rtc:8554`, no host port
+
+The Compose files do not ship usable default database credentials. You must provide a deployment-specific `.env` file before starting the stack.
+
+## Required `.env` file
+
+Create a `.env` file from the template:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and replace every `REPLACE_WITH_*` value. Use long random secrets. Do not reuse the examples in production.
+
+Generate example values:
+
+```bash
+openssl rand -base64 36
+openssl rand -base64 48
+```
+
+Required variables:
+
+```text
+POSTGRES_DB=...
+POSTGRES_USER=...
+POSTGRES_PASSWORD=...
+DATABASE_URL=postgresql://<db-user>:<url-encoded-db-password>@db:5432/<db-name>
+INSTALL_API_TOKEN=<long-random-first-run-token>
+```
+
+Important: if the database password contains special characters, URL-encode it in `DATABASE_URL`.
 
 ## Image tags
 
-The image-based Compose file defaults to:
+The image-based Compose file defaults to the current pinned release tag:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:latest
+ghcr.io/syschelle/growtent-backend-api:v0.253
 ```
 
 For deterministic deployments, pin a specific version with `GT_API_IMAGE`, for example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.252
+ghcr.io/syschelle/growtent-backend-api:v0.253
 ```
 
 go2rtc is pinned in the Compose files as an immutable reference instead of `latest`:
@@ -41,11 +71,11 @@ Override `GO2RTC_IMAGE` only deliberately for controlled upgrades.
 Use the pinned release image:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
-Or use `latest`:
+Or use the image configured in `.env` / Compose:
 
 ```bash
 docker compose -f docker-compose.images.yml pull
@@ -68,7 +98,7 @@ On a fresh database volume, open the initial install page first:
 http://<server-ip>:8088/install
 ```
 
-Create the first admin username and password there. After this step, `/install` and `/api/install` are no longer available and normal access continues through `/auth/login`, `/app`, and `/setup`.
+Create the first admin username and password there. The install form asks for the first-run install token from `.env` (`INSTALL_API_TOKEN`). After this step, `/install` and `/api/install` are no longer available and normal access continues through `/auth/login`, `/app`, and `/setup`.
 
 Admin passwords, guest passwords, and 2FA recovery codes are stored as Argon2id hashes. Legacy password hash formats are intentionally not accepted or migrated; use `manage_auth.py set-admin` to reset access after upgrading an older database.
 
@@ -98,7 +128,7 @@ Docker does not remove port mappings from an already-created container. Recreate
 ```bash
 docker compose -f docker-compose.images.yml down --remove-orphans
 docker rm -f gt_go2rtc gt_api gt_db 2>/dev/null || true
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Then verify again with `docker port` and `ss`.

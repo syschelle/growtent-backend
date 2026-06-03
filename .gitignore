@@ -38,3 +38,8 @@ sshot-135.png
 
 # Bytecode in subdirs
 **/__pycache__/
+
+# Deployment secrets
+.env
+.env.*
+!.env.example

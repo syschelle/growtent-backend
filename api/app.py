@@ -19,10 +19,11 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from models.schemas import ExhaustVpdPlanPayload, IrrigationPlanPayload, TentPayload
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://growtent:growtent@db:5432/growtent")
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 # POLL_URL removed: no default tent source is injected on fresh installs.
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
@@ -37,8 +38,10 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.252"
+APP_VERSION = "v0.253"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
+INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
+INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -218,6 +221,7 @@ class InstallPayload(BaseModel):
     username: str
     password: str
     password_confirm: str
+    install_token: str | None = None
 
 
 class Login2FAPayload(BaseModel):
@@ -514,7 +518,25 @@ def auth_qr_png(u: str):
 
 
 def get_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required. Set a strong, deployment-specific database URL via environment or .env.")
+    lowered = DATABASE_URL.lower()
+    if "postgresql://growtent:growtent@" in lowered or "replace_with" in lowered or "change-me" in lowered:
+        raise RuntimeError("Refusing to use placeholder or weak default database credentials. Replace DATABASE_URL with deployment-specific credentials.")
     return psycopg2.connect(DATABASE_URL)
+
+
+def _clean_optional_str(value):
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+def _clean_required_str(value):
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def load_auth_config():
@@ -575,17 +597,32 @@ def _not_installable():
     raise HTTPException(status_code=404, detail="install API is not available")
 
 
+def _require_install_token(request: Request, payload: InstallPayload | None = None) -> None:
+    if not INSTALL_API_REQUIRE_TOKEN:
+        return
+    if not INSTALL_API_TOKEN:
+        raise HTTPException(status_code=503, detail="install API token is required but not configured")
+    provided = (
+        request.headers.get("x-install-token")
+        or request.query_params.get("install_token")
+        or ((payload.install_token or "") if payload else "")
+    )
+    if not provided or not secrets.compare_digest(str(provided), INSTALL_API_TOKEN):
+        raise HTTPException(status_code=403, detail="valid install token is required")
+
+
 @app.get("/api/install")
 def install_status():
     if not is_initial_install_available():
         _not_installable()
-    return {"available": True, "app_version": APP_VERSION}
+    return {"available": True, "app_version": APP_VERSION, "token_required": INSTALL_API_REQUIRE_TOKEN, "token_configured": bool(INSTALL_API_TOKEN)}
 
 
 @app.post("/api/install")
-def install_create_admin(payload: InstallPayload):
+def install_create_admin(payload: InstallPayload, request: Request):
     if not is_initial_install_available():
         _not_installable()
+    _require_install_token(request, payload)
 
     username = (payload.username or "").strip()
     password = payload.password or ""
@@ -670,6 +707,9 @@ def install_page():
       <input id="p" type="password" autocomplete="new-password" placeholder="At least 8 characters" />
       <label for="pc">Repeat password</label>
       <input id="pc" type="password" autocomplete="new-password" placeholder="Repeat password" />
+      <label for="it">Install token</label>
+      <input id="it" type="password" autocomplete="one-time-code" placeholder="Set INSTALL_API_TOKEN in .env" />
+      <div class="hint">Required by default for first-run bootstrap. Store it only in your server-side .env file.</div>
       <button id="b">Create admin account</button>
       <div id="m"></div>
       <p class="hint">Version: {APP_VERSION}</p>
@@ -683,16 +723,19 @@ def install_page():
         const username = (u.value || '').trim();
         const password = p.value || '';
         const password_confirm = pc.value || '';
+        const install_token = it.value || '';
         m.className=''; m.textContent='';
         if(!username){{m.className='err';m.textContent='Admin username is required.';u.focus();return;}}
         if(password.length < 8){{m.className='err';m.textContent='Admin password must be at least 8 characters.';p.focus();return;}}
         if(password !== password_confirm){{m.className='err';m.textContent='Password confirmation does not match.';pc.focus();return;}}
         b.disabled = true;
         try {{
+          const headers = {{'Content-Type':'application/json'}};
+          if(install_token){{headers['X-Install-Token']=install_token;}}
           const res = await fetch('/api/install', {{
             method:'POST',
-            headers:{{'Content-Type':'application/json'}},
-            body:JSON.stringify({{username,password,password_confirm}})
+            headers,
+            body:JSON.stringify({{username,password,password_confirm,install_token}})
           }});
           const j = await res.json().catch(()=>({{}}));
           if(!res.ok){{m.className='err';m.textContent=j.detail || 'Installation failed.';b.disabled=false;return;}}
@@ -703,7 +746,7 @@ def install_page():
         }}
       }}
       b.onclick=submitInstall;
-      [u,p,pc].forEach(el=>el.addEventListener('keydown',e=>{{if(e.key==='Enter'){{e.preventDefault();submitInstall();}}}}));
+      [u,p,pc,it].forEach(el=>el.addEventListener('keydown',e=>{{if(e.key==='Enter'){{e.preventDefault();submitInstall();}}}}));
     </script></body></html>
     """
 
@@ -2455,12 +2498,13 @@ def import_config_backup(payload: dict):
 
 
 @app.post("/tents")
-def create_tent(payload: dict):
-    name = str(payload.get("name", "")).strip()
-    source_url = str(payload.get("source_url", "")).strip()
-    rtsp_url = str(payload.get("rtsp_url", "")).strip() or None
-    shelly_main_user = str(payload.get("shelly_main_user", "")).strip() or None
-    shelly_main_password = str(payload.get("shelly_main_password", "")).strip() or None
+def create_tent(payload: TentPayload):
+    payload = payload.model_dump(exclude_unset=True)
+    name = _clean_required_str(payload.get("name"))
+    source_url = _clean_required_str(payload.get("source_url"))
+    rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
+    shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -2483,12 +2527,13 @@ def create_tent(payload: dict):
 
 
 @app.put("/tents/{tent_id}")
-def update_tent(tent_id: int, payload: dict):
-    name = str(payload.get("name", "")).strip()
-    source_url = str(payload.get("source_url", "")).strip()
-    rtsp_url = str(payload.get("rtsp_url", "")).strip() or None
-    shelly_main_user = str(payload.get("shelly_main_user", "")).strip() or None
-    shelly_main_password_raw = str(payload.get("shelly_main_password", "")).strip()
+def update_tent(tent_id: int, payload: TentPayload):
+    payload = payload.model_dump(exclude_unset=True)
+    name = _clean_required_str(payload.get("name"))
+    source_url = _clean_required_str(payload.get("source_url"))
+    rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
+    shelly_main_password_raw = _clean_optional_str(payload.get("shelly_main_password")) or ""
     shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
     shelly_password_clear = bool(payload.get("shelly_main_password_clear", False))
     shelly_main_password = shelly_main_password_raw or None
@@ -2542,7 +2587,8 @@ def get_irrigation_plan(tent_id: int):
 
 
 @app.put("/tents/{tent_id}/irrigation-plan")
-def update_irrigation_plan(tent_id: int, payload: dict):
+def update_irrigation_plan(tent_id: int, payload: IrrigationPlanPayload):
+    payload = payload.model_dump(exclude_unset=True)
     enabled = bool(payload.get("enabled", False))
     try:
         every_n_days = max(1, int(payload.get("every_n_days", 1)))
@@ -2640,7 +2686,8 @@ def get_exhaust_vpd_plan(tent_id: int):
 
 
 @app.put("/tents/{tent_id}/exhaust-vpd-plan")
-def update_exhaust_vpd_plan(tent_id: int, payload: dict):
+def update_exhaust_vpd_plan(tent_id: int, payload: ExhaustVpdPlanPayload):
+    payload = payload.model_dump(exclude_unset=True)
     enabled = bool(payload.get("enabled", False))
     try:
         min_vpd_kpa = float(payload.get("min_vpd_kpa", 0.6))

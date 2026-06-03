@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.253
+
+### Security hardening
+- Removed hardcoded weak PostgreSQL credentials from both Compose files. Deployments now require a `.env` file with deployment-specific `POSTGRES_*`, `DATABASE_URL`, and `INSTALL_API_TOKEN` values.
+- Removed weak fallback `DATABASE_URL` values from the API and Docker auth helper; placeholder or known weak default database URLs are rejected at runtime.
+- Added first-run install token protection. `POST /api/install` now requires `INSTALL_API_TOKEN` by default via the install form, `X-Install-Token`, query parameter, or request body.
+- Added `.env.example` with placeholder-only values and production replacement guidance.
+- Replaced raw dictionary request bodies in tent create/update and irrigation-plan routes with strict Pydantic models that reject unexpected fields.
+- Updated deployment docs to clearly mark secrets and connection strings as placeholders that must be replaced.
+
 ## v0.252
 
 ### Security hardening

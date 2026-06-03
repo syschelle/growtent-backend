@@ -80,3 +80,8 @@ The ZIP includes project files and this installation guide.
 
 - If UI changes are not visible, hard-refresh the browser (`Ctrl+F5`).
 - If ESP32 is offline, the backend still runs but polling logs connection errors.
+
+
+## Production secrets
+
+Before starting Docker Compose, create a `.env` file from `.env.example` and replace all placeholder values. The initial install page requires the `INSTALL_API_TOKEN` value by default.

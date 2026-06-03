@@ -15,6 +15,7 @@ The project is intended for controller firmware/API versions compatible with the
 - [Network and security model](#network-and-security-model)
 - [Irrigation hardware: normal water pumps](#irrigation-hardware-normal-water-pumps)
 - [Compose files](#compose-files)
+- [Environment and secrets](#environment-and-secrets)
 - [Run with prebuilt images](#run-with-prebuilt-images)
 - [Run with a local build](#run-with-a-local-build)
 - [Initial installation and first setup](#initial-installation-and-first-setup)
@@ -180,13 +181,13 @@ Advantages:
 Default API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:latest
+ghcr.io/syschelle/growtent-backend-api:v0.253
 ```
 
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.252
+ghcr.io/syschelle/growtent-backend-api:v0.253
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -213,12 +214,54 @@ For production-style operation, prefer `docker-compose.images.yml`.
 
 ---
 
+## Environment and secrets
+
+Both Compose files require deployment-specific database credentials through a `.env` file. They intentionally do not contain usable default database passwords. This avoids accidentally copying weak example credentials into a real installation.
+
+Create the file from the template:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and replace every `REPLACE_WITH_*` value with a strong random secret. Do not commit `.env` and do not reuse the placeholder values.
+
+Required values include:
+
+```text
+POSTGRES_DB=<database-name>
+POSTGRES_USER=<database-user>
+POSTGRES_PASSWORD=<strong-random-database-password>
+DATABASE_URL=postgresql://<database-user>:<url-encoded-database-password>@db:5432/<database-name>
+INSTALL_API_TOKEN=<strong-random-first-run-install-token>
+```
+
+Use different secrets for each deployment. If the database password contains special characters, URL-encode it in `DATABASE_URL`.
+
+The application refuses to start with missing, placeholder, or known weak default database URLs.
+
+Generate example random values on Linux:
+
+```bash
+openssl rand -base64 36
+openssl rand -base64 48
+```
+
+---
+
 ## Run with prebuilt images
 
 Create or enter the project directory on the target host:
 
 ```bash
 cd /opt/growtent-backend
+```
+
+Create and edit the required `.env` file before starting the stack:
+
+```bash
+cp .env.example .env
+nano .env
 ```
 
 Pull images:
@@ -233,11 +276,11 @@ Start the stack:
 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
-Use a pinned image tag instead of `latest`:
+The image-based Compose file is pinned to the release tag by default. You can also set it explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -301,6 +344,7 @@ The initial installation page creates the first administrator account. It asks f
 - admin username
 - admin password
 - password confirmation
+- install token from `.env` (`INSTALL_API_TOKEN`)
 
 After the first admin password is stored, the install page/API is no longer available. Requests to the install API then return `404`, so the bootstrap endpoint cannot be reused for later credential changes.
 
@@ -311,10 +355,18 @@ GET  /api/install      available only before the first admin password exists
 POST /api/install      creates the initial admin account and enables authentication
 ```
 
+The install API is protected by `INSTALL_API_TOKEN` by default. The token must be provided in the install form or as the `X-Install-Token` header for `POST /api/install`.
+
 The install API can be disabled completely with the environment variable:
 
 ```text
 INSTALL_API_ENABLED=false
+```
+
+For development-only environments, token enforcement can be disabled with:
+
+```text
+INSTALL_API_REQUIRE_TOKEN=false
 ```
 
 After the initial admin account has been created, continue with the normal setup page:
@@ -377,19 +429,19 @@ docker exec -it gt_api python /app/manage_auth.py status
 Reset the password while preserving the currently configured admin username:
 
 ```bash
-printf '%s' 'NewAdminPasswordHere' | docker exec -i gt_api python /app/manage_auth.py set-admin --password-stdin --disable-2fa
+printf '%s' '<new-admin-password>' | docker exec -i gt_api python /app/manage_auth.py set-admin --password-stdin --disable-2fa
 ```
 
 Set username and password explicitly:
 
 ```bash
-printf '%s' 'NewAdminPasswordHere' | docker exec -i gt_api python /app/manage_auth.py set-admin --username 'admin' --password-stdin --disable-2fa
+printf '%s' '<new-admin-password>' | docker exec -i gt_api python /app/manage_auth.py set-admin --username 'admin' --password-stdin --disable-2fa
 ```
 
 With Compose:
 
 ```bash
-printf '%s' 'NewAdminPasswordHere' | docker compose -f docker-compose.images.yml exec -T api python manage_auth.py set-admin --password-stdin --disable-2fa
+printf '%s' '<new-admin-password>' | docker compose -f docker-compose.images.yml exec -T api python manage_auth.py set-admin --password-stdin --disable-2fa
 ```
 
 Use `--disable-2fa` when you are locked out because the previous TOTP secret is unavailable.
@@ -557,7 +609,7 @@ docker exec -t gt_db pg_dump -U growtent -d growtent > growtent-backup.sql
 Restore a dump:
 
 ```bash
-cat growtent-backup.sql | docker exec -i gt_db psql -U growtent -d growtent
+cat growtent-backup.sql | docker exec -i gt_db sh -lc 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
 ### Named volume backup
@@ -780,10 +832,10 @@ Check which image is requested:
 docker compose -f docker-compose.images.yml config | grep image:
 ```
 
-Use `latest` or a tag that actually exists:
+Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.252 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -861,18 +913,14 @@ Check the API database URL:
 docker inspect gt_api --format '{{range .Config.Env}}{{println .}}{{end}}' | grep DATABASE_URL
 ```
 
-The default expected value is:
-
-```text
-postgresql://growtent:growtent@db:5432/growtent
-```
+There is no safe default database URL. The value must come from your deployment-specific `.env` file and should match your `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` settings.
 
 ### Admin login no longer works
 
 Reset the admin password from Docker:
 
 ```bash
-printf '%s' 'NewAdminPasswordHere' | docker exec -i gt_api python /app/manage_auth.py set-admin --password-stdin --disable-2fa
+printf '%s' '<new-admin-password>' | docker exec -i gt_api python /app/manage_auth.py set-admin --password-stdin --disable-2fa
 ```
 
 Check the configured username:
@@ -884,7 +932,7 @@ docker exec -it gt_api python /app/manage_auth.py status
 If the username was changed, either log in with that username or set it explicitly:
 
 ```bash
-printf '%s' 'NewAdminPasswordHere' | docker exec -i gt_api python /app/manage_auth.py set-admin --username 'admin' --password-stdin --disable-2fa
+printf '%s' '<new-admin-password>' | docker exec -i gt_api python /app/manage_auth.py set-admin --username 'admin' --password-stdin --disable-2fa
 ```
 
 ### Controller shows offline or stale data

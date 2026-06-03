@@ -32,8 +32,8 @@ def install_status():
 
 
 @router.post('/api/install')
-def install_create_admin(payload: legacy.InstallPayload):
-    return legacy.install_create_admin(payload)
+def install_create_admin(payload: legacy.InstallPayload, request: Request):
+    return legacy.install_create_admin(payload, request)
 
 
 @router.get('/setup', response_class=HTMLResponse)

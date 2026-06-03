@@ -6,6 +6,19 @@ from fastapi import HTTPException
 from db.database import get_conn
 
 
+def _clean_optional_str(value):
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+def _clean_required_str(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def list_tents_raw():
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -39,11 +52,11 @@ def list_tents_raw():
 
 
 def create_tent_raw(payload: dict):
-    name = str(payload.get("name", "")).strip()
-    source_url = str(payload.get("source_url", "")).strip()
-    rtsp_url = str(payload.get("rtsp_url", "")).strip() or None
-    shelly_main_user = str(payload.get("shelly_main_user", "")).strip() or None
-    shelly_main_password = str(payload.get("shelly_main_password", "")).strip() or None
+    name = _clean_required_str(payload.get("name"))
+    source_url = _clean_required_str(payload.get("source_url"))
+    rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
+    shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -93,11 +106,11 @@ def delete_tent_raw(tent_id: int):
 
 
 def update_tent_raw(tent_id: int, payload: dict):
-    name = str(payload.get("name", "")).strip()
-    source_url = str(payload.get("source_url", "")).strip()
-    rtsp_url = str(payload.get("rtsp_url", "")).strip() or None
-    shelly_main_user = str(payload.get("shelly_main_user", "")).strip() or None
-    shelly_main_password_raw = str(payload.get("shelly_main_password", "")).strip()
+    name = _clean_required_str(payload.get("name"))
+    source_url = _clean_required_str(payload.get("source_url"))
+    rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
+    shelly_main_password_raw = _clean_optional_str(payload.get("shelly_main_password")) or ""
     shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
     shelly_password_clear = bool(payload.get("shelly_main_password_clear", False))
     shelly_main_password = shelly_main_password_raw or None

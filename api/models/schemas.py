@@ -1,34 +1,51 @@
-from pydantic import BaseModel
+from datetime import date
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class TentPayload(BaseModel):
-    name: str
-    source_url: str
-    rtsp_url: str | None = None
-    shelly_main_user: str | None = None
-    shelly_main_password: str | None = None
+class StrictModel(BaseModel):
+    """Base model for API request bodies that rejects unexpected fields."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class IrrigationPlanPayload(BaseModel):
+class TentPayload(StrictModel):
+    name: str = Field(min_length=1, max_length=200)
+    source_url: str = Field(min_length=1, max_length=2048)
+    rtsp_url: str | None = Field(default=None, max_length=2048)
+    shelly_main_user: str | None = Field(default=None, max_length=200)
+    shelly_main_password: str | None = Field(default=None, max_length=512)
+    shelly_main_password_clear: bool = False
+
+    @field_validator("name", "source_url", "rtsp_url", "shelly_main_user", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, value):
+        if value is None:
+            return None
+        return str(value).strip()
+
+
+class IrrigationPlanPayload(StrictModel):
     enabled: bool = False
-    every_n_days: int = 1
-    offset_after_light_on_min: int = 0
+    every_n_days: int = Field(default=1, ge=1, le=365)
+    offset_after_light_on_min: int = Field(default=0, ge=0, le=24 * 60)
+    last_run_date: date | None = None
 
 
-class ExhaustVpdPlanPayload(BaseModel):
+class ExhaustVpdPlanPayload(StrictModel):
     enabled: bool = False
-    min_vpd_kpa: float = 0.6
-    hysteresis_kpa: float = 0.05
+    min_vpd_kpa: float = Field(default=0.6, ge=0, le=10)
+    hysteresis_kpa: float = Field(default=0.05, ge=0, le=10)
 
 
-class AuthPayload(BaseModel):
+class AuthPayload(StrictModel):
     enabled: bool = False
     username: str | None = None
     password: str | None = None
     twofa_enabled: bool | None = None
 
 
-class LoginPayload(BaseModel):
+class LoginPayload(StrictModel):
     username: str
     password: str
     token: str | None = None

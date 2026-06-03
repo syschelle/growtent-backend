@@ -1,16 +1,17 @@
 import app as legacy
 from db import crud
+from models.schemas import IrrigationPlanPayload, TentPayload
 
 
 class TentService:
     def list_tents(self):
         return crud.list_tents_raw()
 
-    def create_tent(self, payload: dict):
-        return crud.create_tent_raw(payload)
+    def create_tent(self, payload: TentPayload):
+        return crud.create_tent_raw(payload.model_dump(exclude_unset=True))
 
-    def update_tent(self, tent_id: int, payload: dict):
-        return crud.update_tent_raw(tent_id, payload)
+    def update_tent(self, tent_id: int, payload: TentPayload):
+        return crud.update_tent_raw(payload.model_dump(exclude_unset=True))
 
     def delete_tent(self, tent_id: int):
         return crud.delete_tent_raw(tent_id)
@@ -18,8 +19,8 @@ class TentService:
     def get_irrigation_plan(self, tent_id: int):
         return crud.get_irrigation_plan_raw(tent_id)
 
-    def update_irrigation_plan(self, tent_id: int, payload: dict):
-        return crud.update_irrigation_plan_raw(tent_id, payload)
+    def update_irrigation_plan(self, tent_id: int, payload: IrrigationPlanPayload):
+        return crud.update_irrigation_plan_raw(payload=payload.model_dump(exclude_unset=True), tent_id=tent_id)
 
     def get_exhaust_vpd_plan(self, tent_id: int):
         return crud.get_exhaust_vpd_plan_raw(tent_id)

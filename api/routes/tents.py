@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Request
 
 from services.tent_service import TentService
 from core.dependencies import get_tent_service
+from models.schemas import IrrigationPlanPayload, TentPayload
 
 router = APIRouter()
 
@@ -12,12 +13,12 @@ def list_tents(service: TentService = Depends(get_tent_service)):
 
 
 @router.post('/tents')
-def create_tent(payload: dict, service: TentService = Depends(get_tent_service)):
+def create_tent(payload: TentPayload, service: TentService = Depends(get_tent_service)):
     return service.create_tent(payload)
 
 
 @router.put('/tents/{tent_id}')
-def update_tent(tent_id: int, payload: dict, service: TentService = Depends(get_tent_service)):
+def update_tent(tent_id: int, payload: TentPayload, service: TentService = Depends(get_tent_service)):
     return service.update_tent(tent_id, payload)
 
 
@@ -32,7 +33,7 @@ def get_irrigation_plan(tent_id: int, service: TentService = Depends(get_tent_se
 
 
 @router.put('/tents/{tent_id}/irrigation-plan')
-def update_irrigation_plan(tent_id: int, payload: dict, service: TentService = Depends(get_tent_service)):
+def update_irrigation_plan(tent_id: int, payload: IrrigationPlanPayload, service: TentService = Depends(get_tent_service)):
     return service.update_irrigation_plan(tent_id, payload)
 
 

@@ -4,27 +4,30 @@ services:
     image: postgres:16-alpine
     container_name: gt_db
     environment:
-      POSTGRES_DB: growtent
-      POSTGRES_USER: growtent
-      POSTGRES_PASSWORD: growtent
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U growtent -d growtent"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 3s
       retries: 20
 
   api:
     restart: unless-stopped
-    image: ${GT_API_IMAGE:-ghcr.io/syschelle/growtent-backend-api:latest}
+    image: ${GT_API_IMAGE:-ghcr.io/syschelle/growtent-backend-api:v0.253}
     container_name: gt_api
     environment:
-      DATABASE_URL: postgresql://growtent:growtent@db:5432/growtent
-      POLL_INTERVAL_SECONDS: 10
-      RETENTION_DAYS: 7
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-10}
+      RETENTION_DAYS: ${RETENTION_DAYS:-7}
       GO2RTC_BASE_URL: http://go2rtc:1984
       PROJECT_ROOT: /project
+      INSTALL_API_ENABLED: ${INSTALL_API_ENABLED:-true}
+      INSTALL_API_REQUIRE_TOKEN: ${INSTALL_API_REQUIRE_TOKEN:-true}
+      INSTALL_API_TOKEN: ${INSTALL_API_TOKEN:?Set INSTALL_API_TOKEN in .env for first-run bootstrap}
     volumes:
       - ./:/project:ro
     depends_on:
