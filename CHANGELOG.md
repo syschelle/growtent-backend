@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.251
+
+### Authentication password hashing hardening
+- Replaced admin and guest password storage with Argon2id hashes.
+- Replaced 2FA recovery-code storage with Argon2id hashes.
+- Removed legacy password-hash verification from login and recovery flows.
+- Updated the Docker auth helper to write Argon2id hashes only.
+- Added `argon2-cffi` to the API runtime dependencies.
+- Legacy password hash formats are intentionally not migrated; reset admin access with `manage_auth.py` when upgrading an older database.
+
 ## v0.250
 
 ### Initial install API

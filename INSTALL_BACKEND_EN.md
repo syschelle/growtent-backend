@@ -45,7 +45,7 @@ Expected health response:
 
 ## 6) Initial admin account and tent configuration
 
-On a fresh installation, open **Initial install** first and create the first admin username and password. After that, `/install` and `/api/install` are no longer available.
+On a fresh installation, open **Initial install** first and create the first admin username and password. After that, `/install` and `/api/install` are no longer available. Admin passwords are stored as Argon2id hashes.
 
 Then open **Setup** and add one or more tents with:
 

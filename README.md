@@ -186,7 +186,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.250
+ghcr.io/syschelle/growtent-backend-api:v0.251
 ```
 
 ### `docker-compose.yml`
@@ -224,8 +224,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 Use a pinned image tag instead of `latest`:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.251 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.251 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -345,6 +345,8 @@ Important admin-password behavior:
 - password confirmation must match before a password change is saved
 - the setup UI trims the admin username before validation and saving
 - the password itself is not trimmed; leading/trailing spaces are treated as part of the password
+- admin passwords, guest passwords, and 2FA recovery codes are stored as Argon2id hashes
+- legacy password hash formats are intentionally not accepted or migrated; reset the admin password with `manage_auth.py` if an older database no longer accepts the previous password
 
 Guest mode is intended for restricted dashboard access. Server-side restrictions still apply even if UI elements are hidden.
 
@@ -751,7 +753,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use `latest` or a tag that actually exists:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.250 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.251 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Small operational helper for GrowTent/CanopyOps auth settings.
 
+Admin passwords are stored as Argon2id hashes. Legacy password hashes are not written or migrated.
+
 Run inside the API container, for example:
   docker compose exec api python manage_auth.py status
   docker compose exec api python manage_auth.py set-admin --username 'admin' --password 'new-password' --disable-2fa
@@ -15,18 +17,22 @@ To change the username and password together:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
 from getpass import getpass
 
+from argon2 import PasswordHasher
+
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://growtent:growtent@db:5432/growtent")
 
 
-def _sha256(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+PASSWORD_HASHER = PasswordHasher()
+
+
+def _hash_password(value: str) -> str:
+    return PASSWORD_HASHER.hash(value)
 
 
 def _connect():
@@ -121,7 +127,7 @@ def cmd_set_admin(args: argparse.Namespace) -> int:
         raise SystemExit("Username must not be empty")
 
     password = _read_password(args)
-    password_hash = _sha256(password) if password is not None else None
+    password_hash = _hash_password(password) if password is not None else None
 
     if args.enable_auth and args.disable_auth:
         raise SystemExit("Use either --enable-auth or --disable-auth, not both")

@@ -1,5 +1,4 @@
 import base64
-import hashlib
 import io
 import json
 import os
@@ -20,6 +19,8 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://growtent:growtent@db:5432/growtent")
 # POLL_URL removed: no default tent source is injected on fresh installs.
@@ -36,7 +37,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.250"
+APP_VERSION = "v0.251"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 
 app = FastAPI(title="GrowTent Backend PoC")
@@ -62,6 +63,53 @@ PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_DEVICE = (os.getenv("PUSHOVER_DEVICE") or "").strip()
 POLL_NOTIFY_STATE: dict[int, dict] = {}
 WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
+
+PASSWORD_HASHER = PasswordHasher()
+
+
+def _hash_secret(value: str) -> str:
+    """Hash a password or recovery code for storage with Argon2id."""
+    return PASSWORD_HASHER.hash(value)
+
+
+def _verify_secret(stored_hash: str | None, value: str | None) -> bool:
+    """Verify an Argon2id hash. Legacy password hash formats are intentionally unsupported."""
+    if not stored_hash or value is None:
+        return False
+    stored = str(stored_hash).strip()
+    if not stored.startswith("$argon2"):
+        return False
+    try:
+        return PASSWORD_HASHER.verify(stored, value)
+    except (VerifyMismatchError, VerificationError, InvalidHashError, ValueError, TypeError):
+        return False
+
+
+def _clean_imported_secret_hash(value: object) -> str | None:
+    """Accept only Argon2 hashes from imported backups; reject legacy/unknown formats."""
+    if not value:
+        return None
+    stored = str(value).strip()
+    return stored if stored.startswith("$argon2") else None
+
+
+def _clean_imported_recovery_codes_json(value: object) -> str:
+    """Keep only unused/used recovery-code entries that contain Argon2 hashes."""
+    try:
+        items = json.loads(str(value or "[]"))
+    except Exception:
+        return "[]"
+    if not isinstance(items, list):
+        return "[]"
+    cleaned = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        stored = _clean_imported_secret_hash(item.get("hash"))
+        if not stored:
+            continue
+        cleaned.append({"hash": stored, "used": bool(item.get("used"))})
+    return json.dumps(cleaned)
 
 
 def _refresh_session_if_needed(token: str | None, session: dict | None) -> int | None:
@@ -236,13 +284,11 @@ def auth_login(payload: LoginPayload):
     if not cfg.get("enabled"):
         # If auth is globally disabled, keep local convenience login,
         # but still honor defined guest accounts as read-only sessions.
-        candidate_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
-
         # Legacy single guest from app_auth_config
         legacy_guest_user = (cfg.get("guest_username") or "").strip()
         legacy_guest_hash = (cfg.get("guest_password_hash") or "")
         legacy_guest_exp = cfg.get("guest_expires_at")
-        legacy_match = bool(legacy_guest_user and legacy_guest_hash and payload.username == legacy_guest_user and candidate_hash == legacy_guest_hash)
+        legacy_match = bool(legacy_guest_user and payload.username == legacy_guest_user and _verify_secret(legacy_guest_hash, payload.password))
         if legacy_match:
             guest_exp_ts = None
             try:
@@ -260,7 +306,7 @@ def auth_login(payload: LoginPayload):
             return resp
 
         # New multi-guest table
-        g = _find_active_guest_user(payload.username, candidate_hash)
+        g = _find_active_guest_user(payload.username, payload.password)
         if g and not g.get("expired"):
             guest_exp_ts = None
             try:
@@ -290,10 +336,9 @@ def auth_login(payload: LoginPayload):
     guest_enabled = bool(cfg.get("guest_enabled"))
     guest_expires_at = cfg.get("guest_expires_at")
 
-    is_admin_login = payload.username == admin_user and hashlib.sha256(payload.password.encode("utf-8")).hexdigest() == admin_hash
-    candidate_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
-    legacy_guest_login = payload.username == guest_user and guest_enabled and guest_hash and candidate_hash == guest_hash
-    db_guest = _find_active_guest_user(payload.username, candidate_hash)
+    is_admin_login = payload.username == admin_user and _verify_secret(admin_hash, payload.password)
+    legacy_guest_login = bool(payload.username == guest_user and guest_enabled and _verify_secret(guest_hash, payload.password))
+    db_guest = _find_active_guest_user(payload.username, payload.password)
     db_guest_login = bool(db_guest and not db_guest.get("expired"))
     is_guest_login = bool(legacy_guest_login or db_guest_login)
 
@@ -352,11 +397,11 @@ def auth_login_2fa(payload: Login2FAPayload):
             rc_list = json.loads(cfg.get("recovery_codes_json") or "[]")
         except Exception:
             rc_list = []
-        rc_hash = hashlib.sha256(payload.recoveryCode.strip().encode("utf-8")).hexdigest()
+        recovery_code = payload.recoveryCode.strip()
         matched = False
         new_list = []
         for item in rc_list:
-            if not matched and item.get("hash") == rc_hash and not item.get("used"):
+            if not matched and not item.get("used") and _verify_secret(item.get("hash"), recovery_code):
                 item["used"] = True
                 matched = True
             new_list.append(item)
@@ -557,7 +602,7 @@ def install_create_admin(payload: InstallPayload):
     if password != password_confirm:
         raise HTTPException(status_code=400, detail="password confirmation does not match")
 
-    password_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    password_hash = _hash_secret(password)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -694,32 +739,32 @@ def list_guest_users(include_disabled: bool = True):
             return out
 
 
-def _find_active_guest_user(username: str, password_hash: str):
-    if not username or not password_hash:
+def _find_active_guest_user(username: str, password: str):
+    if not username or not password:
         return None
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, username, expires_at, enabled
+                SELECT id, username, password_hash, expires_at, enabled
                 FROM app_guest_users
-                WHERE username=%s AND password_hash=%s AND enabled=TRUE
+                WHERE username=%s AND enabled=TRUE
                 LIMIT 1
                 """,
-                (username, password_hash),
+                (username,),
             )
             row = cur.fetchone()
-            if not row:
+            if not row or not _verify_secret(row[2], password):
                 return None
-            expires_at = row[2]
+            expires_at = row[3]
             if not expires_at or expires_at <= now:
                 return {"expired": True}
             return {
                 "id": row[0],
                 "username": row[1],
                 "expires_at": expires_at.isoformat(),
-                "enabled": bool(row[3]),
+                "enabled": bool(row[4]),
             }
 
 def get_session(token: str | None):
@@ -1736,14 +1781,14 @@ def set_auth_config(payload: AuthConfigPayload):
             if isinstance(password, str) and password != "":
                 if payload.password_confirm is not None and password != payload.password_confirm:
                     raise HTTPException(status_code=400, detail="password confirmation does not match")
-                new_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+                new_hash = _hash_secret(password)
 
             guest_enabled = current_guest_enabled if payload.guest_enabled is None else as_bool(payload.guest_enabled)
             guest_username = (payload.guest_username or "").strip()
             guest_password = payload.guest_password
             guest_hash = current_guest_hash
             if isinstance(guest_password, str) and guest_password != "":
-                guest_hash = hashlib.sha256(guest_password.encode("utf-8")).hexdigest()
+                guest_hash = _hash_secret(guest_password)
 
             guest_expires_at = payload.guest_expires_at
             guest_exp_ts = None
@@ -1798,7 +1843,7 @@ def set_auth_config(payload: AuthConfigPayload):
             for _ in range(10)
         ]
         recovery_payload = [
-            {"hash": hashlib.sha256(c.encode("utf-8")).hexdigest(), "used": False}
+            {"hash": _hash_secret(c), "used": False}
             for c in recovery_codes
         ]
         token = secrets.token_urlsafe(24)
@@ -1905,7 +1950,7 @@ def create_guest_user(payload: GuestUserCreatePayload):
         raise HTTPException(status_code=400, detail="expires_at must be ISO datetime")
     if exp <= datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="expires_at must be in the future")
-    pw_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+    pw_hash = _hash_secret(payload.password)
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -1939,7 +1984,7 @@ def update_guest_user(guest_id: int, payload: GuestUserUpdatePayload):
                 raise HTTPException(status_code=400, detail="username required")
             pw_hash = row[2]
             if isinstance(payload.password, str) and payload.password != "":
-                pw_hash = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+                pw_hash = _hash_secret(payload.password)
             exp = row[3]
             if payload.expires_at is not None:
                 exp = _parse_iso_datetime(payload.expires_at)
@@ -2025,7 +2070,7 @@ def set_2fa_config(payload: TwoFAConfigPayload):
             for _ in range(10)
         ]
         recovery_payload = [
-            {"hash": hashlib.sha256(c.encode("utf-8")).hexdigest(), "used": False}
+            {"hash": _hash_secret(c), "used": False}
             for c in recovery_codes
         ]
         with get_conn() as conn:
@@ -2045,7 +2090,7 @@ def set_2fa_config(payload: TwoFAConfigPayload):
         for _ in range(10)
     ]
     recovery_payload = [
-        {"hash": hashlib.sha256(c.encode("utf-8")).hexdigest(), "used": False}
+        {"hash": _hash_secret(c), "used": False}
         for c in recovery_codes
     ]
     token = secrets.token_urlsafe(24)
@@ -2384,10 +2429,10 @@ def import_config_backup(payload: dict):
                     (
                         bool(auth.get("enabled", False)),
                         (str(auth.get("username")).strip() if auth.get("username") else None),
-                        (str(auth.get("password_hash")) if auth.get("password_hash") else None),
+                        _clean_imported_secret_hash(auth.get("password_hash")),
                         bool(auth.get("twofa_enabled", False)),
                         (str(auth.get("totp_secret")) if auth.get("totp_secret") else None),
-                        str(auth.get("recovery_codes_json") or "[]"),
+                        _clean_imported_recovery_codes_json(auth.get("recovery_codes_json")),
                         (str(auth.get("pushover_device")).strip() if auth.get("pushover_device") else None),
                         (str(auth.get("pushover_app_token")).strip() if auth.get("pushover_app_token") else None),
                         (str(auth.get("pushover_user_key")).strip() if auth.get("pushover_user_key") else None),
