@@ -39,9 +39,9 @@ services:
     restart: unless-stopped
     image: alexxit/go2rtc:latest
     container_name: gt_go2rtc
-    ports:
-      - "1984:1984"
-      - "8554:8554"
+    expose:
+      - "1984"
+      - "8554"
 
 volumes:
   db_data:

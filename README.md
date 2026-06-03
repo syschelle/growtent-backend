@@ -107,11 +107,19 @@ docker compose -f docker-compose.images.yml pull
 docker compose -f docker-compose.images.yml up -d
 ```
 
+Security note: in `docker-compose.images.yml` only the API is published to the host (`8088:8080`). PostgreSQL and go2rtc stay internal to the Docker Compose network. The API still reaches go2rtc internally via `GO2RTC_BASE_URL=http://go2rtc:1984`, so camera previews continue to work through the API proxy without exposing go2rtc directly.
+
+After updating from an older Compose file that exposed go2rtc directly, force-recreate the containers so old port mappings are removed:
+
+```bash
+docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+```
+
 Pin a specific release image instead of using `latest`:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.246 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.246 docker compose -f docker-compose.images.yml up -d
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.247 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.247 docker compose -f docker-compose.images.yml up -d
 ```
 
 If the GHCR package is private, log in first with a GitHub classic PAT that has `read:packages`:
@@ -126,6 +134,17 @@ Verify:
 curl http://localhost:8088/health
 docker exec gt_api python /app/manage_auth.py status
 ```
+
+Verify host port exposure:
+
+```bash
+docker port gt_api
+docker port gt_go2rtc
+docker port gt_db
+ss -tulpn | grep -E ':8088|:1984|:8554|:5432' || true
+```
+
+Expected: `gt_api` publishes `8088->8080`; `gt_go2rtc` and `gt_db` print no published ports. The `ss` command should show `8088` only for this stack.
 
 ## Updating from GitHub (production)
 

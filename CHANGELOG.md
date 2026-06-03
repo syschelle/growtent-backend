@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.247
+
+### Docker network exposure hardening
+- Removed host-published `go2rtc` ports from both Docker Compose files.
+- `go2rtc` now stays reachable only inside the Docker Compose network via `go2rtc:1984` / `go2rtc:8554`.
+- The API remains the only host-published service port (`8088:8080`).
+- Added deployment verification steps to confirm that DB and go2rtc do not expose host ports.
+
 ## v0.246
 
 ### Multi-arch image release workflow
