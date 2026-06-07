@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.254
+
+### Fullscreen ASMR playback
+- Added an ASMR play/pause button to the camera fullscreen preview.
+- Added the bundled `thunderstorm.mp3` track with continuous loop playback after an explicit user click.
+- Audio playback is stopped and released when the fullscreen preview window closes.
+
 ## v0.253
 
 ### Security hardening

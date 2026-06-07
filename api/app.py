@@ -38,7 +38,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.253"
+APP_VERSION = "v0.254"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7014,10 +7014,50 @@ def dashboard_page(request: Request):
               closeBtn.style.cursor = 'pointer';
               closeBtn.onclick = () => w.close();
 
+              const asmrAudio = new w.Audio(`${window.location.origin}/static/thunderstorm.mp3`);
+              asmrAudio.loop = true;
+              asmrAudio.preload = 'none';
+
+              const asmrBtn = doc.createElement('button');
+              const updateAsmrButton = () => {
+                const isPlaying = !asmrAudio.paused;
+                asmrBtn.textContent = isPlaying ? 'ASMR ⏸' : 'ASMR ▶';
+                asmrBtn.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
+                asmrBtn.title = currentLang === 'de'
+                  ? (isPlaying ? 'Gewitter pausieren' : 'Gewitter abspielen')
+                  : (isPlaying ? 'Pause thunderstorm' : 'Play thunderstorm');
+              };
+              asmrBtn.type = 'button';
+              asmrBtn.style.marginLeft = '10px';
+              asmrBtn.style.padding = '5px 9px';
+              asmrBtn.style.borderRadius = '8px';
+              asmrBtn.style.border = `1px solid ${colors.btnBorder}`;
+              asmrBtn.style.background = colors.btnBg;
+              asmrBtn.style.color = colors.btnText;
+              asmrBtn.style.cursor = 'pointer';
+              asmrBtn.onclick = async () => {
+                if (asmrAudio.paused) {
+                  try {
+                    await asmrAudio.play();
+                  } catch {
+                    asmrBtn.title = currentLang === 'de'
+                      ? 'Audio konnte nicht gestartet werden'
+                      : 'Audio could not be started';
+                  }
+                } else {
+                  asmrAudio.pause();
+                }
+                updateAsmrButton();
+              };
+              asmrAudio.addEventListener('play', updateAsmrButton);
+              asmrAudio.addEventListener('pause', updateAsmrButton);
+              updateAsmrButton();
+
               const right = doc.createElement('div');
               right.style.display = 'flex';
               right.style.alignItems = 'center';
               right.appendChild(stamp);
+              right.appendChild(asmrBtn);
               right.appendChild(closeBtn);
 
               header.appendChild(titleWrap);
@@ -7219,6 +7259,11 @@ def dashboard_page(request: Request):
               }
               tick();
               w.setInterval(tick, 2500);
+              w.addEventListener('beforeunload', () => {
+                asmrAudio.pause();
+                asmrAudio.removeAttribute('src');
+                asmrAudio.load();
+              });
             };
 
             // Dashboard uses low-frame JPEG preview to save bandwidth/CPU.
