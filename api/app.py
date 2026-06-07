@@ -38,7 +38,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.254"
+APP_VERSION = "v0.255"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7017,6 +7017,7 @@ def dashboard_page(request: Request):
               const asmrAudio = new w.Audio(`${window.location.origin}/static/thunderstorm.mp3`);
               asmrAudio.loop = true;
               asmrAudio.preload = 'none';
+              asmrAudio.volume = 0.5;
 
               const asmrBtn = doc.createElement('button');
               const updateAsmrButton = () => {
@@ -7053,11 +7054,53 @@ def dashboard_page(request: Request):
               asmrAudio.addEventListener('pause', updateAsmrButton);
               updateAsmrButton();
 
+              const volumeWrap = doc.createElement('label');
+              volumeWrap.style.marginLeft = '10px';
+              volumeWrap.style.display = 'flex';
+              volumeWrap.style.alignItems = 'center';
+              volumeWrap.style.gap = '6px';
+              volumeWrap.style.color = colors.btnText;
+              volumeWrap.style.fontSize = '.78rem';
+              volumeWrap.title = currentLang === 'de' ? 'ASMR-Lautstärke' : 'ASMR volume';
+
+              const volumeIcon = doc.createElement('span');
+              volumeIcon.textContent = '🔊';
+              volumeIcon.setAttribute('aria-hidden', 'true');
+
+              const volumeSlider = doc.createElement('input');
+              volumeSlider.type = 'range';
+              volumeSlider.min = '0';
+              volumeSlider.max = '100';
+              volumeSlider.step = '1';
+              volumeSlider.value = String(Math.round(asmrAudio.volume * 100));
+              volumeSlider.style.width = '90px';
+              volumeSlider.style.cursor = 'pointer';
+              volumeSlider.setAttribute(
+                'aria-label',
+                currentLang === 'de' ? 'ASMR-Lautstärke' : 'ASMR volume',
+              );
+
+              const volumeValue = doc.createElement('span');
+              volumeValue.style.minWidth = '34px';
+              volumeValue.style.textAlign = 'right';
+              const updateVolume = () => {
+                const volume = Number(volumeSlider.value);
+                asmrAudio.volume = volume / 100;
+                volumeValue.textContent = `${volume}%`;
+              };
+              volumeSlider.addEventListener('input', updateVolume);
+              updateVolume();
+
+              volumeWrap.appendChild(volumeIcon);
+              volumeWrap.appendChild(volumeSlider);
+              volumeWrap.appendChild(volumeValue);
+
               const right = doc.createElement('div');
               right.style.display = 'flex';
               right.style.alignItems = 'center';
               right.appendChild(stamp);
               right.appendChild(asmrBtn);
+              right.appendChild(volumeWrap);
               right.appendChild(closeBtn);
 
               header.appendChild(titleWrap);

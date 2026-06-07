@@ -2,6 +2,12 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.255
+
+### Fullscreen ASMR volume control
+- Added a 0-100% volume slider next to the fullscreen ASMR play/pause button.
+- Set a moderate default volume of 50%.
+
 ## v0.254
 
 ### Fullscreen ASMR playback
