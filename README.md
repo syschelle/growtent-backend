@@ -181,13 +181,13 @@ Advantages:
 Default API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.253
+ghcr.io/syschelle/growtent-backend-api:v0.254
 ```
 
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.253
+ghcr.io/syschelle/growtent-backend-api:v0.254
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -279,8 +279,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file is pinned to the release tag by default. You can also set it explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.254 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.254 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -835,7 +835,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.253 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.254 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -991,4 +991,3 @@ Grow environments combine water, electricity, pumps, heaters, lights, and automa
 - never rely only on software for critical safety shutoffs
 - test manually before enabling unattended operation
 - verify fail-safe behavior for pumps, lights, fans, and heaters
-
