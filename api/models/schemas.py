@@ -25,6 +25,18 @@ class TentPayload(StrictModel):
         return str(value).strip()
 
 
+class StrainPayload(StrictModel):
+    name: str = Field(min_length=1, max_length=200)
+    effect: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("name", "effect", mode="before")
+    @classmethod
+    def strip_strings(cls, value):
+        if value is None:
+            return ""
+        return str(value).strip()
+
+
 class IrrigationPlanPayload(StrictModel):
     enabled: bool = False
     every_n_days: int = Field(default=1, ge=1, le=365)

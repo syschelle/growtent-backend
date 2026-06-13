@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.256
+
+### Strain library
+- Added a dedicated bilingual Strains / Sorten navigation tab.
+- Added persistent strain records with name and effect.
+- Added create, edit, delete and read-only guest workflows.
+- Included the strain library in configuration backup and restore.
+
 ## v0.255
 
 ### Fullscreen ASMR volume control

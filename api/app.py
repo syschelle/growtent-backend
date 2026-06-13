@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import ExhaustVpdPlanPayload, IrrigationPlanPayload, TentPayload
+from models.schemas import ExhaustVpdPlanPayload, IrrigationPlanPayload, StrainPayload, TentPayload
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
@@ -38,7 +38,7 @@ HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.255"
+APP_VERSION = "v0.256"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -888,7 +888,7 @@ async def auth_middleware(request: Request, call_next):
     if refreshed_max_age is not None:
         response.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=refreshed_max_age)
     if request.method == "GET" and (
-        path.startswith("/app") or path.startswith("/setup") or path.startswith("/dashboard") or path.startswith("/changelog")
+        path.startswith("/app") or path.startswith("/setup") or path.startswith("/dashboard") or path.startswith("/changelog") or path.startswith("/strain")
     ):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -990,6 +990,18 @@ def init_db():
                 );
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS strains (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    effect TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_strains_name_lower ON strains(LOWER(name));")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tent_state_tent_time ON tent_state(tent_id, captured_at DESC);")
             cur.execute(
                 """
@@ -2183,6 +2195,108 @@ def list_tents():
             ]
 
 
+@app.get("/strains")
+def list_strains():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, effect, created_at, updated_at
+                FROM strains
+                ORDER BY LOWER(name), id
+                """
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "id": int(r[0]),
+            "name": r[1],
+            "effect": r[2],
+            "created_at": r[3].isoformat(),
+            "updated_at": r[4].isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@app.post("/strains")
+def create_strain(payload: StrainPayload, request: Request):
+    require_admin(request)
+    name = payload.name.strip()
+    effect = payload.effect.strip()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO strains(name, effect)
+                    VALUES (%s, %s)
+                    RETURNING id, name, effect, created_at, updated_at
+                    """,
+                    (name, effect),
+                )
+                row = cur.fetchone()
+    except psycopg2.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="strain name already exists") from exc
+    return {
+        "id": int(row[0]),
+        "name": row[1],
+        "effect": row[2],
+        "created_at": row[3].isoformat(),
+        "updated_at": row[4].isoformat(),
+    }
+
+
+@app.put("/strains/{strain_id}")
+def update_strain(strain_id: int, payload: StrainPayload, request: Request):
+    require_admin(request)
+    name = payload.name.strip()
+    effect = payload.effect.strip()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE strains
+                    SET name=%s, effect=%s, updated_at=NOW()
+                    WHERE id=%s
+                    RETURNING id, name, effect, created_at, updated_at
+                    """,
+                    (name, effect, strain_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="strain not found")
+    except psycopg2.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="strain name already exists") from exc
+    return {
+        "id": int(row[0]),
+        "name": row[1],
+        "effect": row[2],
+        "created_at": row[3].isoformat(),
+        "updated_at": row[4].isoformat(),
+    }
+
+
+@app.delete("/strains/{strain_id}")
+def delete_strain(strain_id: int, request: Request):
+    require_admin(request)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM strains
+                WHERE id=%s
+                RETURNING id, name
+                """,
+                (strain_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="strain not found")
+    return {"ok": True, "deleted": {"id": int(row[0]), "name": row[1]}}
+
+
 @app.get("/api/poll-errors")
 def api_poll_errors(request: Request):
     # Not for guest users.
@@ -2364,6 +2478,14 @@ def export_config_backup():
                 """
             )
             auth_row = cur.fetchone()
+            cur.execute(
+                """
+                SELECT id, name, effect, created_at, updated_at
+                FROM strains
+                ORDER BY id
+                """
+            )
+            strain_rows = cur.fetchall()
 
     tents = []
     for r in tent_rows:
@@ -2399,14 +2521,26 @@ def export_config_backup():
             "updated_at": auth_row[11].isoformat() if auth_row[11] else None,
         }
 
+    strains = [
+        {
+            "id": int(r[0]),
+            "name": r[1],
+            "effect": r[2],
+            "created_at": r[3].isoformat() if r[3] else None,
+            "updated_at": r[4].isoformat() if r[4] else None,
+        }
+        for r in strain_rows
+    ]
+
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 1,
+        "schema_version": 2,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
             "tents": tents,
             "auth": auth,
+            "strains": strains,
         },
     }
 
@@ -2426,8 +2560,11 @@ def import_config_backup(payload: dict):
     data = payload.get("data") or {}
     tents = data.get("tents")
     auth = data.get("auth")
+    strains = data.get("strains", [])
     if not isinstance(tents, list):
         raise HTTPException(status_code=400, detail="invalid tents section")
+    if not isinstance(strains, list):
+        raise HTTPException(status_code=400, detail="invalid strains section")
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -2493,8 +2630,32 @@ def import_config_backup(payload: dict):
             cur.execute("SELECT COALESCE(MAX(id), 1) FROM tents")
             max_id = int(cur.fetchone()[0] or 1)
             cur.execute("SELECT setval(pg_get_serial_sequence('tents','id'), %s, true)", (max_id,))
+            cur.execute("DELETE FROM strains")
+            for strain in strains:
+                if not isinstance(strain, dict):
+                    continue
+                name = str(strain.get("name") or "").strip()
+                effect = str(strain.get("effect") or "").strip()
+                if not name or not effect:
+                    continue
+                cur.execute(
+                    """
+                    INSERT INTO strains(id, name, effect, created_at, updated_at)
+                    VALUES (%s, %s, %s, COALESCE(%s::timestamptz, NOW()), COALESCE(%s::timestamptz, NOW()))
+                    """,
+                    (
+                        int(strain.get("id") or 0),
+                        name,
+                        effect,
+                        strain.get("created_at"),
+                        strain.get("updated_at"),
+                    ),
+                )
+            cur.execute("SELECT COALESCE(MAX(id), 1) FROM strains")
+            max_strain_id = int(cur.fetchone()[0] or 1)
+            cur.execute("SELECT setval(pg_get_serial_sequence('strains','id'), %s, true)", (max_strain_id,))
 
-    return {"ok": True, "imported_tents": len(tents)}
+    return {"ok": True, "imported_tents": len(tents), "imported_strains": len(strains)}
 
 
 @app.post("/tents")
@@ -4952,6 +5113,315 @@ def changelog_page():
 
 
 
+@app.get("/strain-library", response_class=HTMLResponse)
+def strain_library_page(request: Request):
+    if request.query_params.get("embed") != "1":
+        return RedirectResponse(url="/app?page=strains", status_code=302)
+
+    return """
+    <!doctype html>
+    <html lang="de">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>CanopyOps Strains</title>
+        <style>
+          :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.18); --accent:#3b82f6; --danger:#ef4444; }
+          :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); --accent:#2563eb; --danger:#dc2626; }
+          * { box-sizing:border-box; }
+          body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+          main { padding:1rem; max-width:1200px; margin:0 auto; }
+          h1 { margin:.1rem 0 .35rem; }
+          .lead { color:var(--muted); margin:0 0 1rem; line-height:1.45; }
+          .layout { display:grid; grid-template-columns:minmax(280px, 360px) 1fr; gap:14px; align-items:start; }
+          .card { background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:14px; box-shadow:0 2px 10px rgba(0,0,0,.12); }
+          .form-row { margin-bottom:12px; }
+          label { display:block; font-weight:700; margin-bottom:5px; }
+          input, textarea { width:100%; color:var(--text); background:var(--bg); border:1px solid var(--grid); border-radius:8px; padding:9px 10px; font:inherit; }
+          textarea { min-height:130px; resize:vertical; }
+          .actions { display:flex; gap:8px; flex-wrap:wrap; }
+          button { border:1px solid var(--grid); border-radius:8px; padding:8px 12px; color:var(--text); background:rgba(59,130,246,.2); cursor:pointer; font:inherit; }
+          button.primary { background:var(--accent); color:#fff; border-color:transparent; }
+          button.danger { background:rgba(239,68,68,.15); color:var(--danger); }
+          button:disabled { opacity:.55; cursor:not-allowed; }
+          .status { min-height:1.2rem; margin-top:10px; color:var(--muted); }
+          .status.ok { color:#22c55e; }
+          .status.error { color:var(--danger); }
+          .list-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+          .list-head h2 { margin:0; font-size:1.1rem; }
+          .count { color:var(--muted); font-size:.9rem; }
+          .strain-list { display:grid; gap:10px; }
+          .strain { border:1px solid var(--grid); border-radius:10px; padding:12px; }
+          .strain-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+          .strain h3 { margin:0; color:#93c5fd; overflow-wrap:anywhere; }
+          .effect-label { color:var(--muted); font-size:.8rem; margin-top:9px; }
+          .effect { margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.45; }
+          .empty { color:var(--muted); text-align:center; padding:30px 10px; }
+          .guest-note { display:none; margin-bottom:12px; color:var(--muted); }
+          body.guest .editor { display:none; }
+          body.guest .guest-note { display:block; }
+          body.guest .strain-actions { display:none; }
+          @media (max-width:780px) { .layout { grid-template-columns:1fr; } }
+        </style>
+      </head>
+      <body>
+        <script>
+          const theme = localStorage.getItem('gt_theme') || 'dark';
+          document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+        </script>
+        <main>
+          <h1 id="pageTitle">Sorten</h1>
+          <p class="lead" id="pageLead"></p>
+          <div class="guest-note" id="guestNote"></div>
+          <div class="layout">
+            <section class="card editor">
+              <h2 id="formTitle"></h2>
+              <form id="strainForm">
+                <div class="form-row">
+                  <label for="strainName" id="nameLabel"></label>
+                  <input id="strainName" maxlength="200" required autocomplete="off" />
+                </div>
+                <div class="form-row">
+                  <label for="strainEffect" id="effectLabel"></label>
+                  <textarea id="strainEffect" maxlength="2000" required></textarea>
+                </div>
+                <div class="actions">
+                  <button class="primary" type="submit" id="saveBtn"></button>
+                  <button type="button" id="cancelBtn" style="display:none;"></button>
+                </div>
+                <div class="status" id="formStatus" aria-live="polite"></div>
+              </form>
+            </section>
+            <section class="card">
+              <div class="list-head">
+                <h2 id="listTitle"></h2>
+                <span class="count" id="strainCount"></span>
+              </div>
+              <div class="strain-list" id="strainList"></div>
+            </section>
+          </div>
+        </main>
+        <script>
+          const I18N = {
+            en: {
+              title: 'Strains',
+              lead: 'Manage the strain library centrally. Each entry contains a strain name and its effect.',
+              guestNote: 'Guest mode: the strain library is read-only.',
+              addTitle: 'Add strain',
+              editTitle: 'Edit strain',
+              name: 'Strain name',
+              effect: 'Effect',
+              list: 'Strain library',
+              save: 'Save',
+              update: 'Update',
+              cancel: 'Cancel',
+              edit: 'Edit',
+              remove: 'Delete',
+              empty: 'No strains have been added yet.',
+              countOne: '1 strain',
+              countMany: '{count} strains',
+              saved: 'Strain saved.',
+              updated: 'Strain updated.',
+              deleted: 'Strain deleted.',
+              duplicate: 'A strain with this name already exists.',
+              loadError: 'Could not load the strain library.',
+              saveError: 'Could not save the strain.',
+              deleteError: 'Could not delete the strain.',
+              confirmDelete: 'Delete "{name}"?',
+              required: 'Please enter a name and effect.'
+            },
+            de: {
+              title: 'Sorten',
+              lead: 'Verwalte die Sortenbibliothek zentral. Jeder Eintrag enthält den Sortennamen und seine Wirkung.',
+              guestNote: 'Gastmodus: Die Sortenbibliothek kann nur angesehen werden.',
+              addTitle: 'Sorte hinzufügen',
+              editTitle: 'Sorte bearbeiten',
+              name: 'Sortenname',
+              effect: 'Wirkung',
+              list: 'Sortenbibliothek',
+              save: 'Speichern',
+              update: 'Aktualisieren',
+              cancel: 'Abbrechen',
+              edit: 'Bearbeiten',
+              remove: 'Löschen',
+              empty: 'Es wurden noch keine Sorten angelegt.',
+              countOne: '1 Sorte',
+              countMany: '{count} Sorten',
+              saved: 'Sorte gespeichert.',
+              updated: 'Sorte aktualisiert.',
+              deleted: 'Sorte gelöscht.',
+              duplicate: 'Eine Sorte mit diesem Namen existiert bereits.',
+              loadError: 'Die Sortenbibliothek konnte nicht geladen werden.',
+              saveError: 'Die Sorte konnte nicht gespeichert werden.',
+              deleteError: 'Die Sorte konnte nicht gelöscht werden.',
+              confirmDelete: '"{name}" wirklich löschen?',
+              required: 'Bitte Sortenname und Wirkung eingeben.'
+            }
+          };
+          const lang = (localStorage.getItem('gt_lang') || 'de') === 'de' ? 'de' : 'en';
+          const tr = (key) => I18N[lang][key] || I18N.en[key] || key;
+          const listEl = document.getElementById('strainList');
+          const form = document.getElementById('strainForm');
+          const nameEl = document.getElementById('strainName');
+          const effectEl = document.getElementById('strainEffect');
+          const statusEl = document.getElementById('formStatus');
+          const cancelBtn = document.getElementById('cancelBtn');
+          const saveBtn = document.getElementById('saveBtn');
+          let items = [];
+          let editingId = null;
+          let isGuest = false;
+
+          function text(id, value){ const el = document.getElementById(id); if (el) el.textContent = value; }
+          function applyI18n(){
+            document.documentElement.lang = lang;
+            text('pageTitle', tr('title'));
+            text('pageLead', tr('lead'));
+            text('guestNote', tr('guestNote'));
+            text('nameLabel', tr('name'));
+            text('effectLabel', tr('effect'));
+            text('listTitle', tr('list'));
+            text('cancelBtn', tr('cancel'));
+            text('formTitle', editingId ? tr('editTitle') : tr('addTitle'));
+            text('saveBtn', editingId ? tr('update') : tr('save'));
+          }
+          function setStatus(message = '', type = ''){
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`.trim();
+          }
+          function resetForm(){
+            editingId = null;
+            form.reset();
+            cancelBtn.style.display = 'none';
+            setStatus('');
+            applyI18n();
+          }
+          function startEdit(item){
+            editingId = item.id;
+            nameEl.value = item.name || '';
+            effectEl.value = item.effect || '';
+            cancelBtn.style.display = 'inline-block';
+            setStatus('');
+            applyI18n();
+            nameEl.focus();
+          }
+          function render(){
+            const count = items.length;
+            text('strainCount', count === 1 ? tr('countOne') : tr('countMany').replace('{count}', String(count)));
+            listEl.replaceChildren();
+            if (!count) {
+              const empty = document.createElement('div');
+              empty.className = 'empty';
+              empty.textContent = tr('empty');
+              listEl.appendChild(empty);
+              return;
+            }
+            items.forEach(item => {
+              const card = document.createElement('article');
+              card.className = 'strain';
+              const head = document.createElement('div');
+              head.className = 'strain-head';
+              const title = document.createElement('h3');
+              title.textContent = item.name || '';
+              const actions = document.createElement('div');
+              actions.className = 'actions strain-actions';
+              const edit = document.createElement('button');
+              edit.type = 'button';
+              edit.textContent = tr('edit');
+              edit.addEventListener('click', () => startEdit(item));
+              const remove = document.createElement('button');
+              remove.type = 'button';
+              remove.className = 'danger';
+              remove.textContent = tr('remove');
+              remove.addEventListener('click', () => removeItem(item));
+              actions.append(edit, remove);
+              head.append(title, actions);
+              const label = document.createElement('div');
+              label.className = 'effect-label';
+              label.textContent = tr('effect');
+              const effect = document.createElement('div');
+              effect.className = 'effect';
+              effect.textContent = item.effect || '';
+              card.append(head, label, effect);
+              listEl.appendChild(card);
+            });
+          }
+          async function load(){
+            try {
+              const res = await fetch('/strains', { cache:'no-store' });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              items = await res.json();
+              render();
+            } catch {
+              listEl.innerHTML = '';
+              const error = document.createElement('div');
+              error.className = 'empty';
+              error.textContent = tr('loadError');
+              listEl.appendChild(error);
+            }
+          }
+          async function removeItem(item){
+            if (isGuest || !confirm(tr('confirmDelete').replace('{name}', item.name || ''))) return;
+            try {
+              const res = await fetch(`/strains/${item.id}`, { method:'DELETE' });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              if (editingId === item.id) resetForm();
+              await load();
+              setStatus(tr('deleted'), 'ok');
+            } catch {
+              setStatus(tr('deleteError'), 'error');
+            }
+          }
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (isGuest) return;
+            const name = nameEl.value.trim();
+            const effect = effectEl.value.trim();
+            if (!name || !effect) {
+              setStatus(tr('required'), 'error');
+              return;
+            }
+            saveBtn.disabled = true;
+            try {
+              const res = await fetch(editingId ? `/strains/${editingId}` : '/strains', {
+                method: editingId ? 'PUT' : 'POST',
+                headers: { 'Content-Type':'application/json' },
+                body: JSON.stringify({ name, effect })
+              });
+              if (!res.ok) {
+                if (res.status === 409) {
+                  setStatus(tr('duplicate'), 'error');
+                  return;
+                }
+                throw new Error(`HTTP ${res.status}`);
+              }
+              const wasEditing = editingId !== null;
+              resetForm();
+              await load();
+              setStatus(wasEditing ? tr('updated') : tr('saved'), 'ok');
+            } catch {
+              setStatus(tr('saveError'), 'error');
+            } finally {
+              saveBtn.disabled = false;
+            }
+          });
+          cancelBtn.addEventListener('click', resetForm);
+
+          (async () => {
+            applyI18n();
+            try {
+              const res = await fetch('/auth/whoami', { cache:'no-store' });
+              const user = await res.json();
+              isGuest = user?.role === 'guest';
+              document.body.classList.toggle('guest', isGuest);
+            } catch {}
+            await load();
+          })();
+        </script>
+      </body>
+    </html>
+    """
+
+
 @app.get("/grow-guide", response_class=HTMLResponse)
 def grow_guide_page(request: Request):
     if request.query_params.get("embed") != "1":
@@ -5075,9 +5545,10 @@ def app_shell_page():
           <aside class="sidebar">
             <div class="muted" id="navTitle">Navigation</div>
             <div id="tentNav"></div>
-            <a class="navlink" data-page="grow-guide" href="/app?page=grow-guide">Grow-Guide</a>
-            <a class="navlink" data-page="setup" href="/app?page=setup">Setup</a>
-            <a class="navlink" data-page="changelog" href="/app?page=changelog">About</a>
+            <a class="navlink" data-page="grow-guide" href="/app?page=grow-guide" id="shellNavGuide">Grow-Guide</a>
+            <a class="navlink" data-page="strains" href="/app?page=strains" id="shellNavStrains">Sorten</a>
+            <a class="navlink" data-page="setup" href="/app?page=setup" id="shellNavSetup">Setup</a>
+            <a class="navlink" data-page="changelog" href="/app?page=changelog" id="shellNavAbout">About</a>
           </aside>
           <main class="content">
             <iframe id="contentFrame" class="frame" src="/dashboard?embed=1"></iframe>
@@ -5094,6 +5565,21 @@ def app_shell_page():
           let userRole = 'admin';
 
           function getLang(){ return (localStorage.getItem('gt_lang') || 'de') === 'de' ? 'de' : 'en'; }
+          function applyShellI18n(){
+            const de = getLang() === 'de';
+            const labels = {
+              navTitle: 'Navigation',
+              shellNavGuide: 'Grow-Guide',
+              shellNavStrains: de ? 'Sorten' : 'Strains',
+              shellNavSetup: 'Setup',
+              shellNavAbout: de ? 'Über' : 'About',
+              logoutBtn: 'Logout'
+            };
+            Object.entries(labels).forEach(([id, value]) => {
+              const el = document.getElementById(id);
+              if (el) el.textContent = value;
+            });
+          }
           function updateViewBtnLabel(){
             if (!viewBtn) return;
             const mode = localStorage.getItem('gt_view_mode') || 'auto';
@@ -5117,6 +5603,7 @@ def app_shell_page():
             if (page === 'setup') src = '/setup?embed=1';
             else if (page === 'changelog') src = '/changelog?embed=1';
             else if (page === 'grow-guide') src = '/grow-guide?embed=1';
+            else if (page === 'strains') src = '/strain-library?embed=1';
             else if (tent) src = `/dashboard?embed=1&tent=${encodeURIComponent(tent)}`;
             if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
             updateActive();
@@ -5212,6 +5699,7 @@ def app_shell_page():
               }
             } catch {}
             loadTentNav();
+            applyShellI18n();
             updateViewBtnLabel();
             setFrame();
           })();
@@ -5456,6 +5944,7 @@ def dashboard_page(request: Request):
             <button id=\"mobileNavToggle\" type=\"button\" class=\"mobile-nav-toggle\">Menü</button>
             <div class=\"label\" style=\"margin-bottom:10px;\" id=\"navTitle\">Navigation</div>
             <div id=\"tentNav\"></div>
+            <a class=\"navlink\" href=\"/app?page=strains\" id=\"navStrains\">Sorten</a>
             <a class=\"navlink\" href=\"/app?page=setup\" id=\"navSetup\">Setup</a>
             <a class=\"navlink\" href=\"/app?page=changelog\" id=\"navChangelog\">About</a>
           </aside>
@@ -5748,6 +6237,7 @@ def dashboard_page(request: Request):
               navOpen: 'Menu',
               navClose: 'Close',
               source: 'Source',
+              strains: 'Strains',
               setup: 'Setup',
               nav: 'Navigation',
               tents: 'Tents',
@@ -5889,6 +6379,7 @@ def dashboard_page(request: Request):
               navOpen: 'Menü',
               navClose: 'Schließen',
               source: 'Quelle',
+              strains: 'Sorten',
               setup: 'Setup',
               nav: 'Navigation',
               tents: 'Zelte',
@@ -6076,6 +6567,7 @@ def dashboard_page(request: Request):
             txt('titleMain', tr('title'));
             txt('sourceText', '');
             txt('navTitle', tr('nav'));
+            txt('navStrains', tr('strains'));
             txt('navSetup', tr('setup'));
             txt('langLabel', tr('language'));
             txt('rangeLabel', tr('range'));

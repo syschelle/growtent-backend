@@ -66,6 +66,11 @@ def grow_guide_page(request: Request):
     return legacy.grow_guide_page(request)
 
 
+@router.get('/strain-library', response_class=HTMLResponse)
+def strain_library_page(request: Request):
+    return legacy.strain_library_page(request)
+
+
 @router.get('/poll-errors', response_class=HTMLResponse)
 def poll_errors_page(request: Request):
     return legacy.poll_errors_page(request)

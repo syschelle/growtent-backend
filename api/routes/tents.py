@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Request
 
+import app as legacy
 from services.tent_service import TentService
 from core.dependencies import get_tent_service
-from models.schemas import IrrigationPlanPayload, TentPayload
+from models.schemas import IrrigationPlanPayload, StrainPayload, TentPayload
 
 router = APIRouter()
 
@@ -25,6 +26,26 @@ def update_tent(tent_id: int, payload: TentPayload, service: TentService = Depen
 @router.delete('/tents/{tent_id}')
 def delete_tent(tent_id: int, service: TentService = Depends(get_tent_service)):
     return service.delete_tent(tent_id)
+
+
+@router.get('/strains')
+def list_strains():
+    return legacy.list_strains()
+
+
+@router.post('/strains')
+def create_strain(payload: StrainPayload, request: Request):
+    return legacy.create_strain(payload, request)
+
+
+@router.put('/strains/{strain_id}')
+def update_strain(strain_id: int, payload: StrainPayload, request: Request):
+    return legacy.update_strain(strain_id, payload, request)
+
+
+@router.delete('/strains/{strain_id}')
+def delete_strain(strain_id: int, request: Request):
+    return legacy.delete_strain(strain_id, request)
 
 
 @router.get('/tents/{tent_id}/irrigation-plan')
