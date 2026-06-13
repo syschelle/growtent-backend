@@ -25,11 +25,13 @@ services:
       RETENTION_DAYS: ${RETENTION_DAYS:-7}
       GO2RTC_BASE_URL: http://go2rtc:1984
       PROJECT_ROOT: /project
+      STRAINS_CSV_PATH: /data/strains.csv
       INSTALL_API_ENABLED: ${INSTALL_API_ENABLED:-true}
       INSTALL_API_REQUIRE_TOKEN: ${INSTALL_API_REQUIRE_TOKEN:-true}
       INSTALL_API_TOKEN: ${INSTALL_API_TOKEN:?Set INSTALL_API_TOKEN in .env for first-run bootstrap}
     volumes:
       - ./:/project:ro
+      - ./data:/data
     depends_on:
       db:
         condition: service_healthy

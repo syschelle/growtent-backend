@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.257
+
+### CSV-backed strain library
+- Moved strain records from PostgreSQL to the persistent `data/strains.csv` file.
+- Expanded the library to Sorte, Genetik, THC, CBD, Effexts_DE, Effects_EN, Aroma_DE and Aroma_EN.
+- Added bilingual web editing and direct CSV download.
+- Added automatic migration of existing strain names and effects on first start.
+- Updated configuration backup and restore for the expanded strain format.
+
 ## v0.256
 
 ### Strain library

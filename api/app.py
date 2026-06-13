@@ -1,4 +1,5 @@
 import base64
+import csv
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import re
 import math
 import logging
 from datetime import datetime, timezone, date, timedelta
+from pathlib import Path
 from urllib.parse import quote_plus, urlsplit
 
 import httpx
@@ -37,8 +39,9 @@ HEAP_WARN_COOLDOWN_SECONDS = int(os.getenv("HEAP_WARN_COOLDOWN_SECONDS", "3600")
 HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "3600"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
+STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.256"
+APP_VERSION = "v0.257"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -54,6 +57,27 @@ EMA_ALPHA = float(os.getenv("EMA_ALPHA", "0.3"))
 EMA_STATE: dict[int, dict] = {}
 SENSOR_INIT: dict[int, bool] = {}
 LOGGER = logging.getLogger("growtent.api")
+STRAINS_CSV_LOCK = threading.RLock()
+STRAINS_CSV_COLUMNS = (
+    "Sorte",
+    "Genetik",
+    "THC",
+    "CBD",
+    "Effexts_DE",
+    "Effects_EN",
+    "Aroma_DE",
+    "Aroma_EN",
+)
+STRAIN_FIELD_TO_CSV = {
+    "name": "Sorte",
+    "genetics": "Genetik",
+    "thc": "THC",
+    "cbd": "CBD",
+    "effects_de": "Effexts_DE",
+    "effects_en": "Effects_EN",
+    "aroma_de": "Aroma_DE",
+    "aroma_en": "Aroma_EN",
+}
 
 TEMP_MIN_C = float(os.getenv("SENSOR_TEMP_MIN_C", "-20"))
 TEMP_MAX_C = float(os.getenv("SENSOR_TEMP_MAX_C", "80"))
@@ -1013,6 +1037,89 @@ def init_db():
             # No default tent auto-insert on fresh installs.
 
 
+def _normalise_strain(data: dict) -> dict:
+    return {
+        field: str(data.get(field) or "").strip()
+        for field in STRAIN_FIELD_TO_CSV
+    }
+
+
+def _read_strains_csv_unlocked() -> list[dict]:
+    if not STRAINS_CSV_PATH.exists():
+        return []
+    try:
+        with STRAINS_CSV_PATH.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            missing = [column for column in STRAINS_CSV_COLUMNS if column not in (reader.fieldnames or [])]
+            if missing:
+                raise RuntimeError(f"strain CSV is missing columns: {', '.join(missing)}")
+            rows = []
+            for row in reader:
+                item = {
+                    field: str(row.get(csv_column) or "").strip()
+                    for field, csv_column in STRAIN_FIELD_TO_CSV.items()
+                }
+                if item["name"]:
+                    rows.append(item)
+            return rows
+    except (OSError, csv.Error) as exc:
+        raise RuntimeError(f"could not read strain CSV: {exc}") from exc
+
+
+def _write_strains_csv_unlocked(strains: list[dict]) -> None:
+    STRAINS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=f".{STRAINS_CSV_PATH.name}.",
+        suffix=".tmp",
+        dir=str(STRAINS_CSV_PATH.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=STRAINS_CSV_COLUMNS)
+            writer.writeheader()
+            for strain in strains:
+                item = _normalise_strain(strain)
+                writer.writerow({
+                    csv_column: item[field]
+                    for field, csv_column in STRAIN_FIELD_TO_CSV.items()
+                })
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, 0o644)
+        os.replace(temporary_path, STRAINS_CSV_PATH)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def _strain_response(strain: dict, index: int) -> dict:
+    return {"id": index + 1, **_normalise_strain(strain)}
+
+
+def _ensure_strains_csv() -> None:
+    with STRAINS_CSV_LOCK:
+        if STRAINS_CSV_PATH.exists():
+            _read_strains_csv_unlocked()
+            return
+
+        migrated = []
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name, effect FROM strains ORDER BY LOWER(name), id")
+                for name, effect in cur.fetchall():
+                    migrated.append({
+                        "name": name,
+                        "effects_de": effect,
+                    })
+        _write_strains_csv_unlocked(migrated)
+        if migrated:
+            LOGGER.info("Migrated %d strain records to %s", len(migrated), STRAINS_CSV_PATH)
+
+
 def _to_float(v):
     try:
         n = float(v)
@@ -1733,6 +1840,7 @@ def poll_loop():
 @app.on_event("startup")
 def startup_event():
     init_db()
+    _ensure_strains_csv()
     t = threading.Thread(target=poll_loop, daemon=True)
     t.start()
 
@@ -2197,104 +2305,67 @@ def list_tents():
 
 @app.get("/strains")
 def list_strains():
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name, effect, created_at, updated_at
-                FROM strains
-                ORDER BY LOWER(name), id
-                """
-            )
-            rows = cur.fetchall()
-    return [
-        {
-            "id": int(r[0]),
-            "name": r[1],
-            "effect": r[2],
-            "created_at": r[3].isoformat(),
-            "updated_at": r[4].isoformat(),
-        }
-        for r in rows
-    ]
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+    result = [_strain_response(strain, index) for index, strain in enumerate(strains)]
+    return sorted(result, key=lambda item: (item["name"].casefold(), item["id"]))
+
+
+@app.get("/strains.csv")
+def download_strains_csv():
+    with STRAINS_CSV_LOCK:
+        if not STRAINS_CSV_PATH.exists():
+            _write_strains_csv_unlocked([])
+    return FileResponse(
+        STRAINS_CSV_PATH,
+        media_type="text/csv; charset=utf-8",
+        filename="strains.csv",
+    )
 
 
 @app.post("/strains")
 def create_strain(payload: StrainPayload, request: Request):
     require_admin(request)
-    name = payload.name.strip()
-    effect = payload.effect.strip()
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO strains(name, effect)
-                    VALUES (%s, %s)
-                    RETURNING id, name, effect, created_at, updated_at
-                    """,
-                    (name, effect),
-                )
-                row = cur.fetchone()
-    except psycopg2.IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="strain name already exists") from exc
-    return {
-        "id": int(row[0]),
-        "name": row[1],
-        "effect": row[2],
-        "created_at": row[3].isoformat(),
-        "updated_at": row[4].isoformat(),
-    }
+    strain = _normalise_strain(payload.model_dump())
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+        if any(item["name"].casefold() == strain["name"].casefold() for item in strains):
+            raise HTTPException(status_code=409, detail="strain name already exists")
+        strains.append(strain)
+        _write_strains_csv_unlocked(strains)
+        return _strain_response(strain, len(strains) - 1)
 
 
 @app.put("/strains/{strain_id}")
 def update_strain(strain_id: int, payload: StrainPayload, request: Request):
     require_admin(request)
-    name = payload.name.strip()
-    effect = payload.effect.strip()
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE strains
-                    SET name=%s, effect=%s, updated_at=NOW()
-                    WHERE id=%s
-                    RETURNING id, name, effect, created_at, updated_at
-                    """,
-                    (name, effect, strain_id),
-                )
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="strain not found")
-    except psycopg2.IntegrityError as exc:
-        raise HTTPException(status_code=409, detail="strain name already exists") from exc
-    return {
-        "id": int(row[0]),
-        "name": row[1],
-        "effect": row[2],
-        "created_at": row[3].isoformat(),
-        "updated_at": row[4].isoformat(),
-    }
+    strain = _normalise_strain(payload.model_dump())
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+        index = strain_id - 1
+        if index < 0 or index >= len(strains):
+            raise HTTPException(status_code=404, detail="strain not found")
+        if any(
+            row_index != index and item["name"].casefold() == strain["name"].casefold()
+            for row_index, item in enumerate(strains)
+        ):
+            raise HTTPException(status_code=409, detail="strain name already exists")
+        strains[index] = strain
+        _write_strains_csv_unlocked(strains)
+        return _strain_response(strain, index)
 
 
 @app.delete("/strains/{strain_id}")
 def delete_strain(strain_id: int, request: Request):
     require_admin(request)
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                DELETE FROM strains
-                WHERE id=%s
-                RETURNING id, name
-                """,
-                (strain_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="strain not found")
-    return {"ok": True, "deleted": {"id": int(row[0]), "name": row[1]}}
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+        index = strain_id - 1
+        if index < 0 or index >= len(strains):
+            raise HTTPException(status_code=404, detail="strain not found")
+        deleted = strains.pop(index)
+        _write_strains_csv_unlocked(strains)
+    return {"ok": True, "deleted": {"id": strain_id, "name": deleted["name"]}}
 
 
 @app.get("/api/poll-errors")
@@ -2478,14 +2549,6 @@ def export_config_backup():
                 """
             )
             auth_row = cur.fetchone()
-            cur.execute(
-                """
-                SELECT id, name, effect, created_at, updated_at
-                FROM strains
-                ORDER BY id
-                """
-            )
-            strain_rows = cur.fetchall()
 
     tents = []
     for r in tent_rows:
@@ -2521,20 +2584,12 @@ def export_config_backup():
             "updated_at": auth_row[11].isoformat() if auth_row[11] else None,
         }
 
-    strains = [
-        {
-            "id": int(r[0]),
-            "name": r[1],
-            "effect": r[2],
-            "created_at": r[3].isoformat() if r[3] else None,
-            "updated_at": r[4].isoformat() if r[4] else None,
-        }
-        for r in strain_rows
-    ]
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 2,
+        "schema_version": 3,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -2630,32 +2685,26 @@ def import_config_backup(payload: dict):
             cur.execute("SELECT COALESCE(MAX(id), 1) FROM tents")
             max_id = int(cur.fetchone()[0] or 1)
             cur.execute("SELECT setval(pg_get_serial_sequence('tents','id'), %s, true)", (max_id,))
-            cur.execute("DELETE FROM strains")
-            for strain in strains:
-                if not isinstance(strain, dict):
-                    continue
-                name = str(strain.get("name") or "").strip()
-                effect = str(strain.get("effect") or "").strip()
-                if not name or not effect:
-                    continue
-                cur.execute(
-                    """
-                    INSERT INTO strains(id, name, effect, created_at, updated_at)
-                    VALUES (%s, %s, %s, COALESCE(%s::timestamptz, NOW()), COALESCE(%s::timestamptz, NOW()))
-                    """,
-                    (
-                        int(strain.get("id") or 0),
-                        name,
-                        effect,
-                        strain.get("created_at"),
-                        strain.get("updated_at"),
-                    ),
-                )
-            cur.execute("SELECT COALESCE(MAX(id), 1) FROM strains")
-            max_strain_id = int(cur.fetchone()[0] or 1)
-            cur.execute("SELECT setval(pg_get_serial_sequence('strains','id'), %s, true)", (max_strain_id,))
 
-    return {"ok": True, "imported_tents": len(tents), "imported_strains": len(strains)}
+    imported_strains = []
+    seen_names = set()
+    for strain in strains:
+        if not isinstance(strain, dict):
+            continue
+        legacy_effect = str(strain.get("effect") or "").strip()
+        item = _normalise_strain({
+            **strain,
+            "effects_de": strain.get("effects_de") or legacy_effect,
+        })
+        key = item["name"].casefold()
+        if not item["name"] or key in seen_names:
+            continue
+        seen_names.add(key)
+        imported_strains.append(item)
+    with STRAINS_CSV_LOCK:
+        _write_strains_csv_unlocked(imported_strains)
+
+    return {"ok": True, "imported_tents": len(tents), "imported_strains": len(imported_strains)}
 
 
 @app.post("/tents")
@@ -5133,14 +5182,16 @@ def strain_library_page(request: Request):
           main { padding:1rem; max-width:1200px; margin:0 auto; }
           h1 { margin:.1rem 0 .35rem; }
           .lead { color:var(--muted); margin:0 0 1rem; line-height:1.45; }
-          .layout { display:grid; grid-template-columns:minmax(280px, 360px) 1fr; gap:14px; align-items:start; }
+          .layout { display:grid; grid-template-columns:minmax(320px, 430px) 1fr; gap:14px; align-items:start; }
           .card { background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:14px; box-shadow:0 2px 10px rgba(0,0,0,.12); }
+          .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
+          .form-grid .wide { grid-column:1 / -1; }
           .form-row { margin-bottom:12px; }
           label { display:block; font-weight:700; margin-bottom:5px; }
           input, textarea { width:100%; color:var(--text); background:var(--bg); border:1px solid var(--grid); border-radius:8px; padding:9px 10px; font:inherit; }
-          textarea { min-height:130px; resize:vertical; }
+          textarea { min-height:90px; resize:vertical; }
           .actions { display:flex; gap:8px; flex-wrap:wrap; }
-          button { border:1px solid var(--grid); border-radius:8px; padding:8px 12px; color:var(--text); background:rgba(59,130,246,.2); cursor:pointer; font:inherit; }
+          button, .button { border:1px solid var(--grid); border-radius:8px; padding:8px 12px; color:var(--text); background:rgba(59,130,246,.2); cursor:pointer; font:inherit; text-decoration:none; }
           button.primary { background:var(--accent); color:#fff; border-color:transparent; }
           button.danger { background:rgba(239,68,68,.15); color:var(--danger); }
           button:disabled { opacity:.55; cursor:not-allowed; }
@@ -5154,14 +5205,17 @@ def strain_library_page(request: Request):
           .strain { border:1px solid var(--grid); border-radius:10px; padding:12px; }
           .strain-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
           .strain h3 { margin:0; color:#93c5fd; overflow-wrap:anywhere; }
-          .effect-label { color:var(--muted); font-size:.8rem; margin-top:9px; }
-          .effect { margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.45; }
+          .details { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 14px; margin-top:10px; }
+          .detail.wide { grid-column:1 / -1; }
+          .detail-label { color:var(--muted); font-size:.8rem; }
+          .detail-value { margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.45; }
           .empty { color:var(--muted); text-align:center; padding:30px 10px; }
           .guest-note { display:none; margin-bottom:12px; color:var(--muted); }
           body.guest .editor { display:none; }
           body.guest .guest-note { display:block; }
           body.guest .strain-actions { display:none; }
           @media (max-width:780px) { .layout { grid-template-columns:1fr; } }
+          @media (max-width:480px) { .form-grid, .details { grid-template-columns:1fr; } .form-grid .wide, .detail.wide { grid-column:auto; } }
         </style>
       </head>
       <body>
@@ -5177,13 +5231,39 @@ def strain_library_page(request: Request):
             <section class="card editor">
               <h2 id="formTitle"></h2>
               <form id="strainForm">
-                <div class="form-row">
-                  <label for="strainName" id="nameLabel"></label>
-                  <input id="strainName" maxlength="200" required autocomplete="off" />
-                </div>
-                <div class="form-row">
-                  <label for="strainEffect" id="effectLabel"></label>
-                  <textarea id="strainEffect" maxlength="2000" required></textarea>
+                <div class="form-grid">
+                  <div class="form-row wide">
+                    <label for="strainName" id="nameLabel"></label>
+                    <input id="strainName" maxlength="200" required autocomplete="off" />
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainGenetics" id="geneticsLabel"></label>
+                    <input id="strainGenetics" maxlength="500" />
+                  </div>
+                  <div class="form-row">
+                    <label for="strainThc" id="thcLabel"></label>
+                    <input id="strainThc" maxlength="100" />
+                  </div>
+                  <div class="form-row">
+                    <label for="strainCbd" id="cbdLabel"></label>
+                    <input id="strainCbd" maxlength="100" />
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainEffectsDe" id="effectsDeLabel"></label>
+                    <textarea id="strainEffectsDe" maxlength="2000"></textarea>
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainEffectsEn" id="effectsEnLabel"></label>
+                    <textarea id="strainEffectsEn" maxlength="2000"></textarea>
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainAromaDe" id="aromaDeLabel"></label>
+                    <textarea id="strainAromaDe" maxlength="2000"></textarea>
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainAromaEn" id="aromaEnLabel"></label>
+                    <textarea id="strainAromaEn" maxlength="2000"></textarea>
+                  </div>
                 </div>
                 <div class="actions">
                   <button class="primary" type="submit" id="saveBtn"></button>
@@ -5195,7 +5275,10 @@ def strain_library_page(request: Request):
             <section class="card">
               <div class="list-head">
                 <h2 id="listTitle"></h2>
-                <span class="count" id="strainCount"></span>
+                <div class="actions">
+                  <a class="button" href="/strains.csv" id="downloadCsv"></a>
+                  <span class="count" id="strainCount"></span>
+                </div>
               </div>
               <div class="strain-list" id="strainList"></div>
             </section>
@@ -5205,13 +5288,20 @@ def strain_library_page(request: Request):
           const I18N = {
             en: {
               title: 'Strains',
-              lead: 'Manage the strain library centrally. Each entry contains a strain name and its effect.',
+              lead: 'Manage the CSV-backed strain library centrally through the web interface.',
               guestNote: 'Guest mode: the strain library is read-only.',
               addTitle: 'Add strain',
               editTitle: 'Edit strain',
               name: 'Strain name',
-              effect: 'Effect',
+              genetics: 'Genetics',
+              thc: 'THC',
+              cbd: 'CBD',
+              effectsDe: 'Effects (German)',
+              effectsEn: 'Effects (English)',
+              aromaDe: 'Aroma (German)',
+              aromaEn: 'Aroma (English)',
               list: 'Strain library',
+              downloadCsv: 'Download CSV',
               save: 'Save',
               update: 'Update',
               cancel: 'Cancel',
@@ -5228,17 +5318,24 @@ def strain_library_page(request: Request):
               saveError: 'Could not save the strain.',
               deleteError: 'Could not delete the strain.',
               confirmDelete: 'Delete "{name}"?',
-              required: 'Please enter a name and effect.'
+              required: 'Please enter a strain name.'
             },
             de: {
               title: 'Sorten',
-              lead: 'Verwalte die Sortenbibliothek zentral. Jeder Eintrag enthält den Sortennamen und seine Wirkung.',
+              lead: 'Verwalte die CSV-basierte Sortenbibliothek zentral über das Webinterface.',
               guestNote: 'Gastmodus: Die Sortenbibliothek kann nur angesehen werden.',
               addTitle: 'Sorte hinzufügen',
               editTitle: 'Sorte bearbeiten',
               name: 'Sortenname',
-              effect: 'Wirkung',
+              genetics: 'Genetik',
+              thc: 'THC',
+              cbd: 'CBD',
+              effectsDe: 'Effekte (Deutsch)',
+              effectsEn: 'Effekte (Englisch)',
+              aromaDe: 'Aroma (Deutsch)',
+              aromaEn: 'Aroma (Englisch)',
               list: 'Sortenbibliothek',
+              downloadCsv: 'CSV herunterladen',
               save: 'Speichern',
               update: 'Aktualisieren',
               cancel: 'Abbrechen',
@@ -5255,7 +5352,7 @@ def strain_library_page(request: Request):
               saveError: 'Die Sorte konnte nicht gespeichert werden.',
               deleteError: 'Die Sorte konnte nicht gelöscht werden.',
               confirmDelete: '"{name}" wirklich löschen?',
-              required: 'Bitte Sortenname und Wirkung eingeben.'
+              required: 'Bitte einen Sortennamen eingeben.'
             }
           };
           const lang = (localStorage.getItem('gt_lang') || 'de') === 'de' ? 'de' : 'en';
@@ -5263,7 +5360,16 @@ def strain_library_page(request: Request):
           const listEl = document.getElementById('strainList');
           const form = document.getElementById('strainForm');
           const nameEl = document.getElementById('strainName');
-          const effectEl = document.getElementById('strainEffect');
+          const fieldElements = {
+            name: nameEl,
+            genetics: document.getElementById('strainGenetics'),
+            thc: document.getElementById('strainThc'),
+            cbd: document.getElementById('strainCbd'),
+            effects_de: document.getElementById('strainEffectsDe'),
+            effects_en: document.getElementById('strainEffectsEn'),
+            aroma_de: document.getElementById('strainAromaDe'),
+            aroma_en: document.getElementById('strainAromaEn')
+          };
           const statusEl = document.getElementById('formStatus');
           const cancelBtn = document.getElementById('cancelBtn');
           const saveBtn = document.getElementById('saveBtn');
@@ -5278,8 +5384,15 @@ def strain_library_page(request: Request):
             text('pageLead', tr('lead'));
             text('guestNote', tr('guestNote'));
             text('nameLabel', tr('name'));
-            text('effectLabel', tr('effect'));
+            text('geneticsLabel', tr('genetics'));
+            text('thcLabel', tr('thc'));
+            text('cbdLabel', tr('cbd'));
+            text('effectsDeLabel', tr('effectsDe'));
+            text('effectsEnLabel', tr('effectsEn'));
+            text('aromaDeLabel', tr('aromaDe'));
+            text('aromaEnLabel', tr('aromaEn'));
             text('listTitle', tr('list'));
+            text('downloadCsv', tr('downloadCsv'));
             text('cancelBtn', tr('cancel'));
             text('formTitle', editingId ? tr('editTitle') : tr('addTitle'));
             text('saveBtn', editingId ? tr('update') : tr('save'));
@@ -5297,8 +5410,9 @@ def strain_library_page(request: Request):
           }
           function startEdit(item){
             editingId = item.id;
-            nameEl.value = item.name || '';
-            effectEl.value = item.effect || '';
+            Object.entries(fieldElements).forEach(([field, element]) => {
+              element.value = item[field] || '';
+            });
             cancelBtn.style.display = 'inline-block';
             setStatus('');
             applyI18n();
@@ -5335,13 +5449,31 @@ def strain_library_page(request: Request):
               remove.addEventListener('click', () => removeItem(item));
               actions.append(edit, remove);
               head.append(title, actions);
-              const label = document.createElement('div');
-              label.className = 'effect-label';
-              label.textContent = tr('effect');
-              const effect = document.createElement('div');
-              effect.className = 'effect';
-              effect.textContent = item.effect || '';
-              card.append(head, label, effect);
+              const details = document.createElement('div');
+              details.className = 'details';
+              const detailFields = [
+                ['genetics', 'genetics', false],
+                ['thc', 'thc', false],
+                ['cbd', 'cbd', false],
+                ['effects_de', 'effectsDe', true],
+                ['effects_en', 'effectsEn', true],
+                ['aroma_de', 'aromaDe', true],
+                ['aroma_en', 'aromaEn', true]
+              ];
+              detailFields.forEach(([field, labelKey, wide]) => {
+                if (!item[field]) return;
+                const detail = document.createElement('div');
+                detail.className = `detail${wide ? ' wide' : ''}`;
+                const label = document.createElement('div');
+                label.className = 'detail-label';
+                label.textContent = tr(labelKey);
+                const value = document.createElement('div');
+                value.className = 'detail-value';
+                value.textContent = item[field];
+                detail.append(label, value);
+                details.appendChild(detail);
+              });
+              card.append(head, details);
               listEl.appendChild(card);
             });
           }
@@ -5374,9 +5506,10 @@ def strain_library_page(request: Request):
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
             if (isGuest) return;
-            const name = nameEl.value.trim();
-            const effect = effectEl.value.trim();
-            if (!name || !effect) {
+            const payload = Object.fromEntries(
+              Object.entries(fieldElements).map(([field, element]) => [field, element.value.trim()])
+            );
+            if (!payload.name) {
               setStatus(tr('required'), 'error');
               return;
             }
@@ -5385,7 +5518,7 @@ def strain_library_page(request: Request):
               const res = await fetch(editingId ? `/strains/${editingId}` : '/strains', {
                 method: editingId ? 'PUT' : 'POST',
                 headers: { 'Content-Type':'application/json' },
-                body: JSON.stringify({ name, effect })
+                body: JSON.stringify(payload)
               });
               if (!res.ok) {
                 if (res.status === 409) {

@@ -33,6 +33,11 @@ def list_strains():
     return legacy.list_strains()
 
 
+@router.get('/strains.csv')
+def download_strains_csv():
+    return legacy.download_strains_csv()
+
+
 @router.post('/strains')
 def create_strain(payload: StrainPayload, request: Request):
     return legacy.create_strain(payload, request)

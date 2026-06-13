@@ -50,7 +50,7 @@ Main features:
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
-- bilingual strain library with strain name and effect
+- bilingual CSV-backed strain library with genetics, THC/CBD, effects and aroma fields
 - configuration export/import
 - Docker CLI helper for admin credential recovery
 - first-start install page/API for creating the initial admin account
@@ -182,13 +182,13 @@ Advantages:
 Default API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.256
+ghcr.io/syschelle/growtent-backend-api:v0.257
 ```
 
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.256
+ghcr.io/syschelle/growtent-backend-api:v0.257
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -280,8 +280,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file is pinned to the release tag by default. You can also set it explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.256 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.256 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.257 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.257 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -570,7 +570,15 @@ If camera preview is unavailable:
 
 ## Data storage, retention, backup, and restore
 
-PostgreSQL stores application configuration and history.
+PostgreSQL stores application configuration and history. The strain library is stored separately in `data/strains.csv` and is bind-mounted into the API container as `/data/strains.csv`.
+
+The CSV header is:
+
+```csv
+Sorte,Genetik,THC,CBD,Effexts_DE,Effects_EN,Aroma_DE,Aroma_EN
+```
+
+Admins can edit these records in the Strains / Sorten tab. `GET /strains.csv` downloads the current file. Existing PostgreSQL strain records from v0.256 are migrated automatically when the CSV does not yet exist.
 
 The included Compose files use a named Docker volume:
 
@@ -836,7 +844,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.256 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.257 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

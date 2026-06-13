@@ -27,9 +27,25 @@ class TentPayload(StrictModel):
 
 class StrainPayload(StrictModel):
     name: str = Field(min_length=1, max_length=200)
-    effect: str = Field(min_length=1, max_length=2000)
+    genetics: str = Field(default="", max_length=500)
+    thc: str = Field(default="", max_length=100)
+    cbd: str = Field(default="", max_length=100)
+    effects_de: str = Field(default="", max_length=2000)
+    effects_en: str = Field(default="", max_length=2000)
+    aroma_de: str = Field(default="", max_length=2000)
+    aroma_en: str = Field(default="", max_length=2000)
 
-    @field_validator("name", "effect", mode="before")
+    @field_validator(
+        "name",
+        "genetics",
+        "thc",
+        "cbd",
+        "effects_de",
+        "effects_en",
+        "aroma_de",
+        "aroma_en",
+        mode="before",
+    )
     @classmethod
     def strip_strings(cls, value):
         if value is None:
