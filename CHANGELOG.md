@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.275
+
+### Dashboard exhaust history
+- Added an exhaust power history chart to the dashboard.
+- Uses the existing history range selector and displays values from `/tents/{tent_id}/history`.
+- Added German and English UI labels for the new chart.
+
 ## v0.274
 
 ### Live climate metrics in fullscreen camera preview
