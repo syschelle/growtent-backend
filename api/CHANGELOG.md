@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.261
+
+### Simplified genetics classification
+- Replaced the German and English genetics fields with one `Genetik` field.
+- Restricted genetics values to `Sativa` or `Indica`.
+- Added backward-compatible reading and backup import for the previous genetics fields.
+
 ## v0.260
 
 ### Simplified strain library

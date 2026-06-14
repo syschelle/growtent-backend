@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -27,8 +28,7 @@ class TentPayload(StrictModel):
 
 class StrainPayload(StrictModel):
     name: str = Field(min_length=1, max_length=200)
-    genetics_de: str = Field(default="", max_length=500)
-    genetics_en: str = Field(default="", max_length=500)
+    genetics: Literal["Sativa", "Indica"]
     thc: str = Field(default="", max_length=100)
     cbd: str = Field(default="", max_length=100)
     effects_de: str = Field(default="", max_length=2000)
@@ -38,8 +38,6 @@ class StrainPayload(StrictModel):
 
     @field_validator(
         "name",
-        "genetics_de",
-        "genetics_en",
         "thc",
         "cbd",
         "effects_de",
@@ -53,6 +51,16 @@ class StrainPayload(StrictModel):
         if value is None:
             return ""
         return str(value).strip()
+
+    @field_validator("genetics", mode="before")
+    @classmethod
+    def normalize_genetics(cls, value):
+        normalized = str(value or "").strip().casefold()
+        if normalized == "sativa":
+            return "Sativa"
+        if normalized == "indica":
+            return "Indica"
+        return value
 
 
 class IrrigationPlanPayload(StrictModel):

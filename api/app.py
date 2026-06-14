@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.260"
+APP_VERSION = "v0.261"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -60,8 +60,7 @@ LOGGER = logging.getLogger("growtent.api")
 STRAINS_CSV_LOCK = threading.RLock()
 STRAINS_CSV_COLUMNS = (
     "Sorte",
-    "Genetik_DE",
-    "Genetics_EN",
+    "Genetik",
     "THC",
     "CBD",
     "Wirkung_DE",
@@ -71,8 +70,7 @@ STRAINS_CSV_COLUMNS = (
 )
 STRAIN_FIELD_TO_CSV = {
     "name": "Sorte",
-    "genetics_de": "Genetik_DE",
-    "genetics_en": "Genetics_EN",
+    "genetics": "Genetik",
     "thc": "THC",
     "cbd": "CBD",
     "effects_de": "Wirkung_DE",
@@ -81,8 +79,7 @@ STRAIN_FIELD_TO_CSV = {
     "aroma_en": "Aroma_EN",
 }
 STRAIN_CSV_ALIASES = {
-    "genetics_de": ("Genetik_DE", "Genetik"),
-    "genetics_en": ("Genetics_EN",),
+    "genetics": ("Genetik", "Genetik_DE", "Genetics_EN"),
     "effects_de": ("Wirkung_DE", "Effexts_DE"),
 }
 
@@ -1045,10 +1042,25 @@ def init_db():
 
 
 def _normalise_strain(data: dict) -> dict:
-    return {
+    item = {
         field: str(data.get(field) or "").strip()
         for field in STRAIN_FIELD_TO_CSV
     }
+    item["genetics"] = _normalise_genetics(
+        item["genetics"]
+        or data.get("genetics_de")
+        or data.get("genetics_en")
+    )
+    return item
+
+
+def _normalise_genetics(value: str) -> str:
+    normalized = str(value or "").strip().casefold()
+    if "sativa" in normalized and not normalized.startswith("indica"):
+        return "Sativa"
+    if "indica" in normalized:
+        return "Indica"
+    return ""
 
 
 def _read_strains_csv_unlocked() -> list[dict]:
@@ -1072,6 +1084,7 @@ def _read_strains_csv_unlocked() -> list[dict]:
                     ) or "").strip()
                     for field, csv_column in STRAIN_FIELD_TO_CSV.items()
                 }
+                item["genetics"] = _normalise_genetics(item["genetics"])
                 if item["name"]:
                     rows.append(item)
             return rows
@@ -5201,7 +5214,7 @@ def strain_library_page(request: Request):
           .form-grid .wide { grid-column:1 / -1; }
           .form-row { margin-bottom:12px; }
           label { display:block; font-weight:700; margin-bottom:5px; }
-          input, textarea { width:100%; color:var(--text); background:var(--bg); border:1px solid var(--grid); border-radius:8px; padding:9px 10px; font:inherit; }
+          input, select, textarea { width:100%; color:var(--text); background:var(--bg); border:1px solid var(--grid); border-radius:8px; padding:9px 10px; font:inherit; }
           textarea { min-height:90px; resize:vertical; }
           .actions { display:flex; gap:8px; flex-wrap:wrap; }
           button, .button { border:1px solid var(--grid); border-radius:8px; padding:8px 12px; color:var(--text); background:rgba(59,130,246,.2); cursor:pointer; font:inherit; text-decoration:none; }
@@ -5250,12 +5263,11 @@ def strain_library_page(request: Request):
                     <input id="strainName" maxlength="200" required autocomplete="off" />
                   </div>
                   <div class="form-row wide">
-                    <label for="strainGeneticsDe" id="geneticsDeLabel"></label>
-                    <input id="strainGeneticsDe" maxlength="500" />
-                  </div>
-                  <div class="form-row wide">
-                    <label for="strainGeneticsEn" id="geneticsEnLabel"></label>
-                    <input id="strainGeneticsEn" maxlength="500" />
+                    <label for="strainGenetics" id="geneticsLabel"></label>
+                    <select id="strainGenetics" required>
+                      <option value="Sativa">Sativa</option>
+                      <option value="Indica">Indica</option>
+                    </select>
                   </div>
                   <div class="form-row">
                     <label for="strainThc" id="thcLabel"></label>
@@ -5310,8 +5322,7 @@ def strain_library_page(request: Request):
               addTitle: 'Add strain',
               editTitle: 'Edit strain',
               name: 'Strain name',
-              geneticsDe: 'Genetics (German)',
-              geneticsEn: 'Genetics (English)',
+              genetics: 'Genetics',
               thc: 'THC',
               cbd: 'CBD',
               effectsDe: 'Effects (German)',
@@ -5345,8 +5356,7 @@ def strain_library_page(request: Request):
               addTitle: 'Sorte hinzufügen',
               editTitle: 'Sorte bearbeiten',
               name: 'Sortenname',
-              geneticsDe: 'Genetik (Deutsch)',
-              geneticsEn: 'Genetik (Englisch)',
+              genetics: 'Genetik',
               thc: 'THC',
               cbd: 'CBD',
               effectsDe: 'Effekte (Deutsch)',
@@ -5381,8 +5391,7 @@ def strain_library_page(request: Request):
           const nameEl = document.getElementById('strainName');
           const fieldElements = {
             name: nameEl,
-            genetics_de: document.getElementById('strainGeneticsDe'),
-            genetics_en: document.getElementById('strainGeneticsEn'),
+            genetics: document.getElementById('strainGenetics'),
             thc: document.getElementById('strainThc'),
             cbd: document.getElementById('strainCbd'),
             effects_de: document.getElementById('strainEffectsDe'),
@@ -5404,8 +5413,7 @@ def strain_library_page(request: Request):
             text('pageLead', tr('lead'));
             text('guestNote', tr('guestNote'));
             text('nameLabel', tr('name'));
-            text('geneticsDeLabel', tr('geneticsDe'));
-            text('geneticsEnLabel', tr('geneticsEn'));
+            text('geneticsLabel', tr('genetics'));
             text('thcLabel', tr('thc'));
             text('cbdLabel', tr('cbd'));
             text('effectsDeLabel', tr('effectsDe'));
@@ -5473,8 +5481,7 @@ def strain_library_page(request: Request):
               const details = document.createElement('div');
               details.className = 'details';
               const detailFields = [
-                ['genetics_de', 'geneticsDe', false],
-                ['genetics_en', 'geneticsEn', false],
+                ['genetics', 'genetics', false],
                 ['thc', 'thc', false],
                 ['cbd', 'cbd', false],
                 ['effects_de', 'effectsDe', true],
