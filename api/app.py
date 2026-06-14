@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.267"
+APP_VERSION = "v0.269"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -3122,7 +3122,7 @@ def latest_state(tent_id: int, request: Request):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT t.rtsp_url, s.captured_at, s.payload
+                SELECT t.rtsp_url, t.pot_strains_json, s.captured_at, s.payload
                 FROM tents t
                 LEFT JOIN LATERAL (
                   SELECT captured_at, payload
@@ -3140,8 +3140,9 @@ def latest_state(tent_id: int, request: Request):
                 raise HTTPException(status_code=404, detail="tent not found")
 
             rtsp_url = row[0]
-            captured = row[1]
-            payload = row[2]
+            pot_strains = _normalise_pot_strains(row[1])
+            captured = row[2]
+            payload = row[3]
 
             host = request.headers.get("host", "localhost:8088")
             go2rtc_host = f"http://{host.split(':')[0]}:1984"
@@ -3163,6 +3164,7 @@ def latest_state(tent_id: int, request: Request):
                 "webrtc_url": f"{go2rtc_host}/api/webrtc?src=tent_{tent_id}",
                 "player_url": player_url,
                 "preview_url": preview_url,
+                "pot_strains": pot_strains,
                 "captured_at": captured.isoformat() if captured else None,
                 "latest": payload,
             }
@@ -6687,6 +6689,11 @@ def dashboard_page(request: Request):
               noRtsp: 'No stream configured for this tent.',
               streamReady: 'Stream ready.',
               streamUpdate: 'Stream update',
+              potStrains: 'Pot strains',
+              pot1: 'Pot 1',
+              pot2: 'Pot 2',
+              pot3: 'Pot 3',
+              noPotStrains: 'No pot strains assigned.',
               historyBuilding: 'History is still building up…',
               lblIp: 'IP',
               lblGen: 'Gen',
@@ -6829,6 +6836,11 @@ def dashboard_page(request: Request):
               noRtsp: 'Kein Stream für dieses Zelt konfiguriert.',
               streamReady: 'Stream bereit.',
               streamUpdate: 'Stream update',
+              potStrains: 'Topf-Sorten',
+              pot1: 'Topf 1',
+              pot2: 'Topf 2',
+              pot3: 'Topf 3',
+              noPotStrains: 'Keine Topf-Sorten zugeordnet.',
               historyBuilding: 'Historie wird noch aufgebaut…',
               lblIp: 'IP',
               lblGen: 'Gen',
@@ -7732,6 +7744,19 @@ def dashboard_page(request: Request):
               const withVideo = url.includes('#media=video') ? url : `${url}#media=video`;
               return `${withVideo}${sep}muted=1&volume=0&audio=0&media=video&defaultMute=1`;
             }
+          }
+
+          function renderPotStrains(potStrains = {}){
+            const el = document.getElementById('streamPotStrains');
+            if (!el) return;
+            const parts = [1, 2, 3]
+              .map(idx => ({ label: tr(`pot${idx}`), value: String(potStrains[`pot${idx}`] || '').trim() }))
+              .filter(item => item.value);
+            if (!parts.length) {
+              el.textContent = tr('noPotStrains');
+              return;
+            }
+            el.textContent = parts.map(item => `${item.label}: ${item.value}`).join(' · ');
           }
 
           function renderStream(rtspUrl, webrtcUrl, playerUrl, previewUrl){
@@ -8745,6 +8770,7 @@ def dashboard_page(request: Request):
             }
 
             renderStream(j.rtsp_url, j.webrtc_url, j.player_url, j.preview_url);
+            renderPotStrains(j.pot_strains || {});
             txt('status', '');
             if (j?.captured_at) {
               const ageMs = Date.now() - new Date(j.captured_at).getTime();

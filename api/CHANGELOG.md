@@ -2,6 +2,19 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.269
+
+### Stream pot strain display cleanup
+- Removed the leading `Pot strains` / `Topf-Sorten` prefix below the camera stream.
+- The dashboard now displays only the compact pot list, for example `Topf 1: Blue Dream · Topf 2: Critical Kush · Topf 3: Lemon Haze`.
+
+## v0.268
+
+### Show pot strains below camera stream
+- Added pot strain display below the live camera preview in the dashboard stream card.
+- Included `pot_strains` in the `/tents/{tent_id}/latest` response.
+- Localized the pot strain labels in the dashboard for German and English UI languages.
+
 ## v0.267
 
 ### Database-backed strain library
