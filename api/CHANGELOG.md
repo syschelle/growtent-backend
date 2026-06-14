@@ -2,6 +2,12 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.258
+
+### Default strain CSV
+- Added `data/strains.csv` to the repository so new installations include the default strain library.
+- Included the eight existing strain records as initial CSV data.
+
 ## v0.257
 
 ### CSV-backed strain library
