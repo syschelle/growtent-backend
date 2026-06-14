@@ -50,7 +50,7 @@ Main features:
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
-- bilingual CSV-backed strain library with genetics, THC/CBD, effects and aroma fields
+- English-only CSV-backed strain library with genetics, THC/CBD, effects and aroma fields
 - configuration export/import
 - Docker CLI helper for admin credential recovery
 - first-start install page/API for creating the initial admin account
@@ -575,10 +575,10 @@ PostgreSQL stores application configuration and history. The strain library is s
 The CSV header is:
 
 ```csv
-Sorte,Genetik,THC,CBD,Wirkung_DE,Effects_EN,Aroma_DE,Aroma_EN
+Name,Genetics,THC,CBD,Effects,Aroma
 ```
 
-Admins can edit these records in the Strains / Sorten tab. `GET /strains.csv` downloads the current file. Existing PostgreSQL strain records from v0.256 are migrated automatically when the CSV does not yet exist.
+Admins can edit these records in the Strains tab. `GET /strains.csv` downloads the current file. Existing PostgreSQL strain records from v0.256 are migrated automatically when the CSV does not yet exist.
 
 The included Compose files use a named Docker volume:
 

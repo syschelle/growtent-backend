@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.265
+
+### English-only strain CSV
+- Replaced the bilingual strain CSV columns with single English columns: `Name`, `Genetics`, `THC`, `CBD`, `Effects` and `Aroma`.
+- Converted the bundled strain library to English content from the previous `Effects_EN` and `Aroma_EN` fields.
+- Updated the API payload, web editor and backup import normalization for the simplified strain schema.
+- Kept backward-compatible reading/import for existing bilingual CSV and backup data.
+
 ## v0.263
 
 ### Dominant hybrid classification

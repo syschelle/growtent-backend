@@ -31,19 +31,15 @@ class StrainPayload(StrictModel):
     genetics: Literal["Sativa", "Indica", "Sativa-hybrid", "Indica-hybrid"]
     thc: str = Field(default="", max_length=100)
     cbd: str = Field(default="", max_length=100)
-    effects_de: str = Field(default="", max_length=2000)
-    effects_en: str = Field(default="", max_length=2000)
-    aroma_de: str = Field(default="", max_length=2000)
-    aroma_en: str = Field(default="", max_length=2000)
+    effects: str = Field(default="", max_length=2000)
+    aroma: str = Field(default="", max_length=2000)
 
     @field_validator(
         "name",
         "thc",
         "cbd",
-        "effects_de",
-        "effects_en",
-        "aroma_de",
-        "aroma_en",
+        "effects",
+        "aroma",
         mode="before",
     )
     @classmethod
