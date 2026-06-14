@@ -31,7 +31,6 @@ Thumbs.db
 *.dump
 *.bak
 exports/
-data/strains.csv
 
 # Local project notes / screenshots (never push)
 Aufgabe.md
