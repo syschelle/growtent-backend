@@ -50,7 +50,7 @@ Main features:
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
-- English-only CSV-backed strain library with genetics, THC/CBD, effects and aroma fields
+- database-backed strain library with CSV seed/export support, genetics, THC/CBD, effects and aroma fields
 - three pot strain assignments per tent in setup
 - configuration export/import
 - Docker CLI helper for admin credential recovery
@@ -571,7 +571,7 @@ If camera preview is unavailable:
 
 ## Data storage, retention, backup, and restore
 
-PostgreSQL stores application configuration and history. The strain library is stored separately in `data/strains.csv` and is bind-mounted into the API container as `/data/strains.csv`.
+PostgreSQL stores application configuration, history, pot strain assignments, and the strain library. The bundled `data/strains.csv` is used as an initial seed only when the database strain table is empty.
 
 The CSV header is:
 
@@ -579,9 +579,9 @@ The CSV header is:
 Name,Genetics,THC,CBD,Effects,Aroma
 ```
 
-Admins can edit these records in the Strains tab. Guest users can view the strain library but cannot edit it. The Strains page localizes UI labels according to the selected UI language, while CSV values are displayed unchanged. `GET /strains.csv` downloads the current file. Existing PostgreSQL strain records from v0.256 are migrated automatically when the CSV does not yet exist.
+Admins can edit these records in the Strains tab. Guest users can view the strain library but cannot edit it. The Strains page localizes UI labels according to the selected UI language, while strain values are displayed unchanged. `GET /strains.csv` downloads a live CSV export generated from the database. Existing CSV data is imported into PostgreSQL on startup only when the database strain table is empty.
 
-Setup stores optional per-tent assignments for three pots as `pot_strains_json` in PostgreSQL. These assignments reference strain names from the CSV library and are included in configuration backup/restore.
+Setup stores optional per-tent assignments for three pots as `pot_strains_json` in PostgreSQL. These assignments reference strain names from the database-backed strain library and are included in configuration backup/restore.
 
 The included Compose files use a named Docker volume:
 

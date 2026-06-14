@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.266"
+APP_VERSION = "v0.267"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1055,12 +1055,25 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS strains (
                     id BIGSERIAL PRIMARY KEY,
                     name TEXT NOT NULL,
-                    effect TEXT NOT NULL,
+                    genetics TEXT NOT NULL DEFAULT '',
+                    thc TEXT NOT NULL DEFAULT '',
+                    cbd TEXT NOT NULL DEFAULT '',
+                    effects TEXT NOT NULL DEFAULT '',
+                    aroma TEXT NOT NULL DEFAULT '',
+                    effect TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
             )
+            cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS genetics TEXT NOT NULL DEFAULT '';")
+            cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS thc TEXT NOT NULL DEFAULT '';")
+            cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS cbd TEXT NOT NULL DEFAULT '';")
+            cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS effects TEXT NOT NULL DEFAULT '';")
+            cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS aroma TEXT NOT NULL DEFAULT '';")
+            cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS effect TEXT NOT NULL DEFAULT '';")
+            cur.execute("ALTER TABLE strains ALTER COLUMN effect SET DEFAULT '';")
+            cur.execute("UPDATE strains SET effects=effect WHERE COALESCE(effects, '') = '' AND COALESCE(effect, '') <> '';")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_strains_name_lower ON strains(LOWER(name));")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tent_state_tent_time ON tent_state(tent_id, captured_at DESC);")
             cur.execute(
@@ -1171,25 +1184,89 @@ def _strain_response(strain: dict, index: int) -> dict:
     return {"id": index + 1, **_normalise_strain(strain)}
 
 
-def _ensure_strains_csv() -> None:
-    with STRAINS_CSV_LOCK:
-        if STRAINS_CSV_PATH.exists():
-            _read_strains_csv_unlocked()
-            return
+def _db_strain_row(row) -> dict:
+    return {
+        "id": int(row[0]),
+        "name": row[1] or "",
+        "genetics": _normalise_genetics(row[2] or "", row[1] or ""),
+        "thc": row[3] or "",
+        "cbd": row[4] or "",
+        "effects": row[5] or "",
+        "aroma": row[6] or "",
+    }
 
-        migrated = []
+
+def _read_strains_db() -> list[dict]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, genetics, thc, cbd, effects, aroma
+                FROM strains
+                ORDER BY LOWER(name), id
+                """
+            )
+            return [_db_strain_row(row) for row in cur.fetchall()]
+
+
+def _insert_strains_db(strains: list[dict], replace: bool = False) -> int:
+    imported = 0
+    seen_names = set()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if replace:
+                cur.execute("DELETE FROM strains")
+            for raw in strains:
+                if not isinstance(raw, dict):
+                    continue
+                legacy_effect = _first_str(raw, ("effects", "effects_en", "effect", "effects_de"))
+                item = _normalise_strain({**raw, "effects": legacy_effect})
+                key = item["name"].casefold()
+                if not item["name"] or key in seen_names:
+                    continue
+                seen_names.add(key)
+                cur.execute("SELECT 1 FROM strains WHERE LOWER(name)=LOWER(%s) LIMIT 1", (item["name"],))
+                if cur.fetchone():
+                    continue
+                cur.execute(
+                    """
+                    INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, effect)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        item["name"],
+                        item["genetics"],
+                        item["thc"],
+                        item["cbd"],
+                        item["effects"],
+                        item["aroma"],
+                        item["effects"],
+                    ),
+                )
+                if cur.fetchone():
+                    imported += 1
+            if replace:
+                cur.execute("SELECT COALESCE(MAX(id), 1) FROM strains")
+                max_id = int(cur.fetchone()[0] or 1)
+                cur.execute("SELECT setval(pg_get_serial_sequence('strains','id'), %s, true)", (max_id,))
+    return imported
+
+
+def _ensure_strains_db() -> None:
+    """Use PostgreSQL as the strain source of truth; seed once from CSV when empty."""
+    with STRAINS_CSV_LOCK:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT name, effect FROM strains ORDER BY LOWER(name), id")
-                for name, effect in cur.fetchall():
-                    migrated.append({
-                        "name": name,
-                        "effects": effect,
-                    })
-        _write_strains_csv_unlocked(migrated)
-        if migrated:
-            LOGGER.info("Migrated %d strain records to %s", len(migrated), STRAINS_CSV_PATH)
-
+                cur.execute("UPDATE strains SET effects=effect WHERE COALESCE(effects, '') = '' AND COALESCE(effect, '') <> ''")
+                cur.execute("SELECT COUNT(*) FROM strains")
+                count = int(cur.fetchone()[0] or 0)
+        if count > 0:
+            return
+        seed_rows = _read_strains_csv_unlocked() if STRAINS_CSV_PATH.exists() else []
+        imported = _insert_strains_db(seed_rows, replace=False)
+        if imported:
+            LOGGER.info("Seeded %d strain records from %s into PostgreSQL", imported, STRAINS_CSV_PATH)
 
 def _to_float(v):
     try:
@@ -1912,7 +1989,7 @@ def poll_loop():
 @app.on_event("startup")
 def startup_event():
     init_db()
-    _ensure_strains_csv()
+    _ensure_strains_db()
     t = threading.Thread(target=poll_loop, daemon=True)
     t.start()
 
@@ -2378,67 +2455,110 @@ def list_tents():
 
 @app.get("/strains")
 def list_strains():
-    with STRAINS_CSV_LOCK:
-        strains = _read_strains_csv_unlocked()
-    result = [_strain_response(strain, index) for index, strain in enumerate(strains)]
-    return sorted(result, key=lambda item: (item["name"].casefold(), item["id"]))
+    return _read_strains_db()
 
 
 @app.get("/strains.csv")
 def download_strains_csv():
-    with STRAINS_CSV_LOCK:
-        if not STRAINS_CSV_PATH.exists():
-            _write_strains_csv_unlocked([])
-    return FileResponse(
-        STRAINS_CSV_PATH,
-        media_type="text/csv; charset=utf-8",
-        filename="strains.csv",
-    )
+    strains = _read_strains_db()
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=STRAINS_CSV_COLUMNS)
+    writer.writeheader()
+    for strain in strains:
+        item = _normalise_strain(strain)
+        writer.writerow({
+            csv_column: item[field]
+            for field, csv_column in STRAIN_FIELD_TO_CSV.items()
+        })
+    headers = {"Content-Disposition": "attachment; filename=strains.csv"}
+    return Response(buffer.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
 
 
 @app.post("/strains")
 def create_strain(payload: StrainPayload, request: Request):
     require_admin(request)
     strain = _normalise_strain(payload.model_dump())
-    with STRAINS_CSV_LOCK:
-        strains = _read_strains_csv_unlocked()
-        if any(item["name"].casefold() == strain["name"].casefold() for item in strains):
-            raise HTTPException(status_code=409, detail="strain name already exists")
-        strains.append(strain)
-        _write_strains_csv_unlocked(strains)
-        return _strain_response(strain, len(strains) - 1)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM strains WHERE LOWER(name)=LOWER(%s) LIMIT 1", (strain["name"],))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="strain name already exists")
+            cur.execute(
+                """
+                INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, effect)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, name, genetics, thc, cbd, effects, aroma
+                """,
+                (
+                    strain["name"],
+                    strain["genetics"],
+                    strain["thc"],
+                    strain["cbd"],
+                    strain["effects"],
+                    strain["aroma"],
+                    strain["effects"],
+                ),
+            )
+            return _db_strain_row(cur.fetchone())
 
 
 @app.put("/strains/{strain_id}")
 def update_strain(strain_id: int, payload: StrainPayload, request: Request):
     require_admin(request)
     strain = _normalise_strain(payload.model_dump())
-    with STRAINS_CSV_LOCK:
-        strains = _read_strains_csv_unlocked()
-        index = strain_id - 1
-        if index < 0 or index >= len(strains):
-            raise HTTPException(status_code=404, detail="strain not found")
-        if any(
-            row_index != index and item["name"].casefold() == strain["name"].casefold()
-            for row_index, item in enumerate(strains)
-        ):
-            raise HTTPException(status_code=409, detail="strain name already exists")
-        strains[index] = strain
-        _write_strains_csv_unlocked(strains)
-        return _strain_response(strain, index)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM strains WHERE id=%s", (strain_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="strain not found")
+            cur.execute("SELECT 1 FROM strains WHERE id<>%s AND LOWER(name)=LOWER(%s) LIMIT 1", (strain_id, strain["name"]))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="strain name already exists")
+            cur.execute(
+                """
+                UPDATE strains
+                SET name=%s,
+                    genetics=%s,
+                    thc=%s,
+                    cbd=%s,
+                    effects=%s,
+                    aroma=%s,
+                    effect=%s,
+                    updated_at=NOW()
+                WHERE id=%s
+                RETURNING id, name, genetics, thc, cbd, effects, aroma
+                """,
+                (
+                    strain["name"],
+                    strain["genetics"],
+                    strain["thc"],
+                    strain["cbd"],
+                    strain["effects"],
+                    strain["aroma"],
+                    strain["effects"],
+                    strain_id,
+                ),
+            )
+            return _db_strain_row(cur.fetchone())
 
 
 @app.delete("/strains/{strain_id}")
 def delete_strain(strain_id: int, request: Request):
     require_admin(request)
-    with STRAINS_CSV_LOCK:
-        strains = _read_strains_csv_unlocked()
-        index = strain_id - 1
-        if index < 0 or index >= len(strains):
-            raise HTTPException(status_code=404, detail="strain not found")
-        deleted = strains.pop(index)
-        _write_strains_csv_unlocked(strains)
-    return {"ok": True, "deleted": {"id": strain_id, "name": deleted["name"]}}
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM strains
+                WHERE id=%s
+                RETURNING id, name
+                """,
+                (strain_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="strain not found")
+    return {"ok": True, "deleted": {"id": int(row[0]), "name": row[1]}}
 
 
 @app.get("/api/poll-errors")
@@ -2658,12 +2778,11 @@ def export_config_backup():
             "updated_at": auth_row[11].isoformat() if auth_row[11] else None,
         }
 
-    with STRAINS_CSV_LOCK:
-        strains = _read_strains_csv_unlocked()
+    strains = _read_strains_db()
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 4,
+        "schema_version": 5,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -2761,25 +2880,9 @@ def import_config_backup(payload: dict):
             max_id = int(cur.fetchone()[0] or 1)
             cur.execute("SELECT setval(pg_get_serial_sequence('tents','id'), %s, true)", (max_id,))
 
-    imported_strains = []
-    seen_names = set()
-    for strain in strains:
-        if not isinstance(strain, dict):
-            continue
-        legacy_effect = _first_str(strain, ("effects", "effects_en", "effect", "effects_de"))
-        item = _normalise_strain({
-            **strain,
-            "effects": legacy_effect,
-        })
-        key = item["name"].casefold()
-        if not item["name"] or key in seen_names:
-            continue
-        seen_names.add(key)
-        imported_strains.append(item)
-    with STRAINS_CSV_LOCK:
-        _write_strains_csv_unlocked(imported_strains)
+    imported_strains = _insert_strains_db(strains, replace=True)
 
-    return {"ok": True, "imported_tents": len(tents), "imported_strains": len(imported_strains)}
+    return {"ok": True, "imported_tents": len(tents), "imported_strains": imported_strains}
 
 
 @app.post("/tents")
@@ -2844,7 +2947,7 @@ def update_tent(tent_id: int, payload: TentPayload):
                         WHEN %s THEN %s
                         ELSE shelly_main_password
                     END,
-                    pot_strains_json=CASE WHEN %s THEN %s ELSE pot_strains_json END
+                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END
                 WHERE id=%s
                 RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
                 """,

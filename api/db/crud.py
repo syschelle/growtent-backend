@@ -19,6 +19,28 @@ def _clean_required_str(value):
     return str(value).strip()
 
 
+def _normalise_pot_strains(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except Exception:
+            value = {}
+    if not isinstance(value, dict):
+        value = {}
+    result = {}
+    for idx in range(1, 4):
+        key = f"pot{idx}"
+        strain = value.get(key)
+        if strain is None:
+            strain = value.get(f"pot{idx}_strain")
+        result[key] = str(strain or "").strip()[:200]
+    return result
+
+
+def _pot_strains_json(value) -> str:
+    return json.dumps(_normalise_pot_strains(value), ensure_ascii=False)
+
+
 def list_tents_raw():
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -27,7 +49,7 @@ def list_tents_raw():
                 SELECT id, name, source_url, rtsp_url,
                        shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date,
-                       created_at
+                       pot_strains_json, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -45,7 +67,8 @@ def list_tents_raw():
                 "has_shelly_main_password": bool(r[5]),
                 "irrigation_plan": json.loads(r[6] or "{}") if r[6] else {},
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
-                "created_at": r[8].isoformat(),
+                "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
+                "created_at": r[9].isoformat(),
             }
         )
     return out
@@ -57,6 +80,7 @@ def create_tent_raw(payload: dict):
     rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
+    pot_strains_json = _pot_strains_json(payload.get("pot_strains"))
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -65,12 +89,12 @@ def create_tent_raw(payload: dict):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json),
             )
             row = cur.fetchone()
             if not row:
@@ -83,7 +107,8 @@ def create_tent_raw(payload: dict):
         "rtsp_url": row[3],
         "shelly_main_user": row[4] or "",
         "has_shelly_main_password": bool(row[5]),
-        "created_at": row[6].isoformat(),
+        "pot_strains": _normalise_pot_strains(row[6]),
+        "created_at": row[7].isoformat(),
     }
 
 
@@ -114,6 +139,8 @@ def update_tent_raw(tent_id: int, payload: dict):
     shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
     shelly_password_clear = bool(payload.get("shelly_main_password_clear", False))
     shelly_main_password = shelly_main_password_raw or None
+    pot_strains_provided = "pot_strains" in payload
+    pot_strains_json = _pot_strains_json(payload.get("pot_strains")) if pot_strains_provided else None
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -131,11 +158,12 @@ def update_tent_raw(tent_id: int, payload: dict):
                         WHEN %s THEN NULL
                         WHEN %s THEN %s
                         ELSE shelly_main_password
-                    END
+                    END,
+                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, tent_id),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, tent_id),
             )
             row = cur.fetchone()
             if not row:
@@ -148,7 +176,8 @@ def update_tent_raw(tent_id: int, payload: dict):
         "rtsp_url": row[3],
         "shelly_main_user": row[4] or "",
         "has_shelly_main_password": bool(row[5]),
-        "created_at": row[6].isoformat(),
+        "pot_strains": _normalise_pot_strains(row[6]),
+        "created_at": row[7].isoformat(),
     }
 
 

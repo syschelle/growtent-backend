@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.267
+
+### Database-backed strain library
+- Moved the strain library source of truth from `data/strains.csv` to PostgreSQL.
+- Seeded the database from `data/strains.csv` only when the strain table is empty.
+- Kept `/strains.csv` as a live export of the database-backed strain library.
+- Included database-backed strains in configuration backup/restore.
+- Kept three-pot strain assignments stored in PostgreSQL and fixed the modular tent update service path.
+
 ## v0.266
 
 ### Pot strain assignment and localized strain page

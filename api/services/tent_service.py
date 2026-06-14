@@ -11,7 +11,7 @@ class TentService:
         return crud.create_tent_raw(payload.model_dump(exclude_unset=True))
 
     def update_tent(self, tent_id: int, payload: TentPayload):
-        return crud.update_tent_raw(payload.model_dump(exclude_unset=True))
+        return crud.update_tent_raw(tent_id, payload.model_dump(exclude_unset=True))
 
     def delete_tent(self, tent_id: int):
         return crud.delete_tent_raw(tent_id)
