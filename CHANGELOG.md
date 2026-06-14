@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.273
+
+### Refine dashboard pot strain links
+- Changed the dashboard pot strain display so only the strain name is clickable.
+- Removed the underline styling from the strain link.
+- Pot labels remain plain text, for example `Topf 1: Blue Dream`.
+
 ## v0.272
 
 ### Fix dashboard strain detail JavaScript escaping

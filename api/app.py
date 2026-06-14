@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.272"
+APP_VERSION = "v0.273"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6162,8 +6162,8 @@ def dashboard_page(request: Request):
           .stream-open-btn:hover { filter:brightness(1.06); box-shadow:0 4px 14px rgba(2,6,23,.28); }
           .stream-open-btn:active { transform:translateY(1px) scale(.99); }
           .pot-strains { margin-top:8px; line-height:1.45; }
-          .pot-strain-link { width:auto !important; display:inline; padding:0; border:0; box-shadow:none; background:none; color:var(--link); font:inherit; font-weight:700; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
-          .pot-strain-link:hover { filter:none; box-shadow:none; text-decoration-thickness:2px; }
+          .pot-strain-link { width:auto !important; display:inline; padding:0; border:0; box-shadow:none; background:none; color:var(--link); font:inherit; font-weight:700; cursor:pointer; text-decoration:none; }
+          .pot-strain-link:hover { filter:none; box-shadow:none; text-decoration:none; }
           button { padding:7px 11px; border-radius:9px; border:1px solid rgba(14,165,233,.45); background:linear-gradient(180deg, rgba(14,165,233,.22), rgba(2,132,199,.18)); color:var(--text); font-size:.8rem; font-weight:700; box-shadow:0 2px 8px rgba(2,6,23,.2); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; cursor:pointer; }
           body.role-pending button:not(#viewModeBtn):not(#mobileNavToggle),
           body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle) {
@@ -7824,10 +7824,11 @@ def dashboard_page(request: Request):
             }
             parts.forEach((item, index) => {
               if (index > 0) el.appendChild(document.createTextNode(' · '));
+              el.appendChild(document.createTextNode(`${item.label}: `));
               const btn = document.createElement('button');
               btn.type = 'button';
               btn.className = 'pot-strain-link';
-              btn.textContent = `${item.label}: ${item.value}`;
+              btn.textContent = item.value;
               btn.addEventListener('click', async (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
