@@ -35,7 +35,6 @@ class StrainPayload(StrictModel):
     effects_en: str = Field(default="", max_length=2000)
     aroma_de: str = Field(default="", max_length=2000)
     aroma_en: str = Field(default="", max_length=2000)
-    source: str = Field(default="", max_length=2048)
 
     @field_validator(
         "name",
@@ -47,7 +46,6 @@ class StrainPayload(StrictModel):
         "effects_en",
         "aroma_de",
         "aroma_en",
-        "source",
         mode="before",
     )
     @classmethod

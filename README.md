@@ -182,13 +182,13 @@ Advantages:
 Default API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.259
+ghcr.io/syschelle/growtent-backend-api:v0.260
 ```
 
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.259
+ghcr.io/syschelle/growtent-backend-api:v0.260
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -280,8 +280,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file is pinned to the release tag by default. You can also set it explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.259 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.259 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.260 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.260 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -575,7 +575,7 @@ PostgreSQL stores application configuration and history. The strain library is s
 The CSV header is:
 
 ```csv
-Sorte,Genetik_DE,Genetics_EN,THC,CBD,Wirkung_DE,Effects_EN,Aroma_DE,Aroma_EN,Quelle
+Sorte,Genetik_DE,Genetics_EN,THC,CBD,Wirkung_DE,Effects_EN,Aroma_DE,Aroma_EN
 ```
 
 Admins can edit these records in the Strains / Sorten tab. `GET /strains.csv` downloads the current file. Existing PostgreSQL strain records from v0.256 are migrated automatically when the CSV does not yet exist.
@@ -844,7 +844,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.259 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.260 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

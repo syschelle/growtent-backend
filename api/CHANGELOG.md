@@ -2,6 +2,12 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.260
+
+### Simplified strain library
+- Removed the source field from the strain CSV schema, API, web editor and strain cards.
+- Existing CSV files with a legacy `Quelle` column remain readable.
+
 ## v0.259
 
 ### Expanded default strain library

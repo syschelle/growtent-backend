@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.259"
+APP_VERSION = "v0.260"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -68,7 +68,6 @@ STRAINS_CSV_COLUMNS = (
     "Effects_EN",
     "Aroma_DE",
     "Aroma_EN",
-    "Quelle",
 )
 STRAIN_FIELD_TO_CSV = {
     "name": "Sorte",
@@ -80,7 +79,6 @@ STRAIN_FIELD_TO_CSV = {
     "effects_en": "Effects_EN",
     "aroma_de": "Aroma_DE",
     "aroma_en": "Aroma_EN",
-    "source": "Quelle",
 }
 STRAIN_CSV_ALIASES = {
     "genetics_de": ("Genetik_DE", "Genetik"),
@@ -5283,10 +5281,6 @@ def strain_library_page(request: Request):
                     <label for="strainAromaEn" id="aromaEnLabel"></label>
                     <textarea id="strainAromaEn" maxlength="2000"></textarea>
                   </div>
-                  <div class="form-row wide">
-                    <label for="strainSource" id="sourceLabel"></label>
-                    <input id="strainSource" maxlength="2048" type="url" />
-                  </div>
                 </div>
                 <div class="actions">
                   <button class="primary" type="submit" id="saveBtn"></button>
@@ -5324,7 +5318,6 @@ def strain_library_page(request: Request):
               effectsEn: 'Effects (English)',
               aromaDe: 'Aroma (German)',
               aromaEn: 'Aroma (English)',
-              source: 'Source',
               list: 'Strain library',
               downloadCsv: 'Download CSV',
               save: 'Save',
@@ -5360,7 +5353,6 @@ def strain_library_page(request: Request):
               effectsEn: 'Effekte (Englisch)',
               aromaDe: 'Aroma (Deutsch)',
               aromaEn: 'Aroma (Englisch)',
-              source: 'Quelle',
               list: 'Sortenbibliothek',
               downloadCsv: 'CSV herunterladen',
               save: 'Speichern',
@@ -5396,8 +5388,7 @@ def strain_library_page(request: Request):
             effects_de: document.getElementById('strainEffectsDe'),
             effects_en: document.getElementById('strainEffectsEn'),
             aroma_de: document.getElementById('strainAromaDe'),
-            aroma_en: document.getElementById('strainAromaEn'),
-            source: document.getElementById('strainSource')
+            aroma_en: document.getElementById('strainAromaEn')
           };
           const statusEl = document.getElementById('formStatus');
           const cancelBtn = document.getElementById('cancelBtn');
@@ -5421,7 +5412,6 @@ def strain_library_page(request: Request):
             text('effectsEnLabel', tr('effectsEn'));
             text('aromaDeLabel', tr('aromaDe'));
             text('aromaEnLabel', tr('aromaEn'));
-            text('sourceLabel', tr('source'));
             text('listTitle', tr('list'));
             text('downloadCsv', tr('downloadCsv'));
             text('cancelBtn', tr('cancel'));
@@ -5490,8 +5480,7 @@ def strain_library_page(request: Request):
                 ['effects_de', 'effectsDe', true],
                 ['effects_en', 'effectsEn', true],
                 ['aroma_de', 'aromaDe', true],
-                ['aroma_en', 'aromaEn', true],
-                ['source', 'source', true]
+                ['aroma_en', 'aromaEn', true]
               ];
               detailFields.forEach(([field, labelKey, wide]) => {
                 if (!item[field]) return;
