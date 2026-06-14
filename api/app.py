@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.273"
+APP_VERSION = "v0.274"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7986,6 +7986,17 @@ def dashboard_page(request: Request):
               titleWrap.appendChild(title);
               titleWrap.appendChild(helpBtn);
 
+              const liveMetrics = doc.createElement('div');
+              liveMetrics.style.fontSize = '.9rem';
+              liveMetrics.style.fontWeight = '700';
+              liveMetrics.style.color = colors.bodyText;
+              liveMetrics.style.padding = '4px 8px';
+              liveMetrics.style.borderRadius = '8px';
+              liveMetrics.style.border = `1px solid ${colors.border}`;
+              liveMetrics.style.background = theme === 'light' ? 'rgba(37,99,235,.08)' : 'rgba(15,23,42,.75)';
+              liveMetrics.style.whiteSpace = 'nowrap';
+              liveMetrics.textContent = `${tr('temperature')}: - · ${tr('vpd')}: -`;
+
               const stamp = doc.createElement('div');
               stamp.style.fontSize = '.82rem';
               stamp.style.color = colors.muted;
@@ -8092,6 +8103,7 @@ def dashboard_page(request: Request):
               right.appendChild(closeBtn);
 
               header.appendChild(titleWrap);
+              header.appendChild(liveMetrics);
               header.appendChild(right);
 
               const stage = doc.createElement('div');
@@ -8272,6 +8284,23 @@ def dashboard_page(request: Request):
 
               updateTransform();
 
+              const refreshPopupLiveMetrics = async () => {
+                try {
+                  const res = await fetch(`/tents/${currentTentId}/latest`, { cache:'no-store' });
+                  const latestJson = await res.json();
+                  const payload = latestJson?.latest || {};
+                  const tempC = firstNum(payload, ['sensors.cur.temperatureC', 'curTemperature']);
+                  const vpdKpa = firstNum(payload, ['sensors.smoothed.vpdKpa', 'sensors.cur.vpdKpa', 'curVpd']);
+                  const tempValue = convertTempFromC(tempC);
+                  const tempUnitLabel = currentTempUnit === 'F' ? '°F' : '°C';
+                  liveMetrics.textContent = `${tr('temperature')}: ${fmtNum(tempValue, 1)} ${tempUnitLabel} · ${tr('vpd')}: ${fmtNum(vpdKpa, 2)} kPa`;
+                } catch {
+                  liveMetrics.textContent = `${tr('temperature')}: - · ${tr('vpd')}: -`;
+                }
+              };
+              refreshPopupLiveMetrics();
+              const popupMetricsTimer = w.setInterval(refreshPopupLiveMetrics, 2500);
+
               let popupLastOkTs = 0;
               function tick(){
                 if (!popupPreviewBase) return;
@@ -8291,6 +8320,7 @@ def dashboard_page(request: Request):
               tick();
               w.setInterval(tick, 2500);
               w.addEventListener('beforeunload', () => {
+                w.clearInterval(popupMetricsTimer);
                 asmrAudio.pause();
                 asmrAudio.removeAttribute('src');
                 asmrAudio.load();

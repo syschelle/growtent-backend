@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.274
+
+### Live climate metrics in fullscreen camera preview
+- Added live temperature and VPD values to the fullscreen camera preview header.
+- Keeps the climate values outside of the camera image so they do not cover the top-right area of the picture.
+- Refreshes the fullscreen climate values continuously from `/tents/{tent_id}/latest`.
+
 ## v0.273
 
 ### Refine dashboard pot strain links

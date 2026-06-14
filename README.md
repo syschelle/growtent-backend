@@ -51,7 +51,7 @@ Main features:
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
 - database-backed strain library with CSV seed/export support, genetics, THC/CBD, effects and aroma fields
-- three pot strain assignments per tent in setup, displayed below the dashboard camera stream with clickable strain detail popovers
+- three pot strain assignments per tent in setup, displayed below the dashboard camera stream with clickable strain detail popovers and live climate metrics in fullscreen preview
 - configuration export/import
 - Docker CLI helper for admin credential recovery
 - first-start install page/API for creating the initial admin account
