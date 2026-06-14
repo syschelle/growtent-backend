@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.259
+
+### Expanded default strain library
+- Expanded the default CSV library from 8 to 24 strains.
+- Split genetics into German and English fields and added a source URL.
+- Renamed the German effects column to `Wirkung_DE`.
+- Added backward-compatible reading of the previous eight-column CSV schema.
+- Extended the bilingual web editor and configuration backup format for the new fields.
+
 ## v0.258
 
 ### Default strain CSV

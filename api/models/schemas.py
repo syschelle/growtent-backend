@@ -27,23 +27,27 @@ class TentPayload(StrictModel):
 
 class StrainPayload(StrictModel):
     name: str = Field(min_length=1, max_length=200)
-    genetics: str = Field(default="", max_length=500)
+    genetics_de: str = Field(default="", max_length=500)
+    genetics_en: str = Field(default="", max_length=500)
     thc: str = Field(default="", max_length=100)
     cbd: str = Field(default="", max_length=100)
     effects_de: str = Field(default="", max_length=2000)
     effects_en: str = Field(default="", max_length=2000)
     aroma_de: str = Field(default="", max_length=2000)
     aroma_en: str = Field(default="", max_length=2000)
+    source: str = Field(default="", max_length=2048)
 
     @field_validator(
         "name",
-        "genetics",
+        "genetics_de",
+        "genetics_en",
         "thc",
         "cbd",
         "effects_de",
         "effects_en",
         "aroma_de",
         "aroma_en",
+        "source",
         mode="before",
     )
     @classmethod

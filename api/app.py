@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.258"
+APP_VERSION = "v0.259"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -60,23 +60,32 @@ LOGGER = logging.getLogger("growtent.api")
 STRAINS_CSV_LOCK = threading.RLock()
 STRAINS_CSV_COLUMNS = (
     "Sorte",
-    "Genetik",
+    "Genetik_DE",
+    "Genetics_EN",
     "THC",
     "CBD",
-    "Effexts_DE",
+    "Wirkung_DE",
     "Effects_EN",
     "Aroma_DE",
     "Aroma_EN",
+    "Quelle",
 )
 STRAIN_FIELD_TO_CSV = {
     "name": "Sorte",
-    "genetics": "Genetik",
+    "genetics_de": "Genetik_DE",
+    "genetics_en": "Genetics_EN",
     "thc": "THC",
     "cbd": "CBD",
-    "effects_de": "Effexts_DE",
+    "effects_de": "Wirkung_DE",
     "effects_en": "Effects_EN",
     "aroma_de": "Aroma_DE",
     "aroma_en": "Aroma_EN",
+    "source": "Quelle",
+}
+STRAIN_CSV_ALIASES = {
+    "genetics_de": ("Genetik_DE", "Genetik"),
+    "genetics_en": ("Genetics_EN",),
+    "effects_de": ("Wirkung_DE", "Effexts_DE"),
 }
 
 TEMP_MIN_C = float(os.getenv("SENSOR_TEMP_MIN_C", "-20"))
@@ -1050,13 +1059,19 @@ def _read_strains_csv_unlocked() -> list[dict]:
     try:
         with STRAINS_CSV_PATH.open("r", encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
-            missing = [column for column in STRAINS_CSV_COLUMNS if column not in (reader.fieldnames or [])]
-            if missing:
-                raise RuntimeError(f"strain CSV is missing columns: {', '.join(missing)}")
+            if "Sorte" not in (reader.fieldnames or []):
+                raise RuntimeError("strain CSV is missing column: Sorte")
             rows = []
             for row in reader:
                 item = {
-                    field: str(row.get(csv_column) or "").strip()
+                    field: str(next(
+                        (
+                            row.get(candidate)
+                            for candidate in STRAIN_CSV_ALIASES.get(field, (csv_column,))
+                            if row.get(candidate) is not None
+                        ),
+                        "",
+                    ) or "").strip()
                     for field, csv_column in STRAIN_FIELD_TO_CSV.items()
                 }
                 if item["name"]:
@@ -2589,7 +2604,7 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 3,
+        "schema_version": 4,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -5237,8 +5252,12 @@ def strain_library_page(request: Request):
                     <input id="strainName" maxlength="200" required autocomplete="off" />
                   </div>
                   <div class="form-row wide">
-                    <label for="strainGenetics" id="geneticsLabel"></label>
-                    <input id="strainGenetics" maxlength="500" />
+                    <label for="strainGeneticsDe" id="geneticsDeLabel"></label>
+                    <input id="strainGeneticsDe" maxlength="500" />
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainGeneticsEn" id="geneticsEnLabel"></label>
+                    <input id="strainGeneticsEn" maxlength="500" />
                   </div>
                   <div class="form-row">
                     <label for="strainThc" id="thcLabel"></label>
@@ -5263,6 +5282,10 @@ def strain_library_page(request: Request):
                   <div class="form-row wide">
                     <label for="strainAromaEn" id="aromaEnLabel"></label>
                     <textarea id="strainAromaEn" maxlength="2000"></textarea>
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainSource" id="sourceLabel"></label>
+                    <input id="strainSource" maxlength="2048" type="url" />
                   </div>
                 </div>
                 <div class="actions">
@@ -5293,13 +5316,15 @@ def strain_library_page(request: Request):
               addTitle: 'Add strain',
               editTitle: 'Edit strain',
               name: 'Strain name',
-              genetics: 'Genetics',
+              geneticsDe: 'Genetics (German)',
+              geneticsEn: 'Genetics (English)',
               thc: 'THC',
               cbd: 'CBD',
               effectsDe: 'Effects (German)',
               effectsEn: 'Effects (English)',
               aromaDe: 'Aroma (German)',
               aromaEn: 'Aroma (English)',
+              source: 'Source',
               list: 'Strain library',
               downloadCsv: 'Download CSV',
               save: 'Save',
@@ -5327,13 +5352,15 @@ def strain_library_page(request: Request):
               addTitle: 'Sorte hinzufügen',
               editTitle: 'Sorte bearbeiten',
               name: 'Sortenname',
-              genetics: 'Genetik',
+              geneticsDe: 'Genetik (Deutsch)',
+              geneticsEn: 'Genetik (Englisch)',
               thc: 'THC',
               cbd: 'CBD',
               effectsDe: 'Effekte (Deutsch)',
               effectsEn: 'Effekte (Englisch)',
               aromaDe: 'Aroma (Deutsch)',
               aromaEn: 'Aroma (Englisch)',
+              source: 'Quelle',
               list: 'Sortenbibliothek',
               downloadCsv: 'CSV herunterladen',
               save: 'Speichern',
@@ -5362,13 +5389,15 @@ def strain_library_page(request: Request):
           const nameEl = document.getElementById('strainName');
           const fieldElements = {
             name: nameEl,
-            genetics: document.getElementById('strainGenetics'),
+            genetics_de: document.getElementById('strainGeneticsDe'),
+            genetics_en: document.getElementById('strainGeneticsEn'),
             thc: document.getElementById('strainThc'),
             cbd: document.getElementById('strainCbd'),
             effects_de: document.getElementById('strainEffectsDe'),
             effects_en: document.getElementById('strainEffectsEn'),
             aroma_de: document.getElementById('strainAromaDe'),
-            aroma_en: document.getElementById('strainAromaEn')
+            aroma_en: document.getElementById('strainAromaEn'),
+            source: document.getElementById('strainSource')
           };
           const statusEl = document.getElementById('formStatus');
           const cancelBtn = document.getElementById('cancelBtn');
@@ -5384,13 +5413,15 @@ def strain_library_page(request: Request):
             text('pageLead', tr('lead'));
             text('guestNote', tr('guestNote'));
             text('nameLabel', tr('name'));
-            text('geneticsLabel', tr('genetics'));
+            text('geneticsDeLabel', tr('geneticsDe'));
+            text('geneticsEnLabel', tr('geneticsEn'));
             text('thcLabel', tr('thc'));
             text('cbdLabel', tr('cbd'));
             text('effectsDeLabel', tr('effectsDe'));
             text('effectsEnLabel', tr('effectsEn'));
             text('aromaDeLabel', tr('aromaDe'));
             text('aromaEnLabel', tr('aromaEn'));
+            text('sourceLabel', tr('source'));
             text('listTitle', tr('list'));
             text('downloadCsv', tr('downloadCsv'));
             text('cancelBtn', tr('cancel'));
@@ -5452,13 +5483,15 @@ def strain_library_page(request: Request):
               const details = document.createElement('div');
               details.className = 'details';
               const detailFields = [
-                ['genetics', 'genetics', false],
+                ['genetics_de', 'geneticsDe', false],
+                ['genetics_en', 'geneticsEn', false],
                 ['thc', 'thc', false],
                 ['cbd', 'cbd', false],
                 ['effects_de', 'effectsDe', true],
                 ['effects_en', 'effectsEn', true],
                 ['aroma_de', 'aromaDe', true],
-                ['aroma_en', 'aromaEn', true]
+                ['aroma_en', 'aromaEn', true],
+                ['source', 'source', true]
               ];
               detailFields.forEach(([field, labelKey, wide]) => {
                 if (!item[field]) return;
