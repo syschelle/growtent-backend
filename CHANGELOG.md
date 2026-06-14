@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.271
+
+### Clickable dashboard pot strains
+- Made pot strain names below the dashboard camera stream clickable.
+- Opens a popover, matching the existing info hint style, with the selected strain's genetics, THC, CBD, effects and aroma values.
+- Loads strain details from the database-backed strain library without translating the stored strain values.
+
 ## v0.270
 
 ### Fix stream pot strain placeholder

@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.270"
+APP_VERSION = "v0.271"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6161,6 +6161,9 @@ def dashboard_page(request: Request):
           .title-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
           .stream-open-btn:hover { filter:brightness(1.06); box-shadow:0 4px 14px rgba(2,6,23,.28); }
           .stream-open-btn:active { transform:translateY(1px) scale(.99); }
+          .pot-strains { margin-top:8px; line-height:1.45; }
+          .pot-strain-link { width:auto !important; display:inline; padding:0; border:0; box-shadow:none; background:none; color:var(--link); font:inherit; font-weight:700; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+          .pot-strain-link:hover { filter:none; box-shadow:none; text-decoration-thickness:2px; }
           button { padding:7px 11px; border-radius:9px; border:1px solid rgba(14,165,233,.45); background:linear-gradient(180deg, rgba(14,165,233,.22), rgba(2,132,199,.18)); color:var(--text); font-size:.8rem; font-weight:700; box-shadow:0 2px 8px rgba(2,6,23,.2); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; cursor:pointer; }
           body.role-pending button:not(#viewModeBtn):not(#mobileNavToggle),
           body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle) {
@@ -6366,7 +6369,7 @@ def dashboard_page(request: Request):
             <div class=\"small\" id=\"streamInfo\">No RTSP configured for this tent.</div>
             <img id=\"streamPreview\" alt=\"Stream preview\" style=\"width:100%; height:280px; border:0; margin-top:8px; display:none; border-radius:8px; object-fit:cover; background:#000;\" />
             <iframe id=\"streamFrame\" style=\"width:100%; height:280px; border:0; margin-top:8px; display:none;\" allow=\"autoplay; fullscreen\"></iframe>
-            <div class=\"small\" id=\"streamPotStrains\" style=\"margin-top:8px; line-height:1.45;\"></div>
+            <div class=\"small pot-strains\" id=\"streamPotStrains\"></div>
           </div>
 
           <div class=\"card stream-card meta-card phase-card\" style=\"margin-bottom:0;\">
@@ -6695,6 +6698,13 @@ def dashboard_page(request: Request):
               pot2: 'Pot 2',
               pot3: 'Pot 3',
               noPotStrains: 'No pot strains assigned.',
+              strainNotFound: 'No strain library entry found for this name.',
+              strainDetails: 'Strain details',
+              strainGenetics: 'Genetics',
+              strainThc: 'THC',
+              strainCbd: 'CBD',
+              strainEffects: 'Effects',
+              strainAroma: 'Aroma',
               historyBuilding: 'History is still building up…',
               lblIp: 'IP',
               lblGen: 'Gen',
@@ -6842,6 +6852,13 @@ def dashboard_page(request: Request):
               pot2: 'Topf 2',
               pot3: 'Topf 3',
               noPotStrains: 'Keine Topf-Sorten zugeordnet.',
+              strainNotFound: 'Kein Eintrag in der Sortenbibliothek für diesen Namen gefunden.',
+              strainDetails: 'Sortenwerte',
+              strainGenetics: 'Genetik',
+              strainThc: 'THC',
+              strainCbd: 'CBD',
+              strainEffects: 'Effekte',
+              strainAroma: 'Aroma',
               historyBuilding: 'Historie wird noch aufgebaut…',
               lblIp: 'IP',
               lblGen: 'Gen',
@@ -7747,9 +7764,57 @@ def dashboard_page(request: Request):
             }
           }
 
+          let dashboardStrainMap = null;
+
+          async function getDashboardStrainByName(name){
+            const key = String(name || '').trim().toLowerCase();
+            if (!key) return null;
+            if (!dashboardStrainMap) {
+              dashboardStrainMap = new Map();
+              try {
+                const res = await fetch('/strains', { cache:'no-store' });
+                const rows = await res.json();
+                if (Array.isArray(rows)) {
+                  rows.forEach(row => {
+                    const n = String(row?.name || '').trim();
+                    if (n) dashboardStrainMap.set(n.toLowerCase(), row);
+                  });
+                }
+              } catch {
+                dashboardStrainMap = new Map();
+              }
+            }
+            return dashboardStrainMap.get(key) || null;
+          }
+
+          function showStrainPopover(anchorEl, potLabel, strainName, strain){
+            const pop = document.getElementById('alphaHintPopover');
+            if (!pop || !anchorEl) return;
+            const lines = [];
+            lines.push(`${potLabel}: ${strainName}`);
+            if (strain) {
+              lines.push(`${tr('strainGenetics')}: ${strain.genetics || '-'}`);
+              lines.push(`${tr('strainThc')}: ${strain.thc || '-'}`);
+              lines.push(`${tr('strainCbd')}: ${strain.cbd || '-'}`);
+              lines.push(`${tr('strainEffects')}: ${strain.effects || '-'}`);
+              lines.push(`${tr('strainAroma')}: ${strain.aroma || '-'}`);
+            } else {
+              lines.push(tr('strainNotFound'));
+            }
+            pop.textContent = lines.join('\n');
+            pop.style.whiteSpace = 'pre-line';
+            pop.style.display = 'block';
+            const r = anchorEl.getBoundingClientRect();
+            const top = Math.min(window.innerHeight - 20, r.bottom + 10);
+            const left = Math.min(window.innerWidth - 20, Math.max(10, r.left));
+            pop.style.top = `${top}px`;
+            pop.style.left = `${left}px`;
+          }
+
           function renderPotStrains(potStrains = {}){
             const el = document.getElementById('streamPotStrains');
             if (!el) return;
+            el.replaceChildren();
             const parts = [1, 2, 3]
               .map(idx => ({ label: tr(`pot${idx}`), value: String(potStrains[`pot${idx}`] || '').trim() }))
               .filter(item => item.value);
@@ -7757,7 +7822,20 @@ def dashboard_page(request: Request):
               el.textContent = tr('noPotStrains');
               return;
             }
-            el.textContent = parts.map(item => `${item.label}: ${item.value}`).join(' · ');
+            parts.forEach((item, index) => {
+              if (index > 0) el.appendChild(document.createTextNode(' · '));
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'pot-strain-link';
+              btn.textContent = `${item.label}: ${item.value}`;
+              btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const strain = await getDashboardStrainByName(item.value);
+                showStrainPopover(btn, item.label, item.value, strain);
+              });
+              el.appendChild(btn);
+            });
           }
 
           function renderStream(rtspUrl, webrtcUrl, playerUrl, previewUrl){
