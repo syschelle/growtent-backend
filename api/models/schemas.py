@@ -28,7 +28,7 @@ class TentPayload(StrictModel):
 
 class StrainPayload(StrictModel):
     name: str = Field(min_length=1, max_length=200)
-    genetics: Literal["Sativa", "Indica", "Hybrid"]
+    genetics: Literal["Sativa", "Indica", "Sativa-hybrid", "Indica-hybrid"]
     thc: str = Field(default="", max_length=100)
     cbd: str = Field(default="", max_length=100)
     effects_de: str = Field(default="", max_length=2000)
@@ -60,8 +60,10 @@ class StrainPayload(StrictModel):
             return "Sativa"
         if normalized == "indica":
             return "Indica"
-        if normalized == "hybrid":
-            return "Hybrid"
+        if normalized in {"sativa-hybrid", "sativa hybrid"}:
+            return "Sativa-hybrid"
+        if normalized in {"indica-hybrid", "indica hybrid"}:
+            return "Indica-hybrid"
         return value
 
 

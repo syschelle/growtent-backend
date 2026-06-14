@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.263
+
+### Dominant hybrid classification
+- Replaced the generic `Hybrid` value with `Sativa-hybrid` and `Indica-hybrid`.
+- Reclassified the existing hybrid strains by their dominant genetics.
+- Kept backward-compatible normalization for legacy hybrid values.
+
 ## v0.262
 
 ### Hybrid genetics option

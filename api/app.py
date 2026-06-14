@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.262"
+APP_VERSION = "v0.263"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1049,20 +1049,27 @@ def _normalise_strain(data: dict) -> dict:
     item["genetics"] = _normalise_genetics(
         item["genetics"]
         or data.get("genetics_de")
-        or data.get("genetics_en")
+        or data.get("genetics_en"),
+        item["name"],
     )
     return item
 
 
-def _normalise_genetics(value: str) -> str:
+def _normalise_genetics(value: str, strain_name: str = "") -> str:
     normalized = str(value or "").strip().casefold()
-    if (
-        normalized == "hybrid"
-        or "50/50" in normalized
-        or normalized.startswith("indica/sativa")
-        or normalized.startswith("sativa/indica")
-    ):
-        return "Hybrid"
+    if normalized in {"sativa-hybrid", "sativa hybrid"}:
+        return "Sativa-hybrid"
+    if normalized in {"indica-hybrid", "indica hybrid"}:
+        return "Indica-hybrid"
+    if "hybrid" in normalized or "50/50" in normalized or "/" in normalized:
+        if "sativa" in normalized and "indica" not in normalized:
+            return "Sativa-hybrid"
+        if "indica" in normalized and "sativa" not in normalized:
+            return "Indica-hybrid"
+        name = str(strain_name or "").strip().casefold()
+        if name == "jack herer":
+            return "Sativa-hybrid"
+        return "Indica-hybrid"
     if "sativa" in normalized and not normalized.startswith("indica"):
         return "Sativa"
     if "indica" in normalized:
@@ -1091,7 +1098,7 @@ def _read_strains_csv_unlocked() -> list[dict]:
                     ) or "").strip()
                     for field, csv_column in STRAIN_FIELD_TO_CSV.items()
                 }
-                item["genetics"] = _normalise_genetics(item["genetics"])
+                item["genetics"] = _normalise_genetics(item["genetics"], item["name"])
                 if item["name"]:
                     rows.append(item)
             return rows
@@ -5274,7 +5281,8 @@ def strain_library_page(request: Request):
                     <select id="strainGenetics" required>
                       <option value="Sativa">Sativa</option>
                       <option value="Indica">Indica</option>
-                      <option value="Hybrid">Hybrid</option>
+                      <option value="Sativa-hybrid">Sativa-hybrid</option>
+                      <option value="Indica-hybrid">Indica-hybrid</option>
                     </select>
                   </div>
                   <div class="form-row">
