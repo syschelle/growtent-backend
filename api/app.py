@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.269"
+APP_VERSION = "v0.270"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6366,6 +6366,7 @@ def dashboard_page(request: Request):
             <div class=\"small\" id=\"streamInfo\">No RTSP configured for this tent.</div>
             <img id=\"streamPreview\" alt=\"Stream preview\" style=\"width:100%; height:280px; border:0; margin-top:8px; display:none; border-radius:8px; object-fit:cover; background:#000;\" />
             <iframe id=\"streamFrame\" style=\"width:100%; height:280px; border:0; margin-top:8px; display:none;\" allow=\"autoplay; fullscreen\"></iframe>
+            <div class=\"small\" id=\"streamPotStrains\" style=\"margin-top:8px; line-height:1.45;\"></div>
           </div>
 
           <div class=\"card stream-card meta-card phase-card\" style=\"margin-bottom:0;\">

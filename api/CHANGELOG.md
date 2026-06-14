@@ -2,6 +2,12 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.270
+
+### Fix stream pot strain placeholder
+- Added the missing dashboard placeholder element below the camera stream preview.
+- Ensures the compact pot strain list can render under the live image.
+
 ## v0.269
 
 ### Stream pot strain display cleanup
