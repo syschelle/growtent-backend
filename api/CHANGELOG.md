@@ -2,6 +2,12 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.272
+
+### Fix dashboard strain detail JavaScript escaping
+- Fixed JavaScript string escaping in the dashboard strain detail popover.
+- Resolves `Uncaught SyntaxError: Invalid or unexpected token` on the embedded dashboard page.
+
 ## v0.271
 
 ### Clickable dashboard pot strains
