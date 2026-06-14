@@ -2,6 +2,78 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.263
+
+### Dominant hybrid classification
+- Replaced the generic `Hybrid` value with `Sativa-hybrid` and `Indica-hybrid`.
+- Reclassified the existing hybrid strains by their dominant genetics.
+- Kept backward-compatible normalization for legacy hybrid values.
+
+## v0.262
+
+### Hybrid genetics option
+- Added `Hybrid` as a third allowed genetics value.
+- Added the option to the strain editor select field.
+- Reclassified explicitly mixed strains while retaining dominant Sativa/Indica classifications.
+
+## v0.261
+
+### Simplified genetics classification
+- Replaced the German and English genetics fields with one `Genetik` field.
+- Restricted genetics values to `Sativa` or `Indica`.
+- Added backward-compatible reading and backup import for the previous genetics fields.
+
+## v0.260
+
+### Simplified strain library
+- Removed the source field from the strain CSV schema, API, web editor and strain cards.
+- Existing CSV files with a legacy `Quelle` column remain readable.
+
+## v0.259
+
+### Expanded default strain library
+- Expanded the default CSV library from 8 to 24 strains.
+- Split genetics into German and English fields and added a source URL.
+- Renamed the German effects column to `Wirkung_DE`.
+- Added backward-compatible reading of the previous eight-column CSV schema.
+- Extended the bilingual web editor and configuration backup format for the new fields.
+
+## v0.258
+
+### Default strain CSV
+- Added `data/strains.csv` to the repository so new installations include the default strain library.
+- Included the eight existing strain records as initial CSV data.
+
+## v0.257
+
+### CSV-backed strain library
+- Moved strain records from PostgreSQL to the persistent `data/strains.csv` file.
+- Expanded the library to Sorte, Genetik, THC, CBD, Effexts_DE, Effects_EN, Aroma_DE and Aroma_EN.
+- Added bilingual web editing and direct CSV download.
+- Added automatic migration of existing strain names and effects on first start.
+- Updated configuration backup and restore for the expanded strain format.
+
+## v0.256
+
+### Strain library
+- Added a dedicated bilingual Strains / Sorten navigation tab.
+- Added persistent strain records with name and effect.
+- Added create, edit, delete and read-only guest workflows.
+- Included the strain library in configuration backup and restore.
+
+## v0.255
+
+### Fullscreen ASMR volume control
+- Added a 0-100% volume slider next to the fullscreen ASMR play/pause button.
+- Set a moderate default volume of 50%.
+
+## v0.254
+
+### Fullscreen ASMR playback
+- Added an ASMR play/pause button to the camera fullscreen preview.
+- Added the bundled `thunderstorm.mp3` track with continuous loop playback after an explicit user click.
+- Audio playback is stopped and released when the fullscreen preview window closes.
+
 ## v0.253
 
 ### Security hardening

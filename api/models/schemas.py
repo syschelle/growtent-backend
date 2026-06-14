@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -23,6 +24,47 @@ class TentPayload(StrictModel):
         if value is None:
             return None
         return str(value).strip()
+
+
+class StrainPayload(StrictModel):
+    name: str = Field(min_length=1, max_length=200)
+    genetics: Literal["Sativa", "Indica", "Sativa-hybrid", "Indica-hybrid"]
+    thc: str = Field(default="", max_length=100)
+    cbd: str = Field(default="", max_length=100)
+    effects_de: str = Field(default="", max_length=2000)
+    effects_en: str = Field(default="", max_length=2000)
+    aroma_de: str = Field(default="", max_length=2000)
+    aroma_en: str = Field(default="", max_length=2000)
+
+    @field_validator(
+        "name",
+        "thc",
+        "cbd",
+        "effects_de",
+        "effects_en",
+        "aroma_de",
+        "aroma_en",
+        mode="before",
+    )
+    @classmethod
+    def strip_strings(cls, value):
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    @field_validator("genetics", mode="before")
+    @classmethod
+    def normalize_genetics(cls, value):
+        normalized = str(value or "").strip().casefold()
+        if normalized == "sativa":
+            return "Sativa"
+        if normalized == "indica":
+            return "Indica"
+        if normalized in {"sativa-hybrid", "sativa hybrid"}:
+            return "Sativa-hybrid"
+        if normalized in {"indica-hybrid", "indica hybrid"}:
+            return "Indica-hybrid"
+        return value
 
 
 class IrrigationPlanPayload(StrictModel):

@@ -1,4 +1,5 @@
 import base64
+import csv
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import re
 import math
 import logging
 from datetime import datetime, timezone, date, timedelta
+from pathlib import Path
 from urllib.parse import quote_plus, urlsplit
 
 import httpx
@@ -19,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import ExhaustVpdPlanPayload, IrrigationPlanPayload, TentPayload
+from models.schemas import ExhaustVpdPlanPayload, IrrigationPlanPayload, StrainPayload, TentPayload
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
@@ -37,8 +39,9 @@ HEAP_WARN_COOLDOWN_SECONDS = int(os.getenv("HEAP_WARN_COOLDOWN_SECONDS", "3600")
 HEAP_RECOVER_COOLDOWN_SECONDS = int(os.getenv("HEAP_RECOVER_COOLDOWN_SECONDS", "3600"))
 GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
+STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.253"
+APP_VERSION = "v0.263"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -54,6 +57,31 @@ EMA_ALPHA = float(os.getenv("EMA_ALPHA", "0.3"))
 EMA_STATE: dict[int, dict] = {}
 SENSOR_INIT: dict[int, bool] = {}
 LOGGER = logging.getLogger("growtent.api")
+STRAINS_CSV_LOCK = threading.RLock()
+STRAINS_CSV_COLUMNS = (
+    "Sorte",
+    "Genetik",
+    "THC",
+    "CBD",
+    "Wirkung_DE",
+    "Effects_EN",
+    "Aroma_DE",
+    "Aroma_EN",
+)
+STRAIN_FIELD_TO_CSV = {
+    "name": "Sorte",
+    "genetics": "Genetik",
+    "thc": "THC",
+    "cbd": "CBD",
+    "effects_de": "Wirkung_DE",
+    "effects_en": "Effects_EN",
+    "aroma_de": "Aroma_DE",
+    "aroma_en": "Aroma_EN",
+}
+STRAIN_CSV_ALIASES = {
+    "genetics": ("Genetik", "Genetik_DE", "Genetics_EN"),
+    "effects_de": ("Wirkung_DE", "Effexts_DE"),
+}
 
 TEMP_MIN_C = float(os.getenv("SENSOR_TEMP_MIN_C", "-20"))
 TEMP_MAX_C = float(os.getenv("SENSOR_TEMP_MAX_C", "80"))
@@ -888,7 +916,7 @@ async def auth_middleware(request: Request, call_next):
     if refreshed_max_age is not None:
         response.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=refreshed_max_age)
     if request.method == "GET" and (
-        path.startswith("/app") or path.startswith("/setup") or path.startswith("/dashboard") or path.startswith("/changelog")
+        path.startswith("/app") or path.startswith("/setup") or path.startswith("/dashboard") or path.startswith("/changelog") or path.startswith("/strain")
     ):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -990,6 +1018,18 @@ def init_db():
                 );
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS strains (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    effect TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_strains_name_lower ON strains(LOWER(name));")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_tent_state_tent_time ON tent_state(tent_id, captured_at DESC);")
             cur.execute(
                 """
@@ -999,6 +1039,125 @@ def init_db():
                 """
             )
             # No default tent auto-insert on fresh installs.
+
+
+def _normalise_strain(data: dict) -> dict:
+    item = {
+        field: str(data.get(field) or "").strip()
+        for field in STRAIN_FIELD_TO_CSV
+    }
+    item["genetics"] = _normalise_genetics(
+        item["genetics"]
+        or data.get("genetics_de")
+        or data.get("genetics_en"),
+        item["name"],
+    )
+    return item
+
+
+def _normalise_genetics(value: str, strain_name: str = "") -> str:
+    normalized = str(value or "").strip().casefold()
+    if normalized in {"sativa-hybrid", "sativa hybrid"}:
+        return "Sativa-hybrid"
+    if normalized in {"indica-hybrid", "indica hybrid"}:
+        return "Indica-hybrid"
+    if "hybrid" in normalized or "50/50" in normalized or "/" in normalized:
+        if "sativa" in normalized and "indica" not in normalized:
+            return "Sativa-hybrid"
+        if "indica" in normalized and "sativa" not in normalized:
+            return "Indica-hybrid"
+        name = str(strain_name or "").strip().casefold()
+        if name == "jack herer":
+            return "Sativa-hybrid"
+        return "Indica-hybrid"
+    if "sativa" in normalized and not normalized.startswith("indica"):
+        return "Sativa"
+    if "indica" in normalized:
+        return "Indica"
+    return ""
+
+
+def _read_strains_csv_unlocked() -> list[dict]:
+    if not STRAINS_CSV_PATH.exists():
+        return []
+    try:
+        with STRAINS_CSV_PATH.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if "Sorte" not in (reader.fieldnames or []):
+                raise RuntimeError("strain CSV is missing column: Sorte")
+            rows = []
+            for row in reader:
+                item = {
+                    field: str(next(
+                        (
+                            row.get(candidate)
+                            for candidate in STRAIN_CSV_ALIASES.get(field, (csv_column,))
+                            if row.get(candidate) is not None
+                        ),
+                        "",
+                    ) or "").strip()
+                    for field, csv_column in STRAIN_FIELD_TO_CSV.items()
+                }
+                item["genetics"] = _normalise_genetics(item["genetics"], item["name"])
+                if item["name"]:
+                    rows.append(item)
+            return rows
+    except (OSError, csv.Error) as exc:
+        raise RuntimeError(f"could not read strain CSV: {exc}") from exc
+
+
+def _write_strains_csv_unlocked(strains: list[dict]) -> None:
+    STRAINS_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=f".{STRAINS_CSV_PATH.name}.",
+        suffix=".tmp",
+        dir=str(STRAINS_CSV_PATH.parent),
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=STRAINS_CSV_COLUMNS)
+            writer.writeheader()
+            for strain in strains:
+                item = _normalise_strain(strain)
+                writer.writerow({
+                    csv_column: item[field]
+                    for field, csv_column in STRAIN_FIELD_TO_CSV.items()
+                })
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, 0o644)
+        os.replace(temporary_path, STRAINS_CSV_PATH)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
+
+
+def _strain_response(strain: dict, index: int) -> dict:
+    return {"id": index + 1, **_normalise_strain(strain)}
+
+
+def _ensure_strains_csv() -> None:
+    with STRAINS_CSV_LOCK:
+        if STRAINS_CSV_PATH.exists():
+            _read_strains_csv_unlocked()
+            return
+
+        migrated = []
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name, effect FROM strains ORDER BY LOWER(name), id")
+                for name, effect in cur.fetchall():
+                    migrated.append({
+                        "name": name,
+                        "effects_de": effect,
+                    })
+        _write_strains_csv_unlocked(migrated)
+        if migrated:
+            LOGGER.info("Migrated %d strain records to %s", len(migrated), STRAINS_CSV_PATH)
 
 
 def _to_float(v):
@@ -1721,6 +1880,7 @@ def poll_loop():
 @app.on_event("startup")
 def startup_event():
     init_db()
+    _ensure_strains_csv()
     t = threading.Thread(target=poll_loop, daemon=True)
     t.start()
 
@@ -2183,6 +2343,71 @@ def list_tents():
             ]
 
 
+@app.get("/strains")
+def list_strains():
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+    result = [_strain_response(strain, index) for index, strain in enumerate(strains)]
+    return sorted(result, key=lambda item: (item["name"].casefold(), item["id"]))
+
+
+@app.get("/strains.csv")
+def download_strains_csv():
+    with STRAINS_CSV_LOCK:
+        if not STRAINS_CSV_PATH.exists():
+            _write_strains_csv_unlocked([])
+    return FileResponse(
+        STRAINS_CSV_PATH,
+        media_type="text/csv; charset=utf-8",
+        filename="strains.csv",
+    )
+
+
+@app.post("/strains")
+def create_strain(payload: StrainPayload, request: Request):
+    require_admin(request)
+    strain = _normalise_strain(payload.model_dump())
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+        if any(item["name"].casefold() == strain["name"].casefold() for item in strains):
+            raise HTTPException(status_code=409, detail="strain name already exists")
+        strains.append(strain)
+        _write_strains_csv_unlocked(strains)
+        return _strain_response(strain, len(strains) - 1)
+
+
+@app.put("/strains/{strain_id}")
+def update_strain(strain_id: int, payload: StrainPayload, request: Request):
+    require_admin(request)
+    strain = _normalise_strain(payload.model_dump())
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+        index = strain_id - 1
+        if index < 0 or index >= len(strains):
+            raise HTTPException(status_code=404, detail="strain not found")
+        if any(
+            row_index != index and item["name"].casefold() == strain["name"].casefold()
+            for row_index, item in enumerate(strains)
+        ):
+            raise HTTPException(status_code=409, detail="strain name already exists")
+        strains[index] = strain
+        _write_strains_csv_unlocked(strains)
+        return _strain_response(strain, index)
+
+
+@app.delete("/strains/{strain_id}")
+def delete_strain(strain_id: int, request: Request):
+    require_admin(request)
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+        index = strain_id - 1
+        if index < 0 or index >= len(strains):
+            raise HTTPException(status_code=404, detail="strain not found")
+        deleted = strains.pop(index)
+        _write_strains_csv_unlocked(strains)
+    return {"ok": True, "deleted": {"id": strain_id, "name": deleted["name"]}}
+
+
 @app.get("/api/poll-errors")
 def api_poll_errors(request: Request):
     # Not for guest users.
@@ -2399,14 +2624,18 @@ def export_config_backup():
             "updated_at": auth_row[11].isoformat() if auth_row[11] else None,
         }
 
+    with STRAINS_CSV_LOCK:
+        strains = _read_strains_csv_unlocked()
+
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 1,
+        "schema_version": 4,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
             "tents": tents,
             "auth": auth,
+            "strains": strains,
         },
     }
 
@@ -2426,8 +2655,11 @@ def import_config_backup(payload: dict):
     data = payload.get("data") or {}
     tents = data.get("tents")
     auth = data.get("auth")
+    strains = data.get("strains", [])
     if not isinstance(tents, list):
         raise HTTPException(status_code=400, detail="invalid tents section")
+    if not isinstance(strains, list):
+        raise HTTPException(status_code=400, detail="invalid strains section")
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -2494,7 +2726,25 @@ def import_config_backup(payload: dict):
             max_id = int(cur.fetchone()[0] or 1)
             cur.execute("SELECT setval(pg_get_serial_sequence('tents','id'), %s, true)", (max_id,))
 
-    return {"ok": True, "imported_tents": len(tents)}
+    imported_strains = []
+    seen_names = set()
+    for strain in strains:
+        if not isinstance(strain, dict):
+            continue
+        legacy_effect = str(strain.get("effect") or "").strip()
+        item = _normalise_strain({
+            **strain,
+            "effects_de": strain.get("effects_de") or legacy_effect,
+        })
+        key = item["name"].casefold()
+        if not item["name"] or key in seen_names:
+            continue
+        seen_names.add(key)
+        imported_strains.append(item)
+    with STRAINS_CSV_LOCK:
+        _write_strains_csv_unlocked(imported_strains)
+
+    return {"ok": True, "imported_tents": len(tents), "imported_strains": len(imported_strains)}
 
 
 @app.post("/tents")
@@ -4952,6 +5202,404 @@ def changelog_page():
 
 
 
+@app.get("/strain-library", response_class=HTMLResponse)
+def strain_library_page(request: Request):
+    if request.query_params.get("embed") != "1":
+        return RedirectResponse(url="/app?page=strains", status_code=302)
+
+    return """
+    <!doctype html>
+    <html lang="de">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>CanopyOps Strains</title>
+        <style>
+          :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.18); --accent:#3b82f6; --danger:#ef4444; }
+          :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); --accent:#2563eb; --danger:#dc2626; }
+          * { box-sizing:border-box; }
+          body { margin:0; font-family:Arial,sans-serif; background:var(--bg); color:var(--text); }
+          main { padding:1rem; max-width:1200px; margin:0 auto; }
+          h1 { margin:.1rem 0 .35rem; }
+          .lead { color:var(--muted); margin:0 0 1rem; line-height:1.45; }
+          .layout { display:grid; grid-template-columns:minmax(320px, 430px) 1fr; gap:14px; align-items:start; }
+          .card { background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:14px; box-shadow:0 2px 10px rgba(0,0,0,.12); }
+          .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
+          .form-grid .wide { grid-column:1 / -1; }
+          .form-row { margin-bottom:12px; }
+          label { display:block; font-weight:700; margin-bottom:5px; }
+          input, select, textarea { width:100%; color:var(--text); background:var(--bg); border:1px solid var(--grid); border-radius:8px; padding:9px 10px; font:inherit; }
+          textarea { min-height:90px; resize:vertical; }
+          .actions { display:flex; gap:8px; flex-wrap:wrap; }
+          button, .button { border:1px solid var(--grid); border-radius:8px; padding:8px 12px; color:var(--text); background:rgba(59,130,246,.2); cursor:pointer; font:inherit; text-decoration:none; }
+          button.primary { background:var(--accent); color:#fff; border-color:transparent; }
+          button.danger { background:rgba(239,68,68,.15); color:var(--danger); }
+          button:disabled { opacity:.55; cursor:not-allowed; }
+          .status { min-height:1.2rem; margin-top:10px; color:var(--muted); }
+          .status.ok { color:#22c55e; }
+          .status.error { color:var(--danger); }
+          .list-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+          .list-head h2 { margin:0; font-size:1.1rem; }
+          .count { color:var(--muted); font-size:.9rem; }
+          .strain-list { display:grid; gap:10px; }
+          .strain { border:1px solid var(--grid); border-radius:10px; padding:12px; }
+          .strain-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+          .strain h3 { margin:0; color:#93c5fd; overflow-wrap:anywhere; }
+          .details { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 14px; margin-top:10px; }
+          .detail.wide { grid-column:1 / -1; }
+          .detail-label { color:var(--muted); font-size:.8rem; }
+          .detail-value { margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.45; }
+          .empty { color:var(--muted); text-align:center; padding:30px 10px; }
+          .guest-note { display:none; margin-bottom:12px; color:var(--muted); }
+          body.guest .editor { display:none; }
+          body.guest .guest-note { display:block; }
+          body.guest .strain-actions { display:none; }
+          @media (max-width:780px) { .layout { grid-template-columns:1fr; } }
+          @media (max-width:480px) { .form-grid, .details { grid-template-columns:1fr; } .form-grid .wide, .detail.wide { grid-column:auto; } }
+        </style>
+      </head>
+      <body>
+        <script>
+          const theme = localStorage.getItem('gt_theme') || 'dark';
+          document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+        </script>
+        <main>
+          <h1 id="pageTitle">Sorten</h1>
+          <p class="lead" id="pageLead"></p>
+          <div class="guest-note" id="guestNote"></div>
+          <div class="layout">
+            <section class="card editor">
+              <h2 id="formTitle"></h2>
+              <form id="strainForm">
+                <div class="form-grid">
+                  <div class="form-row wide">
+                    <label for="strainName" id="nameLabel"></label>
+                    <input id="strainName" maxlength="200" required autocomplete="off" />
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainGenetics" id="geneticsLabel"></label>
+                    <select id="strainGenetics" required>
+                      <option value="Sativa">Sativa</option>
+                      <option value="Indica">Indica</option>
+                      <option value="Sativa-hybrid">Sativa-hybrid</option>
+                      <option value="Indica-hybrid">Indica-hybrid</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="strainThc" id="thcLabel"></label>
+                    <input id="strainThc" maxlength="100" />
+                  </div>
+                  <div class="form-row">
+                    <label for="strainCbd" id="cbdLabel"></label>
+                    <input id="strainCbd" maxlength="100" />
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainEffectsDe" id="effectsDeLabel"></label>
+                    <textarea id="strainEffectsDe" maxlength="2000"></textarea>
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainEffectsEn" id="effectsEnLabel"></label>
+                    <textarea id="strainEffectsEn" maxlength="2000"></textarea>
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainAromaDe" id="aromaDeLabel"></label>
+                    <textarea id="strainAromaDe" maxlength="2000"></textarea>
+                  </div>
+                  <div class="form-row wide">
+                    <label for="strainAromaEn" id="aromaEnLabel"></label>
+                    <textarea id="strainAromaEn" maxlength="2000"></textarea>
+                  </div>
+                </div>
+                <div class="actions">
+                  <button class="primary" type="submit" id="saveBtn"></button>
+                  <button type="button" id="cancelBtn" style="display:none;"></button>
+                </div>
+                <div class="status" id="formStatus" aria-live="polite"></div>
+              </form>
+            </section>
+            <section class="card">
+              <div class="list-head">
+                <h2 id="listTitle"></h2>
+                <div class="actions">
+                  <a class="button" href="/strains.csv" id="downloadCsv"></a>
+                  <span class="count" id="strainCount"></span>
+                </div>
+              </div>
+              <div class="strain-list" id="strainList"></div>
+            </section>
+          </div>
+        </main>
+        <script>
+          const I18N = {
+            en: {
+              title: 'Strains',
+              lead: 'Manage the CSV-backed strain library centrally through the web interface.',
+              guestNote: 'Guest mode: the strain library is read-only.',
+              addTitle: 'Add strain',
+              editTitle: 'Edit strain',
+              name: 'Strain name',
+              genetics: 'Genetics',
+              thc: 'THC',
+              cbd: 'CBD',
+              effectsDe: 'Effects (German)',
+              effectsEn: 'Effects (English)',
+              aromaDe: 'Aroma (German)',
+              aromaEn: 'Aroma (English)',
+              list: 'Strain library',
+              downloadCsv: 'Download CSV',
+              save: 'Save',
+              update: 'Update',
+              cancel: 'Cancel',
+              edit: 'Edit',
+              remove: 'Delete',
+              empty: 'No strains have been added yet.',
+              countOne: '1 strain',
+              countMany: '{count} strains',
+              saved: 'Strain saved.',
+              updated: 'Strain updated.',
+              deleted: 'Strain deleted.',
+              duplicate: 'A strain with this name already exists.',
+              loadError: 'Could not load the strain library.',
+              saveError: 'Could not save the strain.',
+              deleteError: 'Could not delete the strain.',
+              confirmDelete: 'Delete "{name}"?',
+              required: 'Please enter a strain name.'
+            },
+            de: {
+              title: 'Sorten',
+              lead: 'Verwalte die CSV-basierte Sortenbibliothek zentral über das Webinterface.',
+              guestNote: 'Gastmodus: Die Sortenbibliothek kann nur angesehen werden.',
+              addTitle: 'Sorte hinzufügen',
+              editTitle: 'Sorte bearbeiten',
+              name: 'Sortenname',
+              genetics: 'Genetik',
+              thc: 'THC',
+              cbd: 'CBD',
+              effectsDe: 'Effekte (Deutsch)',
+              effectsEn: 'Effekte (Englisch)',
+              aromaDe: 'Aroma (Deutsch)',
+              aromaEn: 'Aroma (Englisch)',
+              list: 'Sortenbibliothek',
+              downloadCsv: 'CSV herunterladen',
+              save: 'Speichern',
+              update: 'Aktualisieren',
+              cancel: 'Abbrechen',
+              edit: 'Bearbeiten',
+              remove: 'Löschen',
+              empty: 'Es wurden noch keine Sorten angelegt.',
+              countOne: '1 Sorte',
+              countMany: '{count} Sorten',
+              saved: 'Sorte gespeichert.',
+              updated: 'Sorte aktualisiert.',
+              deleted: 'Sorte gelöscht.',
+              duplicate: 'Eine Sorte mit diesem Namen existiert bereits.',
+              loadError: 'Die Sortenbibliothek konnte nicht geladen werden.',
+              saveError: 'Die Sorte konnte nicht gespeichert werden.',
+              deleteError: 'Die Sorte konnte nicht gelöscht werden.',
+              confirmDelete: '"{name}" wirklich löschen?',
+              required: 'Bitte einen Sortennamen eingeben.'
+            }
+          };
+          const lang = (localStorage.getItem('gt_lang') || 'de') === 'de' ? 'de' : 'en';
+          const tr = (key) => I18N[lang][key] || I18N.en[key] || key;
+          const listEl = document.getElementById('strainList');
+          const form = document.getElementById('strainForm');
+          const nameEl = document.getElementById('strainName');
+          const fieldElements = {
+            name: nameEl,
+            genetics: document.getElementById('strainGenetics'),
+            thc: document.getElementById('strainThc'),
+            cbd: document.getElementById('strainCbd'),
+            effects_de: document.getElementById('strainEffectsDe'),
+            effects_en: document.getElementById('strainEffectsEn'),
+            aroma_de: document.getElementById('strainAromaDe'),
+            aroma_en: document.getElementById('strainAromaEn')
+          };
+          const statusEl = document.getElementById('formStatus');
+          const cancelBtn = document.getElementById('cancelBtn');
+          const saveBtn = document.getElementById('saveBtn');
+          let items = [];
+          let editingId = null;
+          let isGuest = false;
+
+          function text(id, value){ const el = document.getElementById(id); if (el) el.textContent = value; }
+          function applyI18n(){
+            document.documentElement.lang = lang;
+            text('pageTitle', tr('title'));
+            text('pageLead', tr('lead'));
+            text('guestNote', tr('guestNote'));
+            text('nameLabel', tr('name'));
+            text('geneticsLabel', tr('genetics'));
+            text('thcLabel', tr('thc'));
+            text('cbdLabel', tr('cbd'));
+            text('effectsDeLabel', tr('effectsDe'));
+            text('effectsEnLabel', tr('effectsEn'));
+            text('aromaDeLabel', tr('aromaDe'));
+            text('aromaEnLabel', tr('aromaEn'));
+            text('listTitle', tr('list'));
+            text('downloadCsv', tr('downloadCsv'));
+            text('cancelBtn', tr('cancel'));
+            text('formTitle', editingId ? tr('editTitle') : tr('addTitle'));
+            text('saveBtn', editingId ? tr('update') : tr('save'));
+          }
+          function setStatus(message = '', type = ''){
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`.trim();
+          }
+          function resetForm(){
+            editingId = null;
+            form.reset();
+            cancelBtn.style.display = 'none';
+            setStatus('');
+            applyI18n();
+          }
+          function startEdit(item){
+            editingId = item.id;
+            Object.entries(fieldElements).forEach(([field, element]) => {
+              element.value = item[field] || '';
+            });
+            cancelBtn.style.display = 'inline-block';
+            setStatus('');
+            applyI18n();
+            nameEl.focus();
+          }
+          function render(){
+            const count = items.length;
+            text('strainCount', count === 1 ? tr('countOne') : tr('countMany').replace('{count}', String(count)));
+            listEl.replaceChildren();
+            if (!count) {
+              const empty = document.createElement('div');
+              empty.className = 'empty';
+              empty.textContent = tr('empty');
+              listEl.appendChild(empty);
+              return;
+            }
+            items.forEach(item => {
+              const card = document.createElement('article');
+              card.className = 'strain';
+              const head = document.createElement('div');
+              head.className = 'strain-head';
+              const title = document.createElement('h3');
+              title.textContent = item.name || '';
+              const actions = document.createElement('div');
+              actions.className = 'actions strain-actions';
+              const edit = document.createElement('button');
+              edit.type = 'button';
+              edit.textContent = tr('edit');
+              edit.addEventListener('click', () => startEdit(item));
+              const remove = document.createElement('button');
+              remove.type = 'button';
+              remove.className = 'danger';
+              remove.textContent = tr('remove');
+              remove.addEventListener('click', () => removeItem(item));
+              actions.append(edit, remove);
+              head.append(title, actions);
+              const details = document.createElement('div');
+              details.className = 'details';
+              const detailFields = [
+                ['genetics', 'genetics', false],
+                ['thc', 'thc', false],
+                ['cbd', 'cbd', false],
+                ['effects_de', 'effectsDe', true],
+                ['effects_en', 'effectsEn', true],
+                ['aroma_de', 'aromaDe', true],
+                ['aroma_en', 'aromaEn', true]
+              ];
+              detailFields.forEach(([field, labelKey, wide]) => {
+                if (!item[field]) return;
+                const detail = document.createElement('div');
+                detail.className = `detail${wide ? ' wide' : ''}`;
+                const label = document.createElement('div');
+                label.className = 'detail-label';
+                label.textContent = tr(labelKey);
+                const value = document.createElement('div');
+                value.className = 'detail-value';
+                value.textContent = item[field];
+                detail.append(label, value);
+                details.appendChild(detail);
+              });
+              card.append(head, details);
+              listEl.appendChild(card);
+            });
+          }
+          async function load(){
+            try {
+              const res = await fetch('/strains', { cache:'no-store' });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              items = await res.json();
+              render();
+            } catch {
+              listEl.innerHTML = '';
+              const error = document.createElement('div');
+              error.className = 'empty';
+              error.textContent = tr('loadError');
+              listEl.appendChild(error);
+            }
+          }
+          async function removeItem(item){
+            if (isGuest || !confirm(tr('confirmDelete').replace('{name}', item.name || ''))) return;
+            try {
+              const res = await fetch(`/strains/${item.id}`, { method:'DELETE' });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              if (editingId === item.id) resetForm();
+              await load();
+              setStatus(tr('deleted'), 'ok');
+            } catch {
+              setStatus(tr('deleteError'), 'error');
+            }
+          }
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (isGuest) return;
+            const payload = Object.fromEntries(
+              Object.entries(fieldElements).map(([field, element]) => [field, element.value.trim()])
+            );
+            if (!payload.name) {
+              setStatus(tr('required'), 'error');
+              return;
+            }
+            saveBtn.disabled = true;
+            try {
+              const res = await fetch(editingId ? `/strains/${editingId}` : '/strains', {
+                method: editingId ? 'PUT' : 'POST',
+                headers: { 'Content-Type':'application/json' },
+                body: JSON.stringify(payload)
+              });
+              if (!res.ok) {
+                if (res.status === 409) {
+                  setStatus(tr('duplicate'), 'error');
+                  return;
+                }
+                throw new Error(`HTTP ${res.status}`);
+              }
+              const wasEditing = editingId !== null;
+              resetForm();
+              await load();
+              setStatus(wasEditing ? tr('updated') : tr('saved'), 'ok');
+            } catch {
+              setStatus(tr('saveError'), 'error');
+            } finally {
+              saveBtn.disabled = false;
+            }
+          });
+          cancelBtn.addEventListener('click', resetForm);
+
+          (async () => {
+            applyI18n();
+            try {
+              const res = await fetch('/auth/whoami', { cache:'no-store' });
+              const user = await res.json();
+              isGuest = user?.role === 'guest';
+              document.body.classList.toggle('guest', isGuest);
+            } catch {}
+            await load();
+          })();
+        </script>
+      </body>
+    </html>
+    """
+
+
 @app.get("/grow-guide", response_class=HTMLResponse)
 def grow_guide_page(request: Request):
     if request.query_params.get("embed") != "1":
@@ -5075,9 +5723,10 @@ def app_shell_page():
           <aside class="sidebar">
             <div class="muted" id="navTitle">Navigation</div>
             <div id="tentNav"></div>
-            <a class="navlink" data-page="grow-guide" href="/app?page=grow-guide">Grow-Guide</a>
-            <a class="navlink" data-page="setup" href="/app?page=setup">Setup</a>
-            <a class="navlink" data-page="changelog" href="/app?page=changelog">About</a>
+            <a class="navlink" data-page="grow-guide" href="/app?page=grow-guide" id="shellNavGuide">Grow-Guide</a>
+            <a class="navlink" data-page="strains" href="/app?page=strains" id="shellNavStrains">Sorten</a>
+            <a class="navlink" data-page="setup" href="/app?page=setup" id="shellNavSetup">Setup</a>
+            <a class="navlink" data-page="changelog" href="/app?page=changelog" id="shellNavAbout">About</a>
           </aside>
           <main class="content">
             <iframe id="contentFrame" class="frame" src="/dashboard?embed=1"></iframe>
@@ -5094,6 +5743,21 @@ def app_shell_page():
           let userRole = 'admin';
 
           function getLang(){ return (localStorage.getItem('gt_lang') || 'de') === 'de' ? 'de' : 'en'; }
+          function applyShellI18n(){
+            const de = getLang() === 'de';
+            const labels = {
+              navTitle: 'Navigation',
+              shellNavGuide: 'Grow-Guide',
+              shellNavStrains: de ? 'Sorten' : 'Strains',
+              shellNavSetup: 'Setup',
+              shellNavAbout: de ? 'Über' : 'About',
+              logoutBtn: 'Logout'
+            };
+            Object.entries(labels).forEach(([id, value]) => {
+              const el = document.getElementById(id);
+              if (el) el.textContent = value;
+            });
+          }
           function updateViewBtnLabel(){
             if (!viewBtn) return;
             const mode = localStorage.getItem('gt_view_mode') || 'auto';
@@ -5117,6 +5781,7 @@ def app_shell_page():
             if (page === 'setup') src = '/setup?embed=1';
             else if (page === 'changelog') src = '/changelog?embed=1';
             else if (page === 'grow-guide') src = '/grow-guide?embed=1';
+            else if (page === 'strains') src = '/strain-library?embed=1';
             else if (tent) src = `/dashboard?embed=1&tent=${encodeURIComponent(tent)}`;
             if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
             updateActive();
@@ -5212,6 +5877,7 @@ def app_shell_page():
               }
             } catch {}
             loadTentNav();
+            applyShellI18n();
             updateViewBtnLabel();
             setFrame();
           })();
@@ -5456,6 +6122,7 @@ def dashboard_page(request: Request):
             <button id=\"mobileNavToggle\" type=\"button\" class=\"mobile-nav-toggle\">Menü</button>
             <div class=\"label\" style=\"margin-bottom:10px;\" id=\"navTitle\">Navigation</div>
             <div id=\"tentNav\"></div>
+            <a class=\"navlink\" href=\"/app?page=strains\" id=\"navStrains\">Sorten</a>
             <a class=\"navlink\" href=\"/app?page=setup\" id=\"navSetup\">Setup</a>
             <a class=\"navlink\" href=\"/app?page=changelog\" id=\"navChangelog\">About</a>
           </aside>
@@ -5748,6 +6415,7 @@ def dashboard_page(request: Request):
               navOpen: 'Menu',
               navClose: 'Close',
               source: 'Source',
+              strains: 'Strains',
               setup: 'Setup',
               nav: 'Navigation',
               tents: 'Tents',
@@ -5889,6 +6557,7 @@ def dashboard_page(request: Request):
               navOpen: 'Menü',
               navClose: 'Schließen',
               source: 'Quelle',
+              strains: 'Sorten',
               setup: 'Setup',
               nav: 'Navigation',
               tents: 'Zelte',
@@ -6076,6 +6745,7 @@ def dashboard_page(request: Request):
             txt('titleMain', tr('title'));
             txt('sourceText', '');
             txt('navTitle', tr('nav'));
+            txt('navStrains', tr('strains'));
             txt('navSetup', tr('setup'));
             txt('langLabel', tr('language'));
             txt('rangeLabel', tr('range'));
@@ -7014,10 +7684,93 @@ def dashboard_page(request: Request):
               closeBtn.style.cursor = 'pointer';
               closeBtn.onclick = () => w.close();
 
+              const asmrAudio = new w.Audio(`${window.location.origin}/static/thunderstorm.mp3`);
+              asmrAudio.loop = true;
+              asmrAudio.preload = 'none';
+              asmrAudio.volume = 0.5;
+
+              const asmrBtn = doc.createElement('button');
+              const updateAsmrButton = () => {
+                const isPlaying = !asmrAudio.paused;
+                asmrBtn.textContent = isPlaying ? 'ASMR ⏸' : 'ASMR ▶';
+                asmrBtn.setAttribute('aria-pressed', isPlaying ? 'true' : 'false');
+                asmrBtn.title = currentLang === 'de'
+                  ? (isPlaying ? 'Gewitter pausieren' : 'Gewitter abspielen')
+                  : (isPlaying ? 'Pause thunderstorm' : 'Play thunderstorm');
+              };
+              asmrBtn.type = 'button';
+              asmrBtn.style.marginLeft = '10px';
+              asmrBtn.style.padding = '5px 9px';
+              asmrBtn.style.borderRadius = '8px';
+              asmrBtn.style.border = `1px solid ${colors.btnBorder}`;
+              asmrBtn.style.background = colors.btnBg;
+              asmrBtn.style.color = colors.btnText;
+              asmrBtn.style.cursor = 'pointer';
+              asmrBtn.onclick = async () => {
+                if (asmrAudio.paused) {
+                  try {
+                    await asmrAudio.play();
+                  } catch {
+                    asmrBtn.title = currentLang === 'de'
+                      ? 'Audio konnte nicht gestartet werden'
+                      : 'Audio could not be started';
+                  }
+                } else {
+                  asmrAudio.pause();
+                }
+                updateAsmrButton();
+              };
+              asmrAudio.addEventListener('play', updateAsmrButton);
+              asmrAudio.addEventListener('pause', updateAsmrButton);
+              updateAsmrButton();
+
+              const volumeWrap = doc.createElement('label');
+              volumeWrap.style.marginLeft = '10px';
+              volumeWrap.style.display = 'flex';
+              volumeWrap.style.alignItems = 'center';
+              volumeWrap.style.gap = '6px';
+              volumeWrap.style.color = colors.btnText;
+              volumeWrap.style.fontSize = '.78rem';
+              volumeWrap.title = currentLang === 'de' ? 'ASMR-Lautstärke' : 'ASMR volume';
+
+              const volumeIcon = doc.createElement('span');
+              volumeIcon.textContent = '🔊';
+              volumeIcon.setAttribute('aria-hidden', 'true');
+
+              const volumeSlider = doc.createElement('input');
+              volumeSlider.type = 'range';
+              volumeSlider.min = '0';
+              volumeSlider.max = '100';
+              volumeSlider.step = '1';
+              volumeSlider.value = String(Math.round(asmrAudio.volume * 100));
+              volumeSlider.style.width = '90px';
+              volumeSlider.style.cursor = 'pointer';
+              volumeSlider.setAttribute(
+                'aria-label',
+                currentLang === 'de' ? 'ASMR-Lautstärke' : 'ASMR volume',
+              );
+
+              const volumeValue = doc.createElement('span');
+              volumeValue.style.minWidth = '34px';
+              volumeValue.style.textAlign = 'right';
+              const updateVolume = () => {
+                const volume = Number(volumeSlider.value);
+                asmrAudio.volume = volume / 100;
+                volumeValue.textContent = `${volume}%`;
+              };
+              volumeSlider.addEventListener('input', updateVolume);
+              updateVolume();
+
+              volumeWrap.appendChild(volumeIcon);
+              volumeWrap.appendChild(volumeSlider);
+              volumeWrap.appendChild(volumeValue);
+
               const right = doc.createElement('div');
               right.style.display = 'flex';
               right.style.alignItems = 'center';
               right.appendChild(stamp);
+              right.appendChild(asmrBtn);
+              right.appendChild(volumeWrap);
               right.appendChild(closeBtn);
 
               header.appendChild(titleWrap);
@@ -7219,6 +7972,11 @@ def dashboard_page(request: Request):
               }
               tick();
               w.setInterval(tick, 2500);
+              w.addEventListener('beforeunload', () => {
+                asmrAudio.pause();
+                asmrAudio.removeAttribute('src');
+                asmrAudio.load();
+              });
             };
 
             // Dashboard uses low-frame JPEG preview to save bandwidth/CPU.
