@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.262
+
+### Hybrid genetics option
+- Added `Hybrid` as a third allowed genetics value.
+- Added the option to the strain editor select field.
+- Reclassified explicitly mixed strains while retaining dominant Sativa/Indica classifications.
+
 ## v0.261
 
 ### Simplified genetics classification

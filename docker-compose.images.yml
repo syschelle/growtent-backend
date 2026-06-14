@@ -17,7 +17,7 @@ services:
 
   api:
     restart: unless-stopped
-    image: ${GT_API_IMAGE:-ghcr.io/syschelle/growtent-backend-api:v0.261}
+    image: ${GT_API_IMAGE:-ghcr.io/syschelle/growtent-backend-api:v0.262}
     container_name: gt_api
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
