@@ -51,6 +51,7 @@ Main features:
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
 - English-only CSV-backed strain library with genetics, THC/CBD, effects and aroma fields
+- three pot strain assignments per tent in setup
 - configuration export/import
 - Docker CLI helper for admin credential recovery
 - first-start install page/API for creating the initial admin account
@@ -578,7 +579,9 @@ The CSV header is:
 Name,Genetics,THC,CBD,Effects,Aroma
 ```
 
-Admins can edit these records in the Strains tab. `GET /strains.csv` downloads the current file. Existing PostgreSQL strain records from v0.256 are migrated automatically when the CSV does not yet exist.
+Admins can edit these records in the Strains tab. Guest users can view the strain library but cannot edit it. The Strains page localizes UI labels according to the selected UI language, while CSV values are displayed unchanged. `GET /strains.csv` downloads the current file. Existing PostgreSQL strain records from v0.256 are migrated automatically when the CSV does not yet exist.
+
+Setup stores optional per-tent assignments for three pots as `pot_strains_json` in PostgreSQL. These assignments reference strain names from the CSV library and are included in configuration backup/restore.
 
 The included Compose files use a named Docker volume:
 

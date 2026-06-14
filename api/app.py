@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.265"
+APP_VERSION = "v0.266"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -90,6 +90,7 @@ STRAIN_PAYLOAD_ALIASES = {
     "effects": ("effects", "Effects", "effects_en", "Effects_EN", "effect", "effects_de", "Wirkung_DE", "Effexts_DE"),
     "aroma": ("aroma", "Aroma", "aroma_en", "Aroma_EN", "aroma_de", "Aroma_DE"),
 }
+POT_STRAIN_KEYS = ("pot1", "pot2", "pot3")
 
 TEMP_MIN_C = float(os.getenv("SENSOR_TEMP_MIN_C", "-20"))
 TEMP_MAX_C = float(os.getenv("SENSOR_TEMP_MAX_C", "80"))
@@ -575,6 +576,27 @@ def _clean_required_str(value):
     return str(value).strip()
 
 
+def _normalise_pot_strains(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "{}")
+        except Exception:
+            value = {}
+    if not isinstance(value, dict):
+        value = {}
+    result = {}
+    for idx, key in enumerate(POT_STRAIN_KEYS, start=1):
+        strain = value.get(key)
+        if strain is None:
+            strain = value.get(f"pot{idx}_strain")
+        result[key] = str(strain or "").strip()[:200]
+    return result
+
+
+def _pot_strains_json(value) -> str:
+    return json.dumps(_normalise_pot_strains(value), ensure_ascii=False)
+
+
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -946,6 +968,7 @@ def init_db():
                     shelly_main_password TEXT,
                     irrigation_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}',
                     irrigation_last_run_date DATE,
+                    pot_strains_json TEXT NOT NULL DEFAULT '{"pot1":"","pot2":"","pot3":""}',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
@@ -955,6 +978,7 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS shelly_main_password TEXT;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"every_n_days\":1,\"offset_after_light_on_min\":0}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_last_run_date DATE;")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_strains_json TEXT NOT NULL DEFAULT '{\"pot1\":\"\",\"pot2\":\"\",\"pot3\":\"\"}';")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_plan_json;")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_triggered;")
             cur.execute(
@@ -1332,7 +1356,7 @@ def _stored_shelly_main_password(tent: dict | None) -> str:
 def list_tent_sources():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -1344,6 +1368,7 @@ def list_tent_sources():
                     "_shelly_main_password": r[5] or "",
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
+                    "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
                 }
                 for r in rows
             ]
@@ -2332,7 +2357,7 @@ def set_2fa_config(payload: TwoFAConfigPayload):
 def list_tents():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, created_at FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, created_at FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -2344,7 +2369,8 @@ def list_tents():
                     "has_shelly_main_password": bool(r[5]),
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
-                    "created_at": r[8].isoformat(),
+                    "pot_strains": _normalise_pot_strains(r[8]),
+                    "created_at": r[9].isoformat(),
                 }
                 for r in rows
             ]
@@ -2581,7 +2607,7 @@ def export_config_backup():
             cur.execute(
                 """
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                       irrigation_plan_json, irrigation_last_run_date, created_at
+                       irrigation_plan_json, irrigation_last_run_date, pot_strains_json, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -2610,7 +2636,8 @@ def export_config_backup():
                 "has_shelly_main_password": bool(r[5]),
                 "irrigation_plan_json": r[6],
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
-                "created_at": r[8].isoformat() if r[8] else None,
+                "pot_strains": _normalise_pot_strains(r[8]),
+                "created_at": r[9].isoformat() if r[9] else None,
             }
         )
 
@@ -2679,9 +2706,9 @@ def import_config_backup(payload: dict):
                     """
                     INSERT INTO tents(
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                        irrigation_plan_json, irrigation_last_run_date,
+                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json,
                         created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
                     """,
                     (
                         int(t.get("id") or 0),
@@ -2692,6 +2719,7 @@ def import_config_backup(payload: dict):
                         (str(t.get("shelly_main_password")).strip() if t.get("shelly_main_password") else None),
                         str(t.get("irrigation_plan_json") or '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}'),
                         t.get("irrigation_last_run_date"),
+                        _pot_strains_json(t.get("pot_strains") or t.get("pot_strains_json")),
                         t.get("created_at"),
                     ),
                 )
@@ -2762,6 +2790,8 @@ def create_tent(payload: TentPayload):
     rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
+    pot_strains = _normalise_pot_strains(payload.get("pot_strains"))
+    pot_strains_json = _pot_strains_json(pot_strains)
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -2770,17 +2800,17 @@ def create_tent(payload: TentPayload):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=409, detail="tent with same source_url already exists")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "created_at": row[6].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "created_at": row[7].isoformat()}
 
 
 @app.put("/tents/{tent_id}")
@@ -2794,6 +2824,8 @@ def update_tent(tent_id: int, payload: TentPayload):
     shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
     shelly_password_clear = bool(payload.get("shelly_main_password_clear", False))
     shelly_main_password = shelly_main_password_raw or None
+    pot_strains_provided = "pot_strains" in payload
+    pot_strains_json = _pot_strains_json(payload.get("pot_strains")) if pot_strains_provided else None
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -2811,16 +2843,17 @@ def update_tent(tent_id: int, payload: TentPayload):
                         WHEN %s THEN NULL
                         WHEN %s THEN %s
                         ELSE shelly_main_password
-                    END
+                    END,
+                    pot_strains_json=CASE WHEN %s THEN %s ELSE pot_strains_json END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, tent_id),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, tent_id),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "created_at": row[6].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "created_at": row[7].isoformat()}
 
 
 @app.get("/tents/{tent_id}/irrigation-plan")
@@ -4054,7 +4087,13 @@ def setup_page(request: Request):
               <input id=\"tentRtsp\" placeholder=\"RTSP URL (rtsp://...)\" style=\"padding:8px 10px; border-radius:8px; width:min(520px, 90%); margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainUser\" placeholder=\"Shelly Main User (optional)\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainPass\" type=\"password\" placeholder=\"Shelly Main Password (optional)\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-left:6px; margin-top:6px;\" />
-              <button id=\"addTentBtn\">Add tent</button>
+              <div id=\"potStrainsLabel\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Pot strains</div>
+              <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;\">
+                <select id=\"tentPot1Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 1 strain</option></select>
+                <select id=\"tentPot2Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 2 strain</option></select>
+                <select id=\"tentPot3Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 3 strain</option></select>
+              </div>
+              <button id=\"addTentBtn\" style=\"margin-top:8px;\">Add tent</button>
               <div id=\"tentMsg\" style=\"margin-top:10px;\"></div>
             </div>
 
@@ -4180,6 +4219,15 @@ def setup_page(request: Request):
               pushoverTitle: 'Pushover status notifications',
               savePushover: 'Save Pushover',
               apiHistoryPerTent: 'API History',
+              potStrains: 'Pot strains',
+              pot1Strain: 'Pot 1 strain',
+              pot2Strain: 'Pot 2 strain',
+              pot3Strain: 'Pot 3 strain',
+              noStrain: 'No strain',
+              editTent: 'Edit',
+              saveTent: 'Save tent',
+              addTent: 'Add tent',
+              deleteTent: 'Delete',
               guestUsersTitle: 'Guest users',
               addGuestUser: 'Add guest',
               guestUsersNone: 'No guest users configured.'
@@ -4239,6 +4287,15 @@ def setup_page(request: Request):
               pushoverTitle: 'Pushover-Statusmeldungen',
               savePushover: 'Pushover speichern',
               apiHistoryPerTent: 'API-History',
+              potStrains: 'Topf-Sorten',
+              pot1Strain: 'Topf 1 Sorte',
+              pot2Strain: 'Topf 2 Sorte',
+              pot3Strain: 'Topf 3 Sorte',
+              noStrain: 'Keine Sorte',
+              editTent: 'Bearbeiten',
+              saveTent: 'Zelt speichern',
+              addTent: 'Zelt hinzufügen',
+              deleteTent: 'Löschen',
               guestUsersTitle: 'Gastbenutzer',
               addGuestUser: 'Gast hinzufügen',
               guestUsersNone: 'Keine Gastbenutzer vorhanden.'
@@ -4265,7 +4322,9 @@ def setup_page(request: Request):
             set('labelLanguage', tSetup('language'));
             set('labelTempUnit', tSetup('tempUnit'));
             set('tentsTitle', tSetup('tents'));
+            set('potStrainsLabel', tSetup('potStrains'));
             set('saveBtn', tSetup('save'));
+            refreshPotStrainPlaceholders();
             set('accessTitle', tSetup('access'));
             set('authEnabledLabel', tSetup('enableAuth'));
             set('authUserLabel', tSetup('username'));
@@ -4319,6 +4378,62 @@ def setup_page(request: Request):
           const initialLang = (localStorage.getItem('gt_lang') || (browserLang.startsWith('de') ? 'de' : 'en'));
           const initialUnit = (localStorage.getItem('gt_temp_unit') || 'C');
           let setupIsGuest = false;
+          let setupStrainOptions = [];
+
+          function potSelect(id){ return document.getElementById(id); }
+          function potSelects(){ return [potSelect('tentPot1Strain'), potSelect('tentPot2Strain'), potSelect('tentPot3Strain')].filter(Boolean); }
+          function refreshPotStrainPlaceholders(){
+            const labels = [tSetup('pot1Strain'), tSetup('pot2Strain'), tSetup('pot3Strain')];
+            potSelects().forEach((select, index) => {
+              const first = select.querySelector('option[value=""]');
+              if (first) first.textContent = labels[index] || tSetup('noStrain');
+            });
+          }
+          function fillPotStrainSelects(selected = {}){
+            const labels = [tSetup('pot1Strain'), tSetup('pot2Strain'), tSetup('pot3Strain')];
+            potSelects().forEach((select, index) => {
+              const key = `pot${index + 1}`;
+              const current = selected[key] || select.value || '';
+              select.replaceChildren();
+              const empty = document.createElement('option');
+              empty.value = '';
+              empty.textContent = labels[index] || tSetup('noStrain');
+              select.appendChild(empty);
+              setupStrainOptions.forEach(name => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                select.appendChild(option);
+              });
+              select.value = current;
+            });
+          }
+          function readPotStrainsFromForm(){
+            return {
+              pot1: (potSelect('tentPot1Strain')?.value || '').trim(),
+              pot2: (potSelect('tentPot2Strain')?.value || '').trim(),
+              pot3: (potSelect('tentPot3Strain')?.value || '').trim(),
+            };
+          }
+          function clearPotStrainForm(){ fillPotStrainSelects({ pot1:'', pot2:'', pot3:'' }); }
+          function formatPotStrains(potStrains = {}){
+            const parts = [1, 2, 3]
+              .map(idx => `${tSetup(`pot${idx}Strain`)}: ${potStrains[`pot${idx}`] || '-'}`);
+            return parts.join(' · ');
+          }
+          async function loadSetupStrainOptions(){
+            try {
+              const res = await fetch('/strains', { cache:'no-store' });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              const strains = await res.json();
+              setupStrainOptions = Array.isArray(strains)
+                ? strains.map(item => String(item.name || '').trim()).filter(Boolean)
+                : [];
+            } catch {
+              setupStrainOptions = [];
+            }
+            fillPotStrainSelects(readPotStrainsFromForm());
+          }
 
           sel.value = initialTheme;
           langSel.value = (initialLang === 'de') ? 'de' : 'en';
@@ -4434,17 +4549,19 @@ def setup_page(request: Request):
                 const planTxt = p.enabled
                   ? `${tSetup('everyDays')}: ${Number(p.every_n_days || 1)} · ${tSetup('offsetAfterLight')}: ${Number(p.offset_after_light_on_min || 0)}`
                   : '-';
+                const potTxt = formatPotStrains(t.pot_strains || {});
                 return `
                 <div style="padding:6px 0; border-bottom:1px solid var(--grid);">
                   <strong>#${t.id} ${t.name}</strong><br>
                   <span style="opacity:.85">API: ${t.source_url}</span><br>
                   <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
                   <span style="opacity:.85">Shelly Main Auth: ${(t.shelly_main_user || t.has_shelly_main_password) ? 'set' : '-'}</span><br>
+                  <span style="opacity:.85">${tSetup('potStrains')}: ${potTxt}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
                   <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
-                  <button data-edit-tent="${t.id}" style="margin-top:6px;">Edit</button>
+                  <button data-edit-tent="${t.id}" style="margin-top:6px;">${tSetup('editTent')}</button>
                   <button data-plan-tent="${t.id}" style="margin-top:6px; margin-left:6px;">${tSetup('irrigationPlan')}</button>
-                  <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">Delete</button>
+                  <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('deleteTent')}</button>
                 </div>
               `;
               }).join('');
@@ -4460,8 +4577,9 @@ def setup_page(request: Request):
                   document.getElementById('tentMainUser').value = tent.shelly_main_user || '';
                   document.getElementById('tentMainPass').value = '';
                   document.getElementById('tentMainPass').placeholder = tent.has_shelly_main_password ? 'Stored - leave blank to keep' : 'Optional Shelly password';
+                  fillPotStrainSelects(tent.pot_strains || {});
                   document.getElementById('addTentBtn').setAttribute('data-edit-id', String(id));
-                  document.getElementById('addTentBtn').textContent = 'Save tent';
+                  document.getElementById('addTentBtn').textContent = tSetup('saveTent');
                 });
               });
               list.querySelectorAll('button[data-plan-tent]').forEach(btn => {
@@ -4926,6 +5044,7 @@ def setup_page(request: Request):
             const rtsp_url = (document.getElementById('tentRtsp')?.value || '').trim();
             const shelly_main_user = (document.getElementById('tentMainUser')?.value || '').trim();
             const shelly_main_password = (document.getElementById('tentMainPass')?.value || '').trim();
+            const pot_strains = readPotStrainsFromForm();
 
             if (!name || !source_url) {
               tentMsg.textContent = 'Please provide name and source URL.';
@@ -4939,7 +5058,7 @@ def setup_page(request: Request):
               const res = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, source_url, rtsp_url, shelly_main_user, shelly_main_password })
+                body: JSON.stringify({ name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains })
               });
 
               if (!res.ok) {
@@ -4954,8 +5073,9 @@ def setup_page(request: Request):
               document.getElementById('tentRtsp').value = '';
               document.getElementById('tentMainUser').value = '';
               document.getElementById('tentMainPass').value = '';
+              clearPotStrainForm();
               btn.removeAttribute('data-edit-id');
-              btn.textContent = 'Add tent';
+              btn.textContent = tSetup('addTent');
               await loadTents();
             } catch (e) {
               tentMsg.textContent = editId > 0 ? 'Update failed.' : 'Add failed.';
@@ -5008,6 +5128,7 @@ def setup_page(request: Request):
               return;
             }
 
+            await loadSetupStrainOptions();
             loadTents();
             loadSetupNavTents();
             loadAuthConfigUi();
@@ -5361,10 +5482,42 @@ def strain_library_page(request: Request):
               deleteError: 'Could not delete the strain.',
               confirmDelete: 'Delete "{name}"?',
               required: 'Please enter a strain name.'
+            },
+            de: {
+              title: 'Sorten',
+              lead: 'Verwalte die CSV-basierte Sortenbibliothek zentral über das Webinterface.',
+              guestNote: 'Gastmodus: Die Sortenbibliothek kann nur angesehen werden.',
+              addTitle: 'Sorte hinzufügen',
+              editTitle: 'Sorte bearbeiten',
+              name: 'Sortenname',
+              genetics: 'Genetik',
+              thc: 'THC',
+              cbd: 'CBD',
+              effects: 'Effekte',
+              aroma: 'Aroma',
+              list: 'Sortenbibliothek',
+              downloadCsv: 'CSV herunterladen',
+              save: 'Speichern',
+              update: 'Aktualisieren',
+              cancel: 'Abbrechen',
+              edit: 'Bearbeiten',
+              remove: 'Löschen',
+              empty: 'Es wurden noch keine Sorten hinzugefügt.',
+              countOne: '1 Sorte',
+              countMany: '{count} Sorten',
+              saved: 'Sorte gespeichert.',
+              updated: 'Sorte aktualisiert.',
+              deleted: 'Sorte gelöscht.',
+              duplicate: 'Eine Sorte mit diesem Namen existiert bereits.',
+              loadError: 'Die Sortenbibliothek konnte nicht geladen werden.',
+              saveError: 'Die Sorte konnte nicht gespeichert werden.',
+              deleteError: 'Die Sorte konnte nicht gelöscht werden.',
+              confirmDelete: '"{name}" löschen?',
+              required: 'Bitte einen Sortennamen eingeben.'
             }
           };
-          const lang = 'en';
-          const tr = (key) => I18N.en[key] || key;
+          const lang = (localStorage.getItem('gt_lang') || ((navigator.language || 'en').toLowerCase().startsWith('de') ? 'de' : 'en')) === 'de' ? 'de' : 'en';
+          const tr = (key) => (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
           const listEl = document.getElementById('strainList');
           const form = document.getElementById('strainForm');
           const nameEl = document.getElementById('strainName');

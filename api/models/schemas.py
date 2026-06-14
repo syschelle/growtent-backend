@@ -17,6 +17,7 @@ class TentPayload(StrictModel):
     shelly_main_user: str | None = Field(default=None, max_length=200)
     shelly_main_password: str | None = Field(default=None, max_length=512)
     shelly_main_password_clear: bool = False
+    pot_strains: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("name", "source_url", "rtsp_url", "shelly_main_user", mode="before")
     @classmethod
@@ -24,6 +25,16 @@ class TentPayload(StrictModel):
         if value is None:
             return None
         return str(value).strip()
+
+    @field_validator("pot_strains", mode="before")
+    @classmethod
+    def normalize_pot_strains(cls, value):
+        if not isinstance(value, dict):
+            return {}
+        return {
+            f"pot{idx}": str(value.get(f"pot{idx}") or "").strip()
+            for idx in range(1, 4)
+        }
 
 
 class StrainPayload(StrictModel):

@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.266
+
+### Pot strain assignment and localized strain page
+- Added three pot strain assignments per tent in setup, backed by `pot_strains_json`.
+- Included pot strain assignments in tent API responses and configuration backup/restore.
+- Restored German/English UI labels for the strain library page while keeping CSV values unchanged.
+- Kept guest users read-only on the strain library page and write-protected through existing guest restrictions.
+
 ## v0.265
 
 ### English-only strain CSV
