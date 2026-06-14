@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.276
+
+### Conditional dashboard exhaust history
+- Shows the exhaust history chart only when the exhaust Shelly is configured or exhaust history values exist.
+- Keeps the dashboard cleaner for setups without an exhaust device.
+- Preserves German and English labels for the exhaust history card.
+
 ## v0.275
 
 ### Dashboard exhaust history

@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.275"
+APP_VERSION = "v0.276"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6524,7 +6524,7 @@ def dashboard_page(request: Request):
           <div id=\"historyOverlayHumidifierW\" class=\"history-overlay\"></div>
         </div>
 
-        <div class="card history-card">
+        <div class="card history-card" id="exhaustWCard" style="display:none;">
           <div class="label" id="lblExhaustWHistory">Exhaust history</div>
           <canvas id="exhaustWChart"></canvas>
           <div id="historyOverlayExhaustW" class="history-overlay"></div>
@@ -7433,6 +7433,34 @@ def dashboard_page(request: Request):
               if (Number.isFinite(n)) return n;
             }
             return null;
+          }
+
+          function hasTextValue(value){
+            return String(value ?? '').trim().length > 0;
+          }
+
+          function isExhaustDefined(payload = {}){
+            if (!payload || typeof payload !== 'object') return false;
+            if (hasTextValue(payload['settings.shelly.exhaust.ip'])) return true;
+            if (payload['settings.shelly.exhaust.enabled'] === true) return true;
+            if (payload['cur.shelly.exhaust.isOn'] !== undefined) return true;
+            return firstNum(payload, ['cur.shelly.exhaust.Watt', 'cur.shelly.exhaust.watt', 'shelly.exhaust.watt']) !== null;
+          }
+
+          function setExhaustHistoryVisible(visible){
+            const card = document.getElementById('exhaustWCard');
+            if (!card) return;
+            const show = !!visible;
+            card.style.display = show ? '' : 'none';
+            if (!show && exhaustWChart) {
+              try { exhaustWChart.destroy(); } catch {}
+              exhaustWChart = null;
+            }
+          }
+
+          function isExhaustHistoryVisible(){
+            const card = document.getElementById('exhaustWCard');
+            return !!card && card.style.display !== 'none';
           }
 
           function cToF(c){
@@ -8478,6 +8506,7 @@ def dashboard_page(request: Request):
           let lastGoodLatestPayload = null;
           let lastGoodCapturedAt = null;
           let shellyDirectFallbackUsed = false;
+          let exhaustHistoryConfigured = false;
 
           function buildSingleChart(canvasId, labels, datasetLabel, values, color, unitLabel, lineTension = 0.25){
             const ctx = document.getElementById(canvasId);
@@ -8795,7 +8824,9 @@ def dashboard_page(request: Request):
             mainWChart = buildSingleChart('mainWChart', labels, `${tr('totalConsumption')} W`, mainW, '#ef4444', 'W', 0);
             lightWChart = buildSingleChart('lightWChart', labels, `${tr('lightConsumption')} W`, lightW, '#eab308', 'W', 0);
             humidifierWChart = buildSingleChart('humidifierWChart', labels, `${tr('humidifierConsumption')} W`, humidifierW, '#3b82f6', 'W', 0);
-            exhaustWChart = buildSingleChart('exhaustWChart', labels, `${tr('exhaustConsumption')} W`, exhaustW, '#14b8a6', 'W', 0);
+            exhaustWChart = isExhaustHistoryVisible()
+              ? buildSingleChart('exhaustWChart', labels, `${tr('exhaustConsumption')} W`, exhaustW, '#14b8a6', 'W', 0)
+              : null;
 
             const heapCtx = document.getElementById('heapChart');
             if (heapCtx) {
@@ -8893,6 +8924,9 @@ def dashboard_page(request: Request):
               shellyDirectFallbackUsed = true;
               // Keep existing values from /latest once.
             }
+
+            exhaustHistoryConfigured = isExhaustDefined(d);
+            setExhaustHistoryVisible(exhaustHistoryConfigured);
 
             renderStream(j.rtsp_url, j.webrtc_url, j.player_url, j.preview_url);
             renderPotStrains(j.pot_strains || {});
@@ -9302,6 +9336,8 @@ def dashboard_page(request: Request):
               const w = Number(p.exhaustW);
               return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
             });
+            const exhaustHasHistoryValues = exhaustW.some((value) => Number.isFinite(Number(value)));
+            setExhaustHistoryVisible(exhaustHistoryConfigured || exhaustHasHistoryValues);
             const alphaTemp = points.map(p => {
               const a = Number(p.effectiveAlfaTempC);
               return Number.isFinite(a) ? Number(a.toFixed(3)) : null;
