@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.276"
+APP_VERSION = "v0.277"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5361,6 +5361,40 @@ def changelog_page():
     flush_card()
     rendered_cards = "\n".join(cards)
 
+    release_highlights_html = """
+            <div class="release-highlights">
+              <section class="entry-card">
+                <h2>Änderungen seit v0.265</h2>
+                <p class="muted">Zusammenfassung der wichtigsten Änderungen von v0.265 bis zur aktuellen Version.</p>
+                <h3 class="section-changes">Sortenbibliothek und Topf-Zuordnung</h3>
+                <ul>
+                  <li><strong>v0.265:</strong> Sorten-CSV auf ein einsprachiges Schema vereinfacht: Name, Genetics, THC, CBD, Effects und Aroma.</li>
+                  <li><strong>v0.266:</strong> Drei Topf-Sorten pro Zelt im Setup ergänzt; Gastbenutzer können die Sortenbibliothek nur lesen.</li>
+                  <li><strong>v0.267:</strong> Sortenbibliothek in PostgreSQL verschoben. Die CSV dient nur noch als Initial-Seed und Export.</li>
+                </ul>
+                <h3 class="section-changes">Dashboard und Kamera-Stream</h3>
+                <ul>
+                  <li><strong>v0.268:</strong> Topf-Sorten unterhalb des Kamera-Streams im Dashboard angezeigt.</li>
+                  <li><strong>v0.269:</strong> Anzeige auf eine kompakte Liste reduziert, ohne zusätzlichen Präfix.</li>
+                  <li><strong>v0.270:</strong> Fehlenden Platzhalter für die Stream-Topf-Sorten im Dashboard ergänzt.</li>
+                  <li><strong>v0.271:</strong> Sortennamen anklickbar gemacht; ein Popover zeigt Genetik, THC, CBD, Effekte und Aroma.</li>
+                  <li><strong>v0.272:</strong> JavaScript-Escaping im Sorten-Popover korrigiert.</li>
+                  <li><strong>v0.273:</strong> Nur der Sortenname ist klickbar; der Unterstrich wurde entfernt.</li>
+                  <li><strong>v0.274:</strong> Temperatur und VPD im Vollbild-Kamera-Preview in die Kopfzeile verschoben, damit das Bild frei bleibt.</li>
+                </ul>
+                <h3 class="section-changes">Abluft und Verlauf</h3>
+                <ul>
+                  <li><strong>v0.275:</strong> Abluftverlauf als zusätzlicher Watt-Chart im Dashboard ergänzt.</li>
+                  <li><strong>v0.276:</strong> Abluftverlauf wird nur angezeigt, wenn die Abluft definiert ist oder bereits Abluft-Historienwerte existieren.</li>
+                </ul>
+                <h3 class="section-changes">About-Seite</h3>
+                <ul>
+                  <li><strong>v0.277:</strong> Diese kompakte Zusammenfassung der Änderungen seit v0.265 wurde auf der About-Seite ergänzt.</li>
+                </ul>
+              </section>
+            </div>
+    """
+
     tent_links_html = ""
     try:
         with get_conn() as conn:
@@ -5393,6 +5427,8 @@ def changelog_page():
           .navlink {{ display:block; padding:8px 10px; margin-bottom:8px; border-radius:8px; color:var(--text); text-decoration:none; }}
           .navlink.active {{ background:rgba(59,130,246,.2); }}
           .download {{ display:inline-block; margin-bottom:12px; }}
+          .release-highlights {{ display:grid; gap:12px; margin-bottom:12px; }}
+          .release-highlights .muted {{ color:var(--muted); }}
           .md-root {{ display:grid; gap:12px; }}
           .entry-card {{ background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:12px; box-shadow:0 2px 10px rgba(0,0,0,.12); }}
           .entry-card h2 {{ font-size:1.12rem; margin:.1rem 0 .5rem; color:#93c5fd; }}
@@ -5426,6 +5462,7 @@ def changelog_page():
             <h1>About</h1>
             <a class="navlink active download" href="https://github.com/syschelle/growtent-backend" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
             <a class="navlink active download" href="/download/project.zip">Projekt herunterladen (ZIP)</a>
+            {release_highlights_html}
             <div class="md-root">{rendered_cards}</div>
           </main>
         </div>

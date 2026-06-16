@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.277
+
+### About page release summary
+- Added a compact About page summary of the main changes from v0.265 to the current version.
+- Highlights strain library changes, pot assignments, dashboard stream updates, fullscreen metrics and exhaust history improvements.
+- Keeps the full changelog below the new summary section.
+
 ## v0.276
 
 ### Conditional dashboard exhaust history
