@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.277"
+APP_VERSION = "v0.278"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5364,32 +5364,33 @@ def changelog_page():
     release_highlights_html = """
             <div class="release-highlights">
               <section class="entry-card">
-                <h2>Änderungen seit v0.265</h2>
-                <p class="muted">Zusammenfassung der wichtigsten Änderungen von v0.265 bis zur aktuellen Version.</p>
-                <h3 class="section-changes">Sortenbibliothek und Topf-Zuordnung</h3>
+                <h2>Changes since v0.265</h2>
+                <p class="muted">Summary of the most important changes from v0.265 to the current version.</p>
+                <h3 class="section-changes">Strain library and pot assignment</h3>
                 <ul>
-                  <li><strong>v0.265:</strong> Sorten-CSV auf ein einsprachiges Schema vereinfacht: Name, Genetics, THC, CBD, Effects und Aroma.</li>
-                  <li><strong>v0.266:</strong> Drei Topf-Sorten pro Zelt im Setup ergänzt; Gastbenutzer können die Sortenbibliothek nur lesen.</li>
-                  <li><strong>v0.267:</strong> Sortenbibliothek in PostgreSQL verschoben. Die CSV dient nur noch als Initial-Seed und Export.</li>
+                  <li><strong>v0.265:</strong> Simplified the strain CSV to a single-language schema: Name, Genetics, THC, CBD, Effects and Aroma.</li>
+                  <li><strong>v0.266:</strong> Added three pot strain assignments per tent in setup; guest users can only view the strain library.</li>
+                  <li><strong>v0.267:</strong> Moved the strain library to PostgreSQL. The CSV now serves only as initial seed and export.</li>
                 </ul>
-                <h3 class="section-changes">Dashboard und Kamera-Stream</h3>
+                <h3 class="section-changes">Dashboard and camera stream</h3>
                 <ul>
-                  <li><strong>v0.268:</strong> Topf-Sorten unterhalb des Kamera-Streams im Dashboard angezeigt.</li>
-                  <li><strong>v0.269:</strong> Anzeige auf eine kompakte Liste reduziert, ohne zusätzlichen Präfix.</li>
-                  <li><strong>v0.270:</strong> Fehlenden Platzhalter für die Stream-Topf-Sorten im Dashboard ergänzt.</li>
-                  <li><strong>v0.271:</strong> Sortennamen anklickbar gemacht; ein Popover zeigt Genetik, THC, CBD, Effekte und Aroma.</li>
-                  <li><strong>v0.272:</strong> JavaScript-Escaping im Sorten-Popover korrigiert.</li>
-                  <li><strong>v0.273:</strong> Nur der Sortenname ist klickbar; der Unterstrich wurde entfernt.</li>
-                  <li><strong>v0.274:</strong> Temperatur und VPD im Vollbild-Kamera-Preview in die Kopfzeile verschoben, damit das Bild frei bleibt.</li>
+                  <li><strong>v0.268:</strong> Displayed pot strains below the camera stream in the dashboard.</li>
+                  <li><strong>v0.269:</strong> Reduced the display to a compact list without an additional prefix.</li>
+                  <li><strong>v0.270:</strong> Added the missing placeholder for stream pot strains in the dashboard.</li>
+                  <li><strong>v0.271:</strong> Made strain names clickable; a popover shows genetics, THC, CBD, effects and aroma.</li>
+                  <li><strong>v0.272:</strong> Fixed JavaScript escaping in the strain popover.</li>
+                  <li><strong>v0.273:</strong> Only the strain name is clickable; underline styling was removed.</li>
+                  <li><strong>v0.274:</strong> Moved temperature and VPD to the fullscreen camera preview header so the image remains unobstructed.</li>
                 </ul>
-                <h3 class="section-changes">Abluft und Verlauf</h3>
+                <h3 class="section-changes">Exhaust and history</h3>
                 <ul>
-                  <li><strong>v0.275:</strong> Abluftverlauf als zusätzlicher Watt-Chart im Dashboard ergänzt.</li>
-                  <li><strong>v0.276:</strong> Abluftverlauf wird nur angezeigt, wenn die Abluft definiert ist oder bereits Abluft-Historienwerte existieren.</li>
+                  <li><strong>v0.275:</strong> Added exhaust history as an additional watt chart in the dashboard.</li>
+                  <li><strong>v0.276:</strong> Exhaust history is only shown when exhaust is configured or when exhaust history values already exist.</li>
                 </ul>
-                <h3 class="section-changes">About-Seite</h3>
+                <h3 class="section-changes">About page</h3>
                 <ul>
-                  <li><strong>v0.277:</strong> Diese kompakte Zusammenfassung der Änderungen seit v0.265 wurde auf der About-Seite ergänzt.</li>
+                  <li><strong>v0.277:</strong> Added this compact summary of changes since v0.265 to the About page.</li>
+                  <li><strong>v0.278:</strong> Translated the About page summary to English.</li>
                 </ul>
               </section>
             </div>

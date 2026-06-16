@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.278
+
+### English About page summary
+- Translated the About page summary section from German to English.
+- Added the v0.278 summary item to keep the overview aligned with the current version.
+- Keeps the full changelog below the summary section.
+
 ## v0.277
 
 ### About page release summary
