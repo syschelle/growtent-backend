@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.278"
+APP_VERSION = "v0.279"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5403,6 +5403,7 @@ def changelog_page():
                 <ul>
                   <li><strong>v0.277:</strong> Added this compact summary of changes since v0.265 to the About page.</li>
                   <li><strong>v0.278:</strong> Translated the About page summary to English.</li>
+                  <li><strong>v0.279:</strong> Normalized Shelly toggle responses so proxied devices report usable state data.</li>
                 </ul>
               </section>
             </div>

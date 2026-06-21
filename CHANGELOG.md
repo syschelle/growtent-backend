@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.279
+
+### Shelly toggle response normalization
+- Normalized Shelly toggle responses for `main`, `light`, `humidifier`, `heater`, `fan` and `exhaust`.
+- Proxied Shelly devices now expose controller response fields under `state`, including `state.isOn`.
+- Backend `ok` now becomes `false` when the controller response reports `response.ok == false`.
+
 ## v0.278
 
 ### English About page summary
