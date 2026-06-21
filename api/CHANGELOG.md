@@ -2,6 +2,20 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.281
+
+### Release version bump and deployment metadata
+- Bumped the application version to `v0.281`.
+- Carries forward the direct Shelly toggle timeout hotfix from v0.280.
+- Updated pinned image examples in the deployment documentation to `v0.281` while keeping Compose defaults on `latest`.
+
+## v0.280
+
+### Direct Shelly toggle hotfix
+- Uses direct Shelly switching for configured light, humidifier, heater, fan and exhaust devices.
+- Avoids controller action proxy timeouts when toggling Shelly devices from the web interface.
+- Keeps the legacy controller proxy as fallback when a device has no Shelly IP configured in the latest controller state.
+
 ## v0.279
 
 ### Shelly toggle response normalization

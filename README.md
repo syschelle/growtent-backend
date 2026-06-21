@@ -183,13 +183,13 @@ Advantages:
 Default API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.279
+ghcr.io/syschelle/growtent-backend-api:latest
 ```
 
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.279
+ghcr.io/syschelle/growtent-backend-api:v0.281
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -278,11 +278,11 @@ Start the stack:
 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
-The image-based Compose file is pinned to the release tag by default. You can also set it explicitly:
+The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.279 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.279 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.281 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.281 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -847,7 +847,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.279 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.281 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

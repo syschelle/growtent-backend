@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.279"
+APP_VERSION = "v0.281"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -3915,6 +3915,29 @@ def toggle_shelly_device(tent_id: int, device: str):
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"main shelly direct toggle failed: {e}")
 
+    # Prefer direct Shelly switching for every configured Shelly device.
+    # This avoids waiting for the controller action proxy when the browser toggles
+    # Shelly devices from the dashboard. If the device has no Shelly IP in the
+    # latest controller state, keep the legacy controller proxy as fallback.
+    try:
+        direct_result = _toggle_shelly_direct_for_key(tent_id, device)
+        direct_state = direct_result.get("state") if isinstance(direct_result, dict) else None
+        return {
+            "ok": True,
+            "tent_id": tent_id,
+            "device": device,
+            "direct": True,
+            "state": direct_state,
+            "response": direct_state if direct_state is not None else direct_result,
+        }
+    except HTTPException as e:
+        if e.status_code != 400:
+            raise
+        # No direct Shelly IP configured for this device in the latest state.
+        # Fall back to the controller action endpoint for legacy/controller-only setups.
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{device} shelly direct toggle failed: {e}")
+
     result = proxy_post_to_tent_action(tent_id, f"/shelly/{device}/toggle")
     response = result.get("response") if isinstance(result, dict) else None
     response_ok = response.get("ok") if isinstance(response, dict) else None
@@ -5404,6 +5427,8 @@ def changelog_page():
                   <li><strong>v0.277:</strong> Added this compact summary of changes since v0.265 to the About page.</li>
                   <li><strong>v0.278:</strong> Translated the About page summary to English.</li>
                   <li><strong>v0.279:</strong> Normalized Shelly toggle responses so proxied devices report usable state data.</li>
+                  <li><strong>v0.280:</strong> Switched configured Shelly devices directly from the backend to avoid controller action proxy timeouts.</li>
+                  <li><strong>v0.281:</strong> Bumped the release version and updated deployment metadata for the direct Shelly toggle hotfix.</li>
                 </ul>
               </section>
             </div>

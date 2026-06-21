@@ -46,16 +46,16 @@ Important: if the database password contains special characters, URL-encode it i
 
 ## Image tags
 
-The image-based Compose file defaults to the current pinned release tag:
+The image-based Compose file defaults to the moving latest API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.279
+ghcr.io/syschelle/growtent-backend-api:v0.281
 ```
 
 For deterministic deployments, pin a specific version with `GT_API_IMAGE`, for example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.279
+ghcr.io/syschelle/growtent-backend-api:v0.281
 ```
 
 go2rtc is pinned in the Compose files as an immutable reference instead of `latest`:
@@ -68,11 +68,11 @@ Override `GO2RTC_IMAGE` only deliberately for controlled upgrades.
 
 ## Server deployment
 
-Use the pinned release image:
+Use the current release image explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.279 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.279 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.281 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.281 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Or use the image configured in `.env` / Compose:
@@ -128,7 +128,7 @@ Docker does not remove port mappings from an already-created container. Recreate
 ```bash
 docker compose -f docker-compose.images.yml down --remove-orphans
 docker rm -f gt_go2rtc gt_api gt_db 2>/dev/null || true
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.279 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.281 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Then verify again with `docker port` and `ss`.
