@@ -3909,15 +3909,27 @@ def toggle_shelly_device(tent_id: int, device: str):
     if device == "main":
         try:
             st = toggle_main_shelly_direct(tent_id)
-            return {"ok": True, "tent_id": tent_id, "device": "main", "direct": True, "state": st}
+            return {"ok": True, "tent_id": tent_id, "device": "main", "direct": True, "state": st, "response": st}
         except HTTPException:
             raise
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"main shelly direct toggle failed: {e}")
 
     result = proxy_post_to_tent_action(tent_id, f"/shelly/{device}/toggle")
-    result["device"] = device
-    return result
+    response = result.get("response") if isinstance(result, dict) else None
+    response_ok = response.get("ok") if isinstance(response, dict) else None
+    state = dict(response) if isinstance(response, dict) else {}
+    state.pop("ok", None)
+
+    normalized = {
+        **result,
+        "ok": bool(result.get("ok")) and response_ok is not False,
+        "tent_id": tent_id,
+        "device": device,
+        "state": state,
+        "response": response,
+    }
+    return normalized
 
 
 @app.post("/tents/{tent_id}/actions/shelly/reset-energy")
