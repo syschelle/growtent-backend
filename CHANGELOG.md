@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.282
+
+### Irrigation plan next-run diagnostics
+- Added a dashboard-side validation for active irrigation plans that cannot calculate the next run because the light ON schedule is missing or unreadable.
+- The dashboard now shows `light schedule missing` / `Licht-Zeitplan fehlt` instead of only displaying an empty next-run value.
+- Keeps the display localized in English and German.
+
 ## v0.281
 
 ### Release version bump and deployment metadata

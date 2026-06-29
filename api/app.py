@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.281"
+APP_VERSION = "v0.282"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5416,6 +5416,7 @@ def changelog_page():
                   <li><strong>v0.272:</strong> Fixed JavaScript escaping in the strain popover.</li>
                   <li><strong>v0.273:</strong> Only the strain name is clickable; underline styling was removed.</li>
                   <li><strong>v0.274:</strong> Moved temperature and VPD to the fullscreen camera preview header so the image remains unobstructed.</li>
+                  <li><strong>v0.282:</strong> Dashboard now reports when an active irrigation plan cannot calculate the next run because the light schedule is missing.</li>
                 </ul>
                 <h3 class="section-changes">Exhaust and history</h3>
                 <ul>
@@ -6827,6 +6828,7 @@ def dashboard_page(request: Request):
               irTimeLeft: 'Time left',
               irEndAt: 'End time',
               irLastRun: 'Last irrigation',
+              irLightScheduleMissing: 'light schedule missing',
               lastShort: 'Last',
               irAmount: 'Amount per 10s',
               irTimePerTask: 'Time/task',
@@ -6983,6 +6985,7 @@ def dashboard_page(request: Request):
               irTimeLeft: 'Restzeit',
               irEndAt: 'Endzeit',
               irLastRun: 'Letzte Bewässerung',
+              irLightScheduleMissing: 'Licht-Zeitplan fehlt',
               lastShort: 'Letzte',
               irAmount: 'Menge pro 10s',
               irTimePerTask: 'Zeit/Task',
@@ -9249,9 +9252,14 @@ def dashboard_page(request: Request):
 
             await refreshPlanButtonStates();
             if (c === 8) {
-              const nextDt = computeNextIrrigationDate(currentIrPlan, currentIrLastRunDate, d['settings.shelly.light.line']);
+              const lightLine = d['settings.shelly.light.line'];
               const lastRunLabel = formatLastRunDate(currentIrLastRunDate);
-              txt('irNextRun', `${tr('irNextRun')}: ${formatNextRunDate(nextDt)} · ${tr('lastShort')}: ${lastRunLabel}`);
+              if (currentIrPlan?.enabled && parseLightOnMinFromLine(lightLine) === null) {
+                txt('irNextRun', `${tr('irNextRun')}: ${tr('irLightScheduleMissing')} · ${tr('lastShort')}: ${lastRunLabel}`);
+              } else {
+                const nextDt = computeNextIrrigationDate(currentIrPlan, currentIrLastRunDate, lightLine);
+                txt('irNextRun', `${tr('irNextRun')}: ${formatNextRunDate(nextDt)} · ${tr('lastShort')}: ${lastRunLabel}`);
+              }
             } else {
               txt('irNextRun', `${tr('irNextRun')}: -`);
             }
