@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.283
+
+### On-demand Shelly light schedule lookup
+- Added an on-demand direct Shelly `Schedule.List` read for the light Shelly when an active irrigation plan cannot use the controller-provided light schedule line.
+- Parsed the first enabled light ON schedule and used it to calculate the next irrigation run.
+- Cached Shelly schedule reads so the backend does not permanently poll Shelly schedules.
+- Added a dashboard distinction between a missing schedule source and no matching light ON schedule found.
+
 ## v0.282
 
 ### Irrigation plan next-run diagnostics

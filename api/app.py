@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.282"
+APP_VERSION = "v0.283"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -103,6 +103,9 @@ PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_DEVICE = (os.getenv("PUSHOVER_DEVICE") or "").strip()
 POLL_NOTIFY_STATE: dict[int, dict] = {}
 WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
+SHELLY_SCHEDULE_CACHE_SECONDS = int(os.getenv("SHELLY_SCHEDULE_CACHE_SECONDS", "1800"))
+SHELLY_SCHEDULE_CACHE: dict[tuple[int, str, str], dict] = {}
+SHELLY_SCHEDULE_CACHE_LOCK = threading.RLock()
 
 PASSWORD_HASHER = PasswordHasher()
 
@@ -1518,6 +1521,215 @@ def _parse_light_on_minutes(payload: dict) -> int | None:
         return None
 
 
+def _format_minutes_as_hhmm(minutes: int | None) -> str | None:
+    try:
+        m = int(minutes)
+    except Exception:
+        return None
+    if m < 0:
+        return None
+    m = m % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _parse_shelly_timespec_minutes(timespec: object) -> int | None:
+    """Extract a simple HH:MM time from a Shelly Gen2/Gen3 schedule timespec."""
+    s = str(timespec or "").strip()
+    if not s:
+        return None
+
+    # Accept direct time strings as a defensive fallback.
+    m = re.search(r"\b(\d{1,2}):(\d{2})\b", s)
+    if m:
+        h = int(m.group(1))
+        mi = int(m.group(2))
+        if 0 <= h <= 23 and 0 <= mi <= 59:
+            return h * 60 + mi
+
+    parts = s.split()
+    hour = minute = None
+    if len(parts) >= 6:
+        # Shelly cron with seconds: second minute hour day month weekday
+        minute, hour = parts[1], parts[2]
+    elif len(parts) >= 5:
+        # Standard cron: minute hour day month weekday
+        minute, hour = parts[0], parts[1]
+
+    def simple_int_field(v: object) -> int | None:
+        txt = str(v or "").strip()
+        if not re.fullmatch(r"\d{1,2}", txt):
+            return None
+        return int(txt)
+
+    h = simple_int_field(hour)
+    mi = simple_int_field(minute)
+    if h is None or mi is None:
+        return None
+    if h < 0 or h > 23 or mi < 0 or mi > 59:
+        return None
+    return h * 60 + mi
+
+
+def _shelly_schedule_jobs(schedule_payload: object) -> list[dict]:
+    if isinstance(schedule_payload, list):
+        return [j for j in schedule_payload if isinstance(j, dict)]
+    if not isinstance(schedule_payload, dict):
+        return []
+    for key in ("jobs", "schedules", "schedule"):
+        value = schedule_payload.get(key)
+        if isinstance(value, list):
+            return [j for j in value if isinstance(j, dict)]
+    return []
+
+
+def _schedule_job_turns_on(job: dict) -> bool:
+    if not isinstance(job, dict):
+        return False
+    if job.get("enable") is False or job.get("enabled") is False:
+        return False
+    calls = job.get("calls") or []
+    if isinstance(calls, dict):
+        calls = [calls]
+    if not isinstance(calls, list):
+        return False
+
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        method = str(call.get("method") or call.get("name") or "").strip().lower()
+        params = call.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+        turns_on = (
+            params.get("on") is True
+            or str(params.get("on")).strip().lower() in {"true", "1", "yes", "on"}
+            or str(params.get("turn") or "").strip().lower() == "on"
+        )
+        if not turns_on:
+            continue
+        if method.endswith("switch.set") or method.endswith("light.set") or method in {"switch.set", "light.set"}:
+            return True
+    return False
+
+
+def _extract_light_on_schedule_minutes(schedule_payload: object) -> tuple[int | None, dict]:
+    jobs = _shelly_schedule_jobs(schedule_payload)
+    enabled_jobs = [j for j in jobs if j.get("enable") is not False and j.get("enabled") is not False]
+    matches = []
+    for job in enabled_jobs:
+        if not _schedule_job_turns_on(job):
+            continue
+        minutes = _parse_shelly_timespec_minutes(job.get("timespec"))
+        if minutes is None:
+            continue
+        matches.append({"minutes": minutes, "time": _format_minutes_as_hhmm(minutes), "timespec": str(job.get("timespec") or "")})
+
+    matches.sort(key=lambda item: item["minutes"])
+    info = {"jobs_seen": len(jobs), "enabled_jobs_seen": len(enabled_jobs), "matches": matches}
+    return (matches[0]["minutes"] if matches else None), info
+
+
+def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh: bool = False) -> dict:
+    tent = get_tent_by_id(tent_id)
+    if not tent:
+        raise HTTPException(status_code=404, detail="tent not found")
+
+    latest = get_latest_payload_for_tent(tent_id) or {}
+    ip = str((latest or {}).get(f"settings.shelly.{key}.ip") or "").strip()
+    gen = int((latest or {}).get(f"settings.shelly.{key}.gen") or 2)
+
+    # This is still on-demand: if the local state cache lacks the Shelly IP, read the
+    # controller state once for this request and persist it for future normal state use.
+    if not ip:
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                r = client.get(tent["source_url"])
+                r.raise_for_status()
+                fresh = r.json() or {}
+                save_state(tent_id, fresh)
+                latest = fresh
+                ip = str((fresh or {}).get(f"settings.shelly.{key}.ip") or "").strip()
+                gen = int((fresh or {}).get(f"settings.shelly.{key}.gen") or gen or 2)
+        except Exception:
+            pass
+
+    checked_at = datetime.now(timezone.utc).isoformat()
+    if not ip:
+        return {"ok": False, "tent_id": tent_id, "device": key, "checked_at": checked_at, "cached": False, "on_minutes": None, "on_time": None, "line": None, "detail": f"shelly {key} ip missing"}
+    if gen < 2:
+        return {"ok": False, "tent_id": tent_id, "device": key, "checked_at": checked_at, "cached": False, "on_minutes": None, "on_time": None, "line": None, "detail": "Shelly Gen1 schedule read is not supported"}
+
+    base = ip if ip.startswith("http://") or ip.startswith("https://") else f"http://{ip}"
+    cache_key = (tent_id, key, base)
+    now = time.time()
+    with SHELLY_SCHEDULE_CACHE_LOCK:
+        cached = SHELLY_SCHEDULE_CACHE.get(cache_key)
+        if cached and not force_refresh and (now - float(cached.get("ts", 0))) < SHELLY_SCHEDULE_CACHE_SECONDS:
+            data = dict(cached.get("data") or {})
+            data["cached"] = True
+            data["cache_ttl_seconds"] = SHELLY_SCHEDULE_CACHE_SECONDS
+            return data
+
+    user = (tent.get("shelly_main_user") or "").strip()
+    pw = _stored_shelly_main_password(tent)
+    auth_candidates = _shelly_auth_candidates(user, pw)
+    schedule_payload = None
+    last_err = None
+    with httpx.Client(timeout=5.0) as client:
+        for auth in auth_candidates:
+            try:
+                r = client.get(f"{base}/rpc/Schedule.List", auth=auth)
+                r.raise_for_status()
+                schedule_payload = r.json() or {}
+                break
+            except Exception as e:
+                last_err = e
+                try:
+                    r = client.post(f"{base}/rpc/Schedule.List", json={}, auth=auth)
+                    r.raise_for_status()
+                    schedule_payload = r.json() or {}
+                    break
+                except Exception as e2:
+                    last_err = e2
+                    continue
+
+    if schedule_payload is None:
+        data = {"ok": False, "tent_id": tent_id, "device": key, "checked_at": checked_at, "cached": False, "on_minutes": None, "on_time": None, "line": None, "detail": f"Shelly schedule read failed: {last_err}"}
+    else:
+        on_minutes, info = _extract_light_on_schedule_minutes(schedule_payload)
+        on_time = _format_minutes_as_hhmm(on_minutes)
+        data = {
+            "ok": True,
+            "tent_id": tent_id,
+            "device": key,
+            "source": "shelly",
+            "ip": base,
+            "gen": gen,
+            "checked_at": checked_at,
+            "cached": False,
+            "cache_ttl_seconds": SHELLY_SCHEDULE_CACHE_SECONDS,
+            "on_minutes": on_minutes,
+            "on_time": on_time,
+            "line": f"ON {on_time}" if on_time else None,
+            "detail": "found light ON schedule" if on_minutes is not None else "no matching enabled light ON schedule found",
+            **info,
+        }
+
+    with SHELLY_SCHEDULE_CACHE_LOCK:
+        SHELLY_SCHEDULE_CACHE[cache_key] = {"ts": now, "data": dict(data)}
+    return data
+
+
+def _shelly_light_schedule_on_minutes(tent_id: int, tent: dict | None = None, payload: dict | None = None) -> int | None:
+    try:
+        data = _get_shelly_schedule_for_key(tent_id, "light", force_refresh=False)
+        value = data.get("on_minutes") if isinstance(data, dict) else None
+        return int(value) if value is not None else None
+    except Exception as e:
+        print(f"[shelly-schedule] tent #{tent_id} light schedule read failed: {e}")
+        return None
+
+
 def _shelly_auth_candidates(user: str, pw: str):
     user = (user or "").strip()
     if not user:
@@ -1737,6 +1949,10 @@ def _try_run_irrigation_schedule(tent: dict, payload: dict):
             return
     else:
         on_min = _parse_light_on_minutes(payload)
+        if on_min is None:
+            # Fallback to an on-demand direct Shelly schedule read. The result is
+            # cached, so the scheduler does not permanently poll the Shelly.
+            on_min = _shelly_light_schedule_on_minutes(tent["id"], tent, payload)
         if on_min is None:
             return
         now_min = now_local.hour * 60 + now_local.minute
@@ -3114,6 +3330,12 @@ def update_exhaust_vpd_plan(tent_id: int, payload: ExhaustVpdPlanPayload):
                 raise HTTPException(status_code=404, detail="tent not found")
 
     return {"ok": True, "tent_id": tent_id, "plan": {"enabled": enabled, "min_vpd_kpa": min_vpd_kpa, "hysteresis_kpa": hysteresis_kpa}}
+
+
+@app.get("/tents/{tent_id}/shelly/light/schedule")
+def shelly_light_schedule(tent_id: int, refresh: bool = Query(False)):
+    """Read the light Shelly schedule on demand and cache the parsed ON time."""
+    return _get_shelly_schedule_for_key(tent_id, "light", force_refresh=bool(refresh))
 
 
 @app.get("/tents/{tent_id}/latest")
@@ -5417,6 +5639,7 @@ def changelog_page():
                   <li><strong>v0.273:</strong> Only the strain name is clickable; underline styling was removed.</li>
                   <li><strong>v0.274:</strong> Moved temperature and VPD to the fullscreen camera preview header so the image remains unobstructed.</li>
                   <li><strong>v0.282:</strong> Dashboard now reports when an active irrigation plan cannot calculate the next run because the light schedule is missing.</li>
+                  <li><strong>v0.283:</strong> Reads the light Shelly schedule on demand and caches it to calculate the next irrigation run without permanent schedule polling.</li>
                 </ul>
                 <h3 class="section-changes">Exhaust and history</h3>
                 <ul>
@@ -6829,6 +7052,7 @@ def dashboard_page(request: Request):
               irEndAt: 'End time',
               irLastRun: 'Last irrigation',
               irLightScheduleMissing: 'light schedule missing',
+              irLightOnScheduleNotFound: 'no light ON schedule found',
               lastShort: 'Last',
               irAmount: 'Amount per 10s',
               irTimePerTask: 'Time/task',
@@ -6986,6 +7210,7 @@ def dashboard_page(request: Request):
               irEndAt: 'Endzeit',
               irLastRun: 'Letzte Bewässerung',
               irLightScheduleMissing: 'Licht-Zeitplan fehlt',
+              irLightOnScheduleNotFound: 'kein Licht-ON-Schedule gefunden',
               lastShort: 'Letzte',
               irAmount: 'Menge pro 10s',
               irTimePerTask: 'Zeit/Task',
@@ -7026,6 +7251,7 @@ def dashboard_page(request: Request):
           let shellyMainDirectTs = null;
           let currentIrPlan = null;
           let currentIrLastRunDate = null;
+          let lightScheduleCache = { tentId: null, ts: 0, data: null };
           let currentMinVpdMonitoring = null;
           let currentMinVpdOffset = null;
           let currentMinVpdTarget = null;
@@ -7601,14 +7827,12 @@ def dashboard_page(request: Request):
             });
           }
 
-          function computeNextIrrigationDate(plan, lastRunDate, lightLine){
-            if (!plan?.enabled) return null;
-            const onMin = parseLightOnMinFromLine(lightLine);
-            if (onMin === null) return null;
+          function computeNextIrrigationDateFromOnMin(plan, lastRunDate, onMin){
+            if (!plan?.enabled || onMin === null) return null;
             const now = new Date();
             const everyDays = Math.max(1, Number(plan.every_n_days || 1));
             const offset = Math.max(0, Number(plan.offset_after_light_on_min || 0));
-            const runMin = onMin + offset;
+            const runMin = Number(onMin) + offset;
 
             const mkLocal = (d) => {
               const dd = new Date(d);
@@ -7634,6 +7858,28 @@ def dashboard_page(request: Request):
               if (next <= now) next.setDate(next.getDate() + everyDays);
             }
             return next;
+          }
+
+          function computeNextIrrigationDate(plan, lastRunDate, lightLine){
+            return computeNextIrrigationDateFromOnMin(plan, lastRunDate, parseLightOnMinFromLine(lightLine));
+          }
+
+          async function readLightScheduleOnDemand(force=false){
+            if (!currentTentId) return null;
+            const now = Date.now();
+            if (!force && lightScheduleCache.tentId === currentTentId && lightScheduleCache.data && (now - lightScheduleCache.ts) < 10 * 60 * 1000) {
+              return lightScheduleCache.data;
+            }
+            try {
+              const qs = force ? '?refresh=1' : '';
+              const res = await fetch(`/tents/${currentTentId}/shelly/light/schedule${qs}`, { cache: 'no-store' });
+              const data = await res.json().catch(() => null);
+              if (!res.ok && !data) return null;
+              lightScheduleCache = { tentId: currentTentId, ts: now, data };
+              return data;
+            } catch {
+              return null;
+            }
           }
 
           function phaseLabel(phase){
@@ -9254,10 +9500,24 @@ def dashboard_page(request: Request):
             if (c === 8) {
               const lightLine = d['settings.shelly.light.line'];
               const lastRunLabel = formatLastRunDate(currentIrLastRunDate);
-              if (currentIrPlan?.enabled && parseLightOnMinFromLine(lightLine) === null) {
-                txt('irNextRun', `${tr('irNextRun')}: ${tr('irLightScheduleMissing')} · ${tr('lastShort')}: ${lastRunLabel}`);
+              let lightOnMin = parseLightOnMinFromLine(lightLine);
+              let missingScheduleText = tr('irLightScheduleMissing');
+
+              if (currentIrPlan?.enabled && lightOnMin === null) {
+                const sched = await readLightScheduleOnDemand(false);
+                const shellyRawMin = sched?.on_minutes;
+                const shellyOnMin = (shellyRawMin === null || typeof shellyRawMin === 'undefined') ? null : Number(shellyRawMin);
+                if (Number.isFinite(shellyOnMin)) {
+                  lightOnMin = shellyOnMin;
+                } else if (sched?.ok === true) {
+                  missingScheduleText = tr('irLightOnScheduleNotFound');
+                }
+              }
+
+              if (currentIrPlan?.enabled && lightOnMin === null) {
+                txt('irNextRun', `${tr('irNextRun')}: ${missingScheduleText} · ${tr('lastShort')}: ${lastRunLabel}`);
               } else {
-                const nextDt = computeNextIrrigationDate(currentIrPlan, currentIrLastRunDate, lightLine);
+                const nextDt = computeNextIrrigationDateFromOnMin(currentIrPlan, currentIrLastRunDate, lightOnMin);
                 txt('irNextRun', `${tr('irNextRun')}: ${formatNextRunDate(nextDt)} · ${tr('lastShort')}: ${lastRunLabel}`);
               }
             } else {
