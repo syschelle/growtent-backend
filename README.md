@@ -4,7 +4,7 @@ GrowTent Backend is a Docker-based backend and web UI for monitoring and operati
 
 The project is intended for controller firmware/API versions compatible with the `syschelle/GrowTent` controller project. Basic functions such as Docker startup, login, setup, and configuration backup can work without a controller. Dashboard values, relay actions, Shelly data, camera previews, and irrigation actions depend on the endpoints and payload fields delivered by the connected controller.
 
-<img width="1851" height="1038" alt="GrowTent dashboard screenshot" src="https://github.com/user-attachments/assets/8fc28274-daa2-48d6-93c0-1ed54d989c6e" />
+<img width="1658" height="964" alt="image" src="https://github.com/user-attachments/assets/52dfa19d-45f6-48e4-a25a-2a151eecc01d" />
 
 ---
 
