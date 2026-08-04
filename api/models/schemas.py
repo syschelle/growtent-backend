@@ -39,7 +39,7 @@ class TentPayload(StrictModel):
 
 class StrainPayload(StrictModel):
     name: str = Field(min_length=1, max_length=200)
-    genetics: Literal["Sativa", "Indica", "Sativa-hybrid", "Indica-hybrid"]
+    genetics: Literal["Sativa", "Indica", "Sativa-hybrid", "Indica-hybrid", "50/50"]
     thc: str = Field(default="", max_length=100)
     cbd: str = Field(default="", max_length=100)
     effects: str = Field(default="", max_length=2000)
@@ -67,10 +67,13 @@ class StrainPayload(StrictModel):
             return "Sativa"
         if normalized == "indica":
             return "Indica"
+        compact = normalized.replace(" ", "")
         if normalized in {"sativa-hybrid", "sativa hybrid"}:
             return "Sativa-hybrid"
         if normalized in {"indica-hybrid", "indica hybrid"}:
             return "Indica-hybrid"
+        if compact in {"50/50", "50-50", "50:50", "sativa/indica", "indica/sativa"} or normalized in {"balanced", "balanced hybrid", "hybrid 50/50", "50 50"}:
+            return "50/50"
         return value
 
 

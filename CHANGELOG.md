@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.284
+
+### Balanced genetics option
+- Added `50/50` as an allowed genetics value for cannabis strains.
+- Added the `50/50` option to the strain editor genetics dropdown.
+- Normalizes common balanced-hybrid inputs such as `50-50`, `50:50`, `balanced hybrid`, `Sativa/Indica` and `Indica/Sativa` to `50/50`.
+
 ## v0.283
 
 ### On-demand Shelly light schedule lookup

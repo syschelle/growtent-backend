@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.283"
+APP_VERSION = "v0.284"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1110,11 +1110,14 @@ def _normalise_strain(data: dict) -> dict:
 
 def _normalise_genetics(value: str, strain_name: str = "") -> str:
     normalized = str(value or "").strip().casefold()
+    compact = re.sub(r"\s+", "", normalized)
     if normalized in {"sativa-hybrid", "sativa hybrid"}:
         return "Sativa-hybrid"
     if normalized in {"indica-hybrid", "indica hybrid"}:
         return "Indica-hybrid"
-    if "hybrid" in normalized or "50/50" in normalized or "/" in normalized:
+    if compact in {"50/50", "50-50", "50:50", "sativa/indica", "indica/sativa"} or normalized in {"balanced", "balanced hybrid", "hybrid 50/50", "50 50"}:
+        return "50/50"
+    if "hybrid" in normalized or "/" in normalized:
         if "sativa" in normalized and "indica" not in normalized:
             return "Sativa-hybrid"
         if "indica" in normalized and "sativa" not in normalized:
@@ -5628,6 +5631,7 @@ def changelog_page():
                   <li><strong>v0.265:</strong> Simplified the strain CSV to a single-language schema: Name, Genetics, THC, CBD, Effects and Aroma.</li>
                   <li><strong>v0.266:</strong> Added three pot strain assignments per tent in setup; guest users can only view the strain library.</li>
                   <li><strong>v0.267:</strong> Moved the strain library to PostgreSQL. The CSV now serves only as initial seed and export.</li>
+                  <li><strong>v0.284:</strong> Added 50/50 as a balanced genetics option in the strain library.</li>
                 </ul>
                 <h3 class="section-changes">Dashboard and camera stream</h3>
                 <ul>
@@ -5817,6 +5821,7 @@ def strain_library_page(request: Request):
                       <option value="Indica">Indica</option>
                       <option value="Sativa-hybrid">Sativa-hybrid</option>
                       <option value="Indica-hybrid">Indica-hybrid</option>
+                      <option value="50/50">50/50</option>
                     </select>
                   </div>
                   <div class="form-row">
