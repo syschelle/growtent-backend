@@ -67,12 +67,12 @@ class StrainPayload(StrictModel):
             return "Sativa"
         if normalized == "indica":
             return "Indica"
-        compact = normalized.replace(" ", "")
+        compact = normalized.replace(" ", "").replace("_", "-")
         if normalized in {"sativa-hybrid", "sativa hybrid"}:
             return "Sativa-hybrid"
         if normalized in {"indica-hybrid", "indica hybrid"}:
             return "Indica-hybrid"
-        if compact in {"50/50", "50-50", "50:50", "sativa/indica", "indica/sativa"} or normalized in {"balanced", "balanced hybrid", "hybrid 50/50", "50 50"}:
+        if compact in {"50/50", "50-50", "50:50", "5050"} or "balanced" in normalized:
             return "50/50"
         return value
 

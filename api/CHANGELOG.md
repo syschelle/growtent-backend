@@ -2,12 +2,20 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.285
+
+### Sanitized Shelly schedule error responses
+- Sanitized the on-demand Shelly schedule endpoint so internal exception details are not returned to clients.
+- Kept server-side diagnostics while returning a generic `Shelly schedule unavailable` or `Shelly schedule read failed` message to the web UI/API.
+- Addresses the CodeQL `Information exposure through an exception` alert in `api/app.py`.
+
 ## v0.284
 
-### Balanced genetics option
+### 50/50 genetics option for strains
 - Added `50/50` as an allowed genetics value for cannabis strains.
-- Added the `50/50` option to the strain editor genetics dropdown.
-- Normalizes common balanced-hybrid inputs such as `50-50`, `50:50`, `balanced hybrid`, `Sativa/Indica` and `Indica/Sativa` to `50/50`.
+- Added the new value to the strain library editor dropdown.
+- Normalized imported values such as `50-50`, `50:50`, `5050` and `balanced` to `50/50`.
+- Kept existing `Sativa`, `Indica`, `Sativa-hybrid` and `Indica-hybrid` values unchanged.
 
 ## v0.281
 
