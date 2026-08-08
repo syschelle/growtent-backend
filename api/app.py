@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.285"
+APP_VERSION = "v0.286"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -4231,6 +4231,20 @@ def trigger_pump_10s(tent_id: int, pump_idx: int):
         raise HTTPException(status_code=400, detail="pump trigger only available for 8x relay tents")
     if pump_idx not in (6, 7, 8):
         raise HTTPException(status_code=400, detail="pump index must be 6, 7 or 8")
+
+    # The controller exposes pump enable flags as irrigation.pump1..3.enabled.
+    # Relay 6 maps to pump 1, relay 7 to pump 2 and relay 8 to pump 3.
+    # Missing flags stay enabled for backward compatibility with older firmware.
+    pump_number = pump_idx - 5
+    raw_enabled = latest_payload.get(f"irrigation.pump{pump_number}.enabled")
+    if raw_enabled is not None:
+        if isinstance(raw_enabled, str):
+            pump_enabled = raw_enabled.strip().lower() not in ("0", "false", "off", "no", "disabled")
+        else:
+            pump_enabled = bool(raw_enabled)
+        if not pump_enabled:
+            raise HTTPException(status_code=409, detail=f"pump {pump_number} is disabled")
+
     return proxy_post_to_tent_action(tent_id, f"/pump/{pump_idx}/triggerPump10s")
 
 
@@ -5653,6 +5667,7 @@ def changelog_page():
                   <li><strong>v0.274:</strong> Moved temperature and VPD to the fullscreen camera preview header so the image remains unobstructed.</li>
                   <li><strong>v0.282:</strong> Dashboard now reports when an active irrigation plan cannot calculate the next run because the light schedule is missing.</li>
                   <li><strong>v0.283:</strong> Reads the light Shelly schedule on demand and caches it to calculate the next irrigation run without permanent schedule polling.</li>
+                  <li><strong>v0.286:</strong> Uses the controller pump-enable flags to disable and gray out unavailable irrigation pump controls.</li>
                 </ul>
                 <h3 class="section-changes">Exhaust and history</h3>
                 <ul>
@@ -6593,6 +6608,18 @@ def dashboard_page(request: Request):
           }
           .relay:hover { filter:brightness(1.06); box-shadow:0 4px 14px rgba(2,6,23,.28); }
           .relay:active { transform:translateY(1px) scale(.99); }
+          .relay.pump-disabled,
+          .relay.pump-disabled:hover,
+          .relay.pump-disabled:active {
+            background:linear-gradient(180deg, rgba(100,116,139,.28), rgba(71,85,105,.22));
+            color:var(--muted);
+            border-color:rgba(148,163,184,.28);
+            cursor:not-allowed;
+            opacity:.68;
+            box-shadow:none;
+            filter:none;
+            transform:none;
+          }
           .on { background:linear-gradient(180deg, rgba(34,197,94,.35), rgba(22,163,74,.28)); color:var(--text); }
           .off { background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); color:var(--text); }
           .status-pill { display:inline-flex; align-items:center; margin-left:8px; padding:2px 6px; border-radius:999px; vertical-align:middle; }
@@ -7086,6 +7113,7 @@ def dashboard_page(request: Request):
               toggle: 'Toggle',
               actionFailed: 'Action failed',
               relayToggle: 'Toggle relay',
+              disabled: 'Disabled',
               startWatering: 'Start watering',
               pingTank: 'Ping tank',
               irrigationPlan: 'Irrigation plan',
@@ -7244,6 +7272,7 @@ def dashboard_page(request: Request):
               toggle: 'Umschalten',
               actionFailed: 'Aktion fehlgeschlagen',
               relayToggle: 'Relais schalten',
+              disabled: 'Deaktiviert',
               startWatering: 'Bewässerung starten',
               pingTank: 'Tank anpingen',
               irrigationPlan: 'Bewässerungsplan',
@@ -8113,6 +8142,18 @@ def dashboard_page(request: Request):
 
           async function triggerPump10s(idx){
             await runPostAction(`/tents/${currentTentId}/actions/pump/${idx}/trigger10s`);
+          }
+
+          function isIrrigationPumpEnabled(payload, relayIdx){
+            const pumpNumber = Number(relayIdx) - 5;
+            if (pumpNumber < 1 || pumpNumber > 3) return true;
+            const key = `irrigation.pump${pumpNumber}.enabled`;
+            const raw = payload?.[key];
+            if (raw === undefined || raw === null || raw === '') return true;
+            if (typeof raw === 'string') {
+              return !['0', 'false', 'off', 'no', 'disabled'].includes(raw.trim().toLowerCase());
+            }
+            return !(raw === false || raw === 0);
           }
 
           async function pingTank(){
@@ -9479,12 +9520,19 @@ def dashboard_page(request: Request):
                 const rawState = d[`relays[${i}].state`];
                 const st = (rawState === true || rawState === 1 || rawState === '1' || String(rawState).toLowerCase() === 'true');
                 const name = d[`relays[${i}].name`] || `${tr('relay')} ${relayIdx}`;
+                const pumpEnabled = isIrrigationPumpEnabled(d, relayIdx);
                 const btn = document.createElement('button');
-                btn.className = 'relay ' + (st ? 'on' : 'off');
-                btn.textContent = `${name}: ${st ? tr('on') : tr('off')}`;
-                btn.addEventListener('click', async () => {
-                  await triggerPump10s(relayIdx);
-                });
+                btn.className = 'relay ' + (pumpEnabled ? (st ? 'on' : 'off') : 'pump-disabled');
+                btn.disabled = !pumpEnabled;
+                btn.setAttribute('aria-disabled', pumpEnabled ? 'false' : 'true');
+                btn.textContent = pumpEnabled
+                  ? `${name}: ${st ? tr('on') : tr('off')}`
+                  : `${name}: ${tr('disabled')}`;
+                if (pumpEnabled) {
+                  btn.addEventListener('click', async () => {
+                    await triggerPump10s(relayIdx);
+                  });
+                }
                 relExtra.appendChild(btn);
               }
             }

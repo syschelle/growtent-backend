@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.286
+
+### Disabled irrigation pump handling
+- Evaluates `irrigation.pump1.enabled`, `irrigation.pump2.enabled` and `irrigation.pump3.enabled` from the latest controller state.
+- Maps pump 1/2/3 to relay 6/7/8 and renders disabled pumps gray and non-clickable in the dashboard.
+- Displays `Disabled` / `Deaktiviert` instead of an ON/OFF state for disabled pumps.
+- Rejects direct backend 10-second trigger requests for disabled pumps while remaining backward compatible when the enable flags are absent.
+
 ## v0.285
 
 ### Sanitized Shelly schedule error responses
