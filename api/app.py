@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.286"
+APP_VERSION = "v0.287"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1941,10 +1941,12 @@ def _try_run_irrigation_schedule(tent: dict, payload: dict):
     now_local = datetime.now()
     today = now_local.date()
 
-    # Ensure this is an 8x relay setup and not currently watering
+    # Irrigation is supported by both controller layouts:
+    # - legacy 8-relay boards: pumps on relays 6..8
+    # - ESP32-S3-Relay-6Ch: pumps on relays 1..3
     relay_count = int((payload or {}).get("settings.active_relay_count") or 0)
     runs_left = int((payload or {}).get("irrigation.runsLeft") or 0)
-    if relay_count != 8 or runs_left > 0:
+    if relay_count not in (6, 8) or runs_left > 0:
         return
 
     # Prefer actual light-on timestamp from today's history; fallback to configured ON schedule.
@@ -4194,10 +4196,43 @@ def reset_shelly_energy(tent_id: int):
     return proxy_post_to_tent_action(tent_id, "/api/shelly/reset-energy")
 
 
+def _pump_number_for_relay(active_count: int, relay_idx: int):
+    """Return irrigation pump number for a relay, or None for a normal relay."""
+    if active_count == 8 and relay_idx in (6, 7, 8):
+        return relay_idx - 5
+    if active_count == 6 and relay_idx in (1, 2, 3):
+        return relay_idx
+    return None
+
+
+def _is_irrigation_pump_enabled(payload: dict, pump_number: int) -> bool:
+    """Read irrigation.pumpX.enabled; missing flags stay enabled for older firmware."""
+    raw_enabled = (payload or {}).get(f"irrigation.pump{pump_number}.enabled")
+    if raw_enabled is None or raw_enabled == "":
+        return True
+    if isinstance(raw_enabled, str):
+        return raw_enabled.strip().lower() not in ("0", "false", "off", "no", "disabled")
+    return bool(raw_enabled)
+
+
 @app.post("/tents/{tent_id}/actions/relay/{relay_idx}/toggle")
 def toggle_relay(tent_id: int, relay_idx: int):
-    if relay_idx < 1 or relay_idx > 5:
-        raise HTTPException(status_code=400, detail="relay index must be 1..5")
+    latest_payload = get_latest_payload_for_tent(tent_id) or {}
+    active_count = int(latest_payload.get("settings.active_relay_count") or 0)
+
+    max_relay = active_count if active_count in (6, 8) else 5
+    if relay_idx < 1 or relay_idx > max_relay:
+        raise HTTPException(status_code=400, detail=f"relay index must be 1..{max_relay}")
+
+    pump_number = _pump_number_for_relay(active_count, relay_idx)
+    if pump_number is not None:
+        if not _is_irrigation_pump_enabled(latest_payload, pump_number):
+            raise HTTPException(status_code=409, detail=f"pump {pump_number} is disabled")
+        raise HTTPException(
+            status_code=400,
+            detail=f"relay {relay_idx} is irrigation pump {pump_number}; use the timed pump action",
+        )
+
     result = proxy_post_to_tent_action(tent_id, f"/relay/{relay_idx}/toggle")
     result["relay"] = relay_idx
     return result
@@ -4207,8 +4242,8 @@ def toggle_relay(tent_id: int, relay_idx: int):
 def start_watering(tent_id: int):
     latest_payload = get_latest_payload_for_tent(tent_id) or {}
     active_count = int(latest_payload.get("settings.active_relay_count") or 0)
-    if active_count != 8:
-        raise HTTPException(status_code=400, detail="startWatering only available for 8x relay tents")
+    if active_count not in (6, 8):
+        raise HTTPException(status_code=400, detail="startWatering only available for supported irrigation tents")
 
     res = proxy_post_to_tent_action(tent_id, "/startWatering")
     if res.get("ok"):
@@ -4227,23 +4262,18 @@ def start_watering(tent_id: int):
 def trigger_pump_10s(tent_id: int, pump_idx: int):
     latest_payload = get_latest_payload_for_tent(tent_id) or {}
     active_count = int(latest_payload.get("settings.active_relay_count") or 0)
-    if active_count != 8:
-        raise HTTPException(status_code=400, detail="pump trigger only available for 8x relay tents")
-    if pump_idx not in (6, 7, 8):
-        raise HTTPException(status_code=400, detail="pump index must be 6, 7 or 8")
-
-    # The controller exposes pump enable flags as irrigation.pump1..3.enabled.
-    # Relay 6 maps to pump 1, relay 7 to pump 2 and relay 8 to pump 3.
-    # Missing flags stay enabled for backward compatibility with older firmware.
-    pump_number = pump_idx - 5
-    raw_enabled = latest_payload.get(f"irrigation.pump{pump_number}.enabled")
-    if raw_enabled is not None:
-        if isinstance(raw_enabled, str):
-            pump_enabled = raw_enabled.strip().lower() not in ("0", "false", "off", "no", "disabled")
+    pump_number = _pump_number_for_relay(active_count, pump_idx)
+    if pump_number is None:
+        if active_count == 8:
+            detail = "pump relay index must be 6, 7 or 8 for an 8-relay controller"
+        elif active_count == 6:
+            detail = "pump relay index must be 1, 2 or 3 for an ESP32-S3-Relay-6Ch controller"
         else:
-            pump_enabled = bool(raw_enabled)
-        if not pump_enabled:
-            raise HTTPException(status_code=409, detail=f"pump {pump_number} is disabled")
+            detail = "pump trigger is not available for this relay layout"
+        raise HTTPException(status_code=400, detail=detail)
+
+    if not _is_irrigation_pump_enabled(latest_payload, pump_number):
+        raise HTTPException(status_code=409, detail=f"pump {pump_number} is disabled")
 
     return proxy_post_to_tent_action(tent_id, f"/pump/{pump_idx}/triggerPump10s")
 
@@ -5668,6 +5698,7 @@ def changelog_page():
                   <li><strong>v0.282:</strong> Dashboard now reports when an active irrigation plan cannot calculate the next run because the light schedule is missing.</li>
                   <li><strong>v0.283:</strong> Reads the light Shelly schedule on demand and caches it to calculate the next irrigation run without permanent schedule polling.</li>
                   <li><strong>v0.286:</strong> Uses the controller pump-enable flags to disable and gray out unavailable irrigation pump controls.</li>
+                  <li><strong>v0.287:</strong> Makes irrigation pump mapping board-aware: relays 6-8 on legacy 8-relay controllers and relays 1-3 on ESP32-S3-Relay-6Ch controllers.</li>
                 </ul>
                 <h3 class="section-changes">Exhaust and history</h3>
                 <ul>
@@ -6801,7 +6832,7 @@ def dashboard_page(request: Request):
         </div>
 
         <div class=\"card\" id=\"relaysExtraCard\" style=\"display:none;\">
-          <div class=\"label\" id=\"lblRelaysExtra\">Irrigation relays 6-8</div>
+          <div class=\"label\" id=\"lblRelaysExtra\">Irrigation relays</div>
           <div class=\"row\" id=\"relaysExtra\"></div>
         </div>
 
@@ -7003,7 +7034,7 @@ def dashboard_page(request: Request):
               target: 'Target',
               average: 'Average',
               relays: 'Relays',
-              relaysExtra: 'Irrigation relays 6-8',
+              relaysExtra: 'Irrigation relays',
               shelly: 'Shelly Devices',
               tempHistory: 'Temperature History',
               humHistory: 'Humidity History',
@@ -7162,7 +7193,7 @@ def dashboard_page(request: Request):
               target: 'Sollwert',
               average: 'Durchschnitt',
               relays: 'Relais',
-              relaysExtra: 'Bewässerungsrelais 6-8',
+              relaysExtra: 'Bewässerungsrelais',
               shelly: 'Shelly-Geräte',
               tempHistory: 'Temperaturverlauf',
               humHistory: 'Luftfeuchteverlauf',
@@ -8144,9 +8175,17 @@ def dashboard_page(request: Request):
             await runPostAction(`/tents/${currentTentId}/actions/pump/${idx}/trigger10s`);
           }
 
+          function irrigationPumpNumberForRelay(payload, relayIdx){
+            const activeCount = Number(payload?.['settings.active_relay_count']);
+            const relay = Number(relayIdx);
+            if (activeCount === 8 && relay >= 6 && relay <= 8) return relay - 5;
+            if (activeCount === 6 && relay >= 1 && relay <= 3) return relay;
+            return null;
+          }
+
           function isIrrigationPumpEnabled(payload, relayIdx){
-            const pumpNumber = Number(relayIdx) - 5;
-            if (pumpNumber < 1 || pumpNumber > 3) return true;
+            const pumpNumber = irrigationPumpNumberForRelay(payload, relayIdx);
+            if (!pumpNumber) return true;
             const key = `irrigation.pump${pumpNumber}.enabled`;
             const raw = payload?.[key];
             if (raw === undefined || raw === null || raw === '') return true;
@@ -9445,21 +9484,30 @@ def dashboard_page(request: Request):
 
             const rawCount = Number(d['settings.active_relay_count']);
             const c = Number.isFinite(rawCount) ? rawCount : 8;
+            const irrigationLayout = (c === 6 || c === 8);
+            const pumpRelayIndices = c === 8 ? [6, 7, 8] : (c === 6 ? [1, 2, 3] : []);
+            const normalRelayIndices = c === 8
+              ? [1, 2, 3, 4, 5]
+              : (c === 6 ? [4, 5, 6] : Array.from({length: Math.min(Math.max(c, 0), 5)}, (_, i) => i + 1));
             const tankCurrentCard = document.getElementById('tankCurrentCard');
             if (tankCurrentCard) tankCurrentCard.style.display = (c === 8) ? 'block' : 'none';
             const rel = document.getElementById('relays');
             const relExtra = document.getElementById('relaysExtra');
             const relaysExtraCard = document.getElementById('relaysExtraCard');
+            const lblRelaysExtra = document.getElementById('lblRelaysExtra');
             const irrigationCardActions = document.getElementById('irrigationCardActions');
             const tankCurrentActions = document.getElementById('tankCurrentActions');
             const irrigationCard = document.getElementById('irrigationCard');
             rel.innerHTML = '';
             if (relExtra) relExtra.innerHTML = '';
-            if (relaysExtraCard) relaysExtraCard.style.display = (c === 8) ? 'block' : 'none';
+            if (relaysExtraCard) relaysExtraCard.style.display = pumpRelayIndices.length ? 'block' : 'none';
+            if (lblRelaysExtra && pumpRelayIndices.length) {
+              lblRelaysExtra.textContent = `${tr('relaysExtra')} ${pumpRelayIndices[0]}-${pumpRelayIndices[pumpRelayIndices.length - 1]}`;
+            }
             if (irrigationCardActions) irrigationCardActions.innerHTML = '';
             if (tankCurrentActions) tankCurrentActions.innerHTML = '';
 
-            if (irrigationCard) irrigationCard.style.display = (c === 8) ? 'block' : 'none';
+            if (irrigationCard) irrigationCard.style.display = irrigationLayout ? 'block' : 'none';
             const minVpdInfoBtn = document.getElementById('openMinVpdInfoBtn');
             if (minVpdInfoBtn) {
               minVpdInfoBtn.style.display = (c === 8) ? 'inline-block' : 'none';
@@ -9467,7 +9515,7 @@ def dashboard_page(request: Request):
               const inactiveStyle = 'linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28))';
               minVpdInfoBtn.style.background = (currentMinVpdMonitoring === true) ? activeStyle : inactiveStyle;
             }
-            if (c === 8) {
+            if (irrigationLayout) {
               const runsLeft = firstNum(d, ['irrigation.runsLeft']);
               const timeLeft = d['irrigation.timeLeft'];
               const amount = firstNum(d, ['irrigation.amount']);
@@ -9497,10 +9545,10 @@ def dashboard_page(request: Request):
               if (irActiveBadge) irActiveBadge.style.display = 'none';
             }
 
-            // Combined status + toggle in one line for relay 1..5 only.
-            const relayControlCount = Math.min(Math.max(c, 0), 5);
-            for (let i = 0; i < relayControlCount; i++) {
-              const relayIdx = i + 1;
+            // Normal relays depend on the controller layout. On the 6-channel S3 board,
+            // relays 1..3 are irrigation pumps and relays 4..6 are normal relays.
+            for (const relayIdx of normalRelayIndices) {
+              const i = relayIdx - 1;
               const rawState = d[`relays[${i}].state`];
               const st = (rawState === true || rawState === 1 || rawState === '1' || String(rawState).toLowerCase() === 'true');
               const name = d[`relays[${i}].name`] || `${tr('relay')} ${relayIdx}`;
@@ -9513,10 +9561,12 @@ def dashboard_page(request: Request):
               rel.appendChild(btn);
             }
 
-            // Extra relays 6..8 for 8x boards in a separate card with same layout.
-            if (c === 8 && relExtra) {
-              for (let i = 5; i < 8; i++) {
-                const relayIdx = i + 1;
+            // Irrigation pumps are relays 6..8 on legacy 8-relay boards and relays 1..3
+            // on ESP32-S3-Relay-6Ch boards. The controller pump-enable flags always use
+            // pump numbers 1..3, independent of the physical relay number.
+            if (pumpRelayIndices.length && relExtra) {
+              for (const relayIdx of pumpRelayIndices) {
+                const i = relayIdx - 1;
                 const rawState = d[`relays[${i}].state`];
                 const st = (rawState === true || rawState === 1 || rawState === '1' || String(rawState).toLowerCase() === 'true');
                 const name = d[`relays[${i}].name`] || `${tr('relay')} ${relayIdx}`;
@@ -9537,8 +9587,8 @@ def dashboard_page(request: Request):
               }
             }
 
-            // Irrigation actions only for 8x relay setup.
-            if (c === 8) {
+            // Irrigation actions are available for both supported irrigation layouts.
+            if (irrigationLayout) {
               const startBtn = document.createElement('button');
               startBtn.textContent = tr('startWatering');
               startBtn.addEventListener('click', async () => {
@@ -9554,12 +9604,14 @@ def dashboard_page(request: Request):
               });
               if (irrigationCardActions) irrigationCardActions.appendChild(planBtn);
 
-              const pingBtn = document.createElement('button');
-              pingBtn.textContent = tr('pingTank');
-              pingBtn.addEventListener('click', async () => {
-                await pingTank();
-              });
-              if (tankCurrentActions) tankCurrentActions.appendChild(pingBtn);
+              if (c === 8) {
+                const pingBtn = document.createElement('button');
+                pingBtn.textContent = tr('pingTank');
+                pingBtn.addEventListener('click', async () => {
+                  await pingTank();
+                });
+                if (tankCurrentActions) tankCurrentActions.appendChild(pingBtn);
+              }
             }
 
             await refreshPlanButtonStates();

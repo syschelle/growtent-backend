@@ -189,7 +189,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.286
+ghcr.io/syschelle/growtent-backend-api:v0.287
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -281,8 +281,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.286 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.286 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.287 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.287 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -503,6 +503,8 @@ POST /tents/{tent_id}/actions/startWatering
 POST /tents/{tent_id}/actions/pump/{pump_idx}/trigger10s
 POST /tents/{tent_id}/actions/pingTank
 ```
+
+For irrigation pump actions, `pump_idx` is the physical relay index used by the controller. Legacy 8-relay controllers use relays 6/7/8 for pumps 1/2/3, while ESP32-S3-Relay-6Ch controllers use relays 1/2/3. The `irrigation.pump1.enabled` through `irrigation.pump3.enabled` state flags always refer to the logical pump number and are independent of the physical relay number.
 
 If a controller is unreachable, the dashboard should continue to serve the UI but may display stale/offline status for the affected tent.
 
@@ -847,7 +849,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.286 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.287 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

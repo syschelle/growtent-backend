@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.287
+
+### Board-aware irrigation pump mapping
+- Supports both irrigation relay layouts: pump 1/2/3 on relays 6/7/8 for legacy 8-relay controllers and on relays 1/2/3 for ESP32-S3-Relay-6Ch controllers.
+- Evaluates `irrigation.pump1.enabled`, `irrigation.pump2.enabled` and `irrigation.pump3.enabled` independently of the physical relay numbering.
+- Renders disabled pumps gray and non-clickable on both supported board layouts.
+- Prevents bypassing pump restrictions through the generic relay toggle endpoint on 6-channel controllers.
+- Shows relays 4/5/6 as normal relay controls on ESP32-S3-Relay-6Ch controllers.
+- Enables irrigation plan/start controls for both supported irrigation layouts while keeping tank ping specific to the legacy 8-relay layout.
+
 ## v0.286
 
 ### Disabled irrigation pump handling
