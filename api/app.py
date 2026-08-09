@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.288"
+APP_VERSION = "v0.289"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -49,8 +49,8 @@ INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 FAVICON_LINKS = (
-    '<link rel="icon" type="image/svg+xml" href="/favicon.svg" />\n'
-    '    <link rel="shortcut icon" href="/favicon.ico" />'
+    f'<link rel="icon" type="image/svg+xml" href="/favicon.svg?v={APP_VERSION}" />\n'
+    f'    <link rel="shortcut icon" href="/favicon.ico?v={APP_VERSION}" />'
 )
 
 SESSIONS: dict[str, dict] = {}
@@ -212,12 +212,18 @@ def favicon_svg():
   <path d='M48 42c0-10-7-18-16-20 0 11 7 20 16 20z' fill='url(#g)' opacity='0.9'/>
   <circle cx='32' cy='26' r='4' fill='#86efac'/>
 </svg>"""
-    return HTMLResponse(content=svg, media_type="image/svg+xml")
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon_ico():
-    return RedirectResponse(url="/favicon.svg", status_code=302)
+    response = RedirectResponse(url=f"/favicon.svg?v={APP_VERSION}", status_code=302)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.get("/auth/login", response_class=HTMLResponse)
@@ -5730,6 +5736,7 @@ def changelog_page():
                   <li><strong>v0.280:</strong> Switched configured Shelly devices directly from the backend to avoid controller action proxy timeouts.</li>
                   <li><strong>v0.281:</strong> Bumped the release version and updated deployment metadata for the direct Shelly toggle hotfix.</li>
                   <li><strong>v0.288:</strong> Added browser tab favicon links and an ico compatibility route.</li>
+                  <li><strong>v0.289:</strong> Versioned favicon URLs and disabled favicon response caching so browser tabs refresh the icon reliably.</li>
                 </ul>
               </section>
             </div>

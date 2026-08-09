@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.289
+
+### Favicon cache refresh
+- Versioned the browser favicon links with the application version.
+- Added no-cache headers to the SVG favicon response and ico redirect so browser tabs refresh the icon reliably.
+- Bumped the application version to `v0.289`.
+
 ## v0.288
 
 ### Browser tab favicon
