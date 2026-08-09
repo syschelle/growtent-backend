@@ -41,13 +41,17 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.287"
+APP_VERSION = "v0.288"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
+FAVICON_LINKS = (
+    '<link rel="icon" type="image/svg+xml" href="/favicon.svg" />\n'
+    '    <link rel="shortcut icon" href="/favicon.ico" />'
+)
 
 SESSIONS: dict[str, dict] = {}
 TWOFA_ENROLL: dict[str, dict] = {}
@@ -211,6 +215,11 @@ def favicon_svg():
     return HTMLResponse(content=svg, media_type="image/svg+xml")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_ico():
+    return RedirectResponse(url="/favicon.svg", status_code=302)
+
+
 @app.get("/auth/login", response_class=HTMLResponse)
 def auth_login_page():
     try:
@@ -220,6 +229,7 @@ def auth_login_page():
         pass
     return """
     <html><head><title>CanopyOps Login</title><meta name="viewport" content="width=device-width, initial-scale=1" />
+    __FAVICON_LINKS__
     <style>
       :root{--bg:#0f172a;--text:#e2e8f0;--card:#1e293b;--input:#0b1220;--inputBorder:rgba(148,163,184,.25);--btn:#2563eb}
       :root[data-theme='light']{--bg:#eef2f5;--text:#0f172a;--card:#f8fafc;--input:#ffffff;--inputBorder:rgba(51,65,85,.22);--btn:#1d4ed8}
@@ -249,7 +259,7 @@ def auth_login_page():
       [u,p].forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();b1.click();}}));
       [c,r].forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();b2.click();}}));
     </script></body></html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 class LoginPayload(BaseModel):
@@ -741,6 +751,7 @@ def install_page():
         _not_installable()
     return f"""
     <html><head><title>CanopyOps Initial Setup</title><meta name="viewport" content="width=device-width, initial-scale=1" />
+    {FAVICON_LINKS}
     <style>
       :root{{--bg:#0f172a;--text:#e2e8f0;--card:#1e293b;--muted:#94a3b8;--input:#0b1220;--inputBorder:rgba(148,163,184,.25);--btn:#2563eb;--err:#fca5a5;--ok:#86efac}}
       :root[data-theme='light']{{--bg:#eef2f5;--text:#0f172a;--card:#f8fafc;--muted:#64748b;--input:#ffffff;--inputBorder:rgba(51,65,85,.22);--btn:#1d4ed8;--err:#b91c1c;--ok:#15803d}}
@@ -904,7 +915,7 @@ def require_admin(request: Request):
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt_prefixes = ("/health", "/favicon.svg", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/", "/install", "/api/install")
+    exempt_prefixes = ("/health", "/favicon.svg", "/favicon.ico", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/", "/install", "/api/install")
     if path.startswith(exempt_prefixes):
         return await call_next(request)
 
@@ -2859,6 +2870,7 @@ def poll_errors_page(request: Request):
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Polling-Fehler (Live)</title>
+    __FAVICON_LINKS__
     <style>
       :root { color-scheme: dark; }
       body { font-family: Arial, sans-serif; background:#0f172a; color:#e2e8f0; margin:0; padding:16px; }
@@ -2917,7 +2929,7 @@ def poll_errors_page(request: Request):
     </script>
   </body>
 </html>
-        """.replace("__TENT_FILTER__", tent_q_js)
+        """.replace("__TENT_FILTER__", tent_q_js).replace("__FAVICON_LINKS__", FAVICON_LINKS)
     )
 
 
@@ -4296,6 +4308,7 @@ def setup_page(request: Request):
       <head>
         <title>GrowTent Setup</title>
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+        __FAVICON_LINKS__
         <style>
           :root {
             --bg:#0f172a;
@@ -5556,7 +5569,7 @@ def setup_page(request: Request):
         </script>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 @app.get("/download/project.zip")
@@ -5716,6 +5729,7 @@ def changelog_page():
                   <li><strong>v0.279:</strong> Normalized Shelly toggle responses so proxied devices report usable state data.</li>
                   <li><strong>v0.280:</strong> Switched configured Shelly devices directly from the backend to avoid controller action proxy timeouts.</li>
                   <li><strong>v0.281:</strong> Bumped the release version and updated deployment metadata for the direct Shelly toggle hotfix.</li>
+                  <li><strong>v0.288:</strong> Added browser tab favicon links and an ico compatibility route.</li>
                 </ul>
               </section>
             </div>
@@ -5738,8 +5752,7 @@ def changelog_page():
       <head>
         <title>GrowTent About</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        {FAVICON_LINKS}
         <style>
           :root {{ --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.15); }}
           :root[data-theme='light'] {{ --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); }}
@@ -5811,6 +5824,7 @@ def strain_library_page(request: Request):
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>CanopyOps Strains</title>
+        __FAVICON_LINKS__
         <style>
           :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.18); --accent:#3b82f6; --danger:#ef4444; }
           :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); --accent:#2563eb; --danger:#dc2626; }
@@ -6177,7 +6191,7 @@ def strain_library_page(request: Request):
         </script>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 @app.get("/grow-guide", response_class=HTMLResponse)
@@ -6190,6 +6204,7 @@ def grow_guide_page(request: Request):
       <head>
         <title>Grow-Guide</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        __FAVICON_LINKS__
         <style>
           :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --grid:rgba(148,163,184,.15); }
           :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --grid:rgba(51,65,85,.18); }
@@ -6222,7 +6237,7 @@ def grow_guide_page(request: Request):
         </main>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 @app.get("/app", response_class=HTMLResponse)
 def app_shell_page():
     return """
@@ -6230,8 +6245,7 @@ def app_shell_page():
       <head>
         <title>CanopyOps</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        __FAVICON_LINKS__
         <style>
           :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.15); }
           :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); }
@@ -6464,7 +6478,7 @@ def app_shell_page():
         </script>
       </body>
     </html>
-    """.replace("__APP_VERSION__", APP_VERSION)
+    """.replace("__APP_VERSION__", APP_VERSION).replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -6476,6 +6490,7 @@ def dashboard_page(request: Request):
       <head>
         <title>GrowTent Dashboard</title>
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+        __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
         <style>
           :root {
@@ -10035,4 +10050,4 @@ def dashboard_page(request: Request):
         </script>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)

@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.288
+
+### Browser tab favicon
+- Added explicit favicon links to the web UI pages.
+- Added `/favicon.ico` as a compatibility redirect to the existing SVG favicon.
+- Bumped the application version to `v0.288`.
+
 ## v0.287
 
 ### Board-aware irrigation pump mapping

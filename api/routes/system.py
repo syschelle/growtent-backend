@@ -16,6 +16,11 @@ def favicon_svg():
     return legacy.favicon_svg()
 
 
+@router.get('/favicon.ico', include_in_schema=False)
+def favicon_ico():
+    return legacy.favicon_ico()
+
+
 @router.get('/health')
 def health():
     return legacy.health()
