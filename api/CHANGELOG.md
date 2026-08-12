@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.293
+
+### Persistent guest pot strain clicks
+- Keeps dashboard pot strain buttons enabled when the 30-second guest refresh reapplies read-only button restrictions.
+- Prevents clickable pot strain names from becoming disabled after the first refresh cycle.
+- Bumped the application version to `v0.293`.
+
 ## v0.292
 
 ### UI preferences route restore
