@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.292
+
+### UI preferences route restore
+- Adds the missing modular `GET /ui/preferences` and `POST /ui/preferences` route forwarding.
+- Removes the 404 browser-console errors from guest display mode preference loading/saving.
+- Bumped the application version to `v0.292`.
+
 ## v0.291
 
 ### Repeatable pot strain clicks

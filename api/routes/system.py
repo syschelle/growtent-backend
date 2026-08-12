@@ -91,6 +91,16 @@ def api_export(tent_id: int, range: str = '24h'):
     return legacy.export_history_csv(tent_id, range)
 
 
+@router.get('/ui/preferences')
+def ui_preferences_get(request: Request):
+    return legacy.get_ui_preferences(request)
+
+
+@router.post('/ui/preferences')
+def ui_preferences_save(payload: legacy.UiPreferencesPayload, request: Request):
+    return legacy.save_ui_preferences(payload, request)
+
+
 @router.get('/api/history')
 def api_history(
     deviceId: str | None = None,

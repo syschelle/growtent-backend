@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.291"
+APP_VERSION = "v0.292"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5739,6 +5739,7 @@ def changelog_page():
                   <li><strong>v0.289:</strong> Versioned favicon URLs and disabled favicon response caching so browser tabs refresh the icon reliably.</li>
                   <li><strong>v0.290:</strong> Guest users can open pot strain detail popovers, and the default library includes Cereal Milk, Green Poison and Oreoz.</li>
                   <li><strong>v0.291:</strong> Strain detail popovers no longer block repeated clicks on dashboard pot strain links.</li>
+                  <li><strong>v0.292:</strong> Restored the modular `/ui/preferences` routes used by guest display mode.</li>
                 </ul>
               </section>
             </div>
