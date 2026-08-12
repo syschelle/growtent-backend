@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.291
+
+### Repeatable pot strain clicks
+- Prevents the dashboard strain detail popover from intercepting pointer events after it opens.
+- Keeps guest users able to click pot strain links repeatedly without needing to dismiss the popover first.
+- Bumped the application version to `v0.291`.
+
 ## v0.290
 
 ### Guest pot strain details
