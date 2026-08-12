@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.290
+
+### Guest pot strain details
+- Keeps dashboard pot strain links active for guest users so they can open the strain detail popover.
+- Adds Cereal Milk, Green Poison and Oreoz to the bundled default strain library.
+- Bumped the application version to `v0.290`.
+
 ## v0.289
 
 ### Favicon cache refresh
