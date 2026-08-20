@@ -42,7 +42,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.296"
+APP_VERSION = "v0.297"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5946,6 +5946,7 @@ def changelog_page():
                   <li><strong>v0.294:</strong> Added an optional Luftdaten-compatible live air sensor integration with cached backend polling and a compact header widget.</li>
                   <li><strong>v0.295:</strong> Moved the compact air sensor widget behind the CanopyOps application name.</li>
                   <li><strong>v0.296:</strong> Shows the Shelly light schedule as a light/dark cycle in the grow phase tile.</li>
+                  <li><strong>v0.297:</strong> Optimized the air sensor header widget for mobile view.</li>
                 </ul>
               </section>
             </div>
@@ -6501,6 +6502,7 @@ def app_shell_page():
           :root[data-theme='light'] .air-widget.offline { color:#7f1d1d; }
           .air-widget-symbol { color:#38bdf8; font-weight:800; }
           .air-widget-values { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+          .air-item { white-space:nowrap; }
           .muted { color:var(--muted); font-size:.84rem; margin-bottom:10px; }
           .header-btn { border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); border-radius:10px; padding:4px 8px; cursor:pointer; box-shadow:0 2px 10px rgba(2,6,23,.22); }
           .guest-badge-center { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); padding:4px 10px; border-radius:999px; border:1px solid rgba(239,68,68,.55); background:rgba(220,38,38,.22); color:#fecaca; font-size:.82rem; font-weight:700; white-space:nowrap; }
@@ -6517,6 +6519,15 @@ def app_shell_page():
               border-right:none;
               border-bottom:1px solid var(--grid);
             }
+          }
+          @media (max-width:640px){
+            .header { padding:0 8px; gap:6px; }
+            .header-left { gap:6px; min-width:0; flex:1 1 auto; }
+            .header-left strong { gap:6px !important; flex:0 0 auto; }
+            .air-widget { max-width:150px; padding:2px 5px; gap:3px; border-radius:7px; font-size:.62rem; line-height:1.12; }
+            .air-widget-symbol { font-size:.72rem; line-height:1; }
+            .air-widget-values { display:grid; grid-template-columns:auto auto; gap:1px 5px; align-items:center; }
+            .air-unit-pm { display:none; }
           }
         </style>
       </head>
@@ -6562,6 +6573,10 @@ def app_shell_page():
             const n = Number(value);
             return Number.isFinite(n) ? `${n.toFixed(digits)} ${suffix}` : `- ${suffix}`;
           }
+          function fmtAirValue(value, digits = 1){
+            const n = Number(value);
+            return Number.isFinite(n) ? n.toFixed(digits) : '-';
+          }
           function renderAirSensorWidget(data){
             const widget = document.getElementById('airSensorWidget');
             const values = document.getElementById('airSensorWidgetValues');
@@ -6571,11 +6586,11 @@ def app_shell_page():
               return;
             }
             values.innerHTML = [
-              fmtAir(data.temperature_c, '°C', 1),
-              fmtAir(data.humidity_percent, '%', 0),
-              `PM10 ${fmtAir(data.sds_p1, 'µg/m³', 1)}`,
-              `PM2.5 ${fmtAir(data.sds_p2, 'µg/m³', 1)}`,
-            ].map(v => `<span>${v}</span>`).join('');
+              `<span class="air-item">${fmtAirValue(data.temperature_c, 1)} <span class="air-unit">°C</span></span>`,
+              `<span class="air-item">${fmtAirValue(data.humidity_percent, 0)} <span class="air-unit">%</span></span>`,
+              `<span class="air-item">PM10 ${fmtAirValue(data.sds_p1, 1)} <span class="air-unit air-unit-pm">µg/m³</span></span>`,
+              `<span class="air-item">PM2.5 ${fmtAirValue(data.sds_p2, 1)} <span class="air-unit air-unit-pm">µg/m³</span></span>`,
+            ].join('');
             widget.classList.toggle('offline', !data.ok);
             widget.title = data.ok
               ? (data.cached ? 'Air sensor live values (cached)' : 'Air sensor live values')

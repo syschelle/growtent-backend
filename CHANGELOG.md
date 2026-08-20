@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.297
+
+### Compact mobile air sensor header
+- Optimizes the air sensor header widget for mobile view.
+- Uses smaller spacing and a compact 2x2 value grid on narrow screens.
+- Hides the PM unit suffix on mobile so the outside values no longer dominate the header.
+- Bumped the application version to `v0.297`.
+
 ## v0.296
 
 ### Light cycle in grow phase tile
