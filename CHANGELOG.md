@@ -2,6 +2,12 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.295
+
+### Air sensor header placement
+- Moves the compact air sensor widget behind the CanopyOps application name in the header.
+- Bumped the application version to `v0.295`.
+
 ## v0.294
 
 ### Optional Luftdaten air sensor integration

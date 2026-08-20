@@ -42,7 +42,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.294"
+APP_VERSION = "v0.295"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5871,6 +5871,7 @@ def changelog_page():
                   <li><strong>v0.292:</strong> Restored the modular `/ui/preferences` routes used by guest display mode.</li>
                   <li><strong>v0.293:</strong> Pot strain links stay enabled after the guest dashboard refresh cycle.</li>
                   <li><strong>v0.294:</strong> Added an optional Luftdaten-compatible live air sensor integration with cached backend polling and a compact header widget.</li>
+                  <li><strong>v0.295:</strong> Moved the compact air sensor widget behind the CanopyOps application name.</li>
                 </ul>
               </section>
             </div>
@@ -6452,7 +6453,7 @@ def app_shell_page():
         </script>
         <div class="shell">
           <header class="header">
-            <div class="header-left"><button class="menu-btn" id="menuBtn">☰</button><div id="airSensorWidget" class="air-widget" title=""><span class="air-widget-symbol">↗</span><span id="airSensorWidgetValues" class="air-widget-values"></span></div><strong style="display:flex; align-items:center; gap:8px;"><img src="/favicon.svg" alt="CanopyOps" style="width:18px; height:18px;" />CanopyOps</strong></div>
+            <div class="header-left"><button class="menu-btn" id="menuBtn">☰</button><strong style="display:flex; align-items:center; gap:8px;"><img src="/favicon.svg" alt="CanopyOps" style="width:18px; height:18px;" />CanopyOps</strong><div id="airSensorWidget" class="air-widget" title=""><span class="air-widget-symbol">↗</span><span id="airSensorWidgetValues" class="air-widget-values"></span></div></div>
             <span id="guestModeBadge" class="guest-badge-center" style="display:none;">Gastmodus aktiv</span>
             <div style="display:flex; align-items:center; gap:10px;">
               <button class="header-btn" id="shellViewModeBtn">Mobile Ansicht</button>
