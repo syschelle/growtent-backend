@@ -21,7 +21,8 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import ExhaustVpdPlanPayload, IrrigationPlanPayload, StrainPayload, TentPayload
+from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, IrrigationPlanPayload, StrainPayload, TentPayload
+from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
@@ -41,7 +42,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.293"
+APP_VERSION = "v0.294"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -110,6 +111,7 @@ WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
 SHELLY_SCHEDULE_CACHE_SECONDS = int(os.getenv("SHELLY_SCHEDULE_CACHE_SECONDS", "1800"))
 SHELLY_SCHEDULE_CACHE: dict[tuple[int, str, str], dict] = {}
 SHELLY_SCHEDULE_CACHE_LOCK = threading.RLock()
+AIR_SENSOR_SERVICE = AirSensorService()
 
 PASSWORD_HASHER = PasswordHasher()
 
@@ -619,10 +621,10 @@ def _pot_strains_json(value) -> str:
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled FROM app_auth_config WHERE id=1")
+            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host FROM app_auth_config WHERE id=1")
             row = cur.fetchone()
             if not row:
-                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True}
+                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True, "air_sensor_enabled": False, "air_sensor_host": None}
             return {
                 "enabled": bool(row[0]),
                 "username": row[1],
@@ -639,6 +641,8 @@ def load_auth_config():
                 "pushover_user_key": row[12] or "",
                 "gromate_api_password": row[13] or "",
                 "history_api_enabled": bool(row[14]) if row[14] is not None else True,
+                "air_sensor_enabled": bool(row[15]) if row[15] is not None else False,
+                "air_sensor_host": row[16],
             }
 
 
@@ -1034,6 +1038,8 @@ def init_db():
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_user_key TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS history_api_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
+            cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS air_sensor_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
+            cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS air_sensor_host TEXT;")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS app_guest_users (
@@ -2271,6 +2277,52 @@ def get_auth_config():
     }
 
 
+def load_air_sensor_settings() -> AirSensorSettings:
+    cfg = load_auth_config()
+    return AirSensorSettings(
+        enabled=bool(cfg.get("air_sensor_enabled")),
+        host=cfg.get("air_sensor_host"),
+    )
+
+
+@app.get("/config/air-sensor")
+def get_air_sensor_config():
+    settings = load_air_sensor_settings()
+    return settings.model_dump()
+
+
+@app.post("/config/air-sensor")
+def set_air_sensor_config(payload: AirSensorSettings):
+    host = normalize_air_sensor_host(payload.host)
+    if payload.enabled and not host:
+        raise HTTPException(status_code=400, detail="air sensor host is required")
+    if payload.enabled and host:
+        try:
+            host = validate_safe_sensor_host(host)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE app_auth_config
+                SET air_sensor_enabled=%s,
+                    air_sensor_host=%s,
+                    updated_at=NOW()
+                WHERE id=1
+                """,
+                (bool(payload.enabled), host),
+            )
+    AIR_SENSOR_SERVICE.reset()
+    return AirSensorSettings(enabled=bool(payload.enabled), host=host).model_dump()
+
+
+@app.get("/air-sensor/current")
+def air_sensor_current():
+    settings = load_air_sensor_settings()
+    return AIR_SENSOR_SERVICE.current(settings).model_dump()
+
+
 import pyotp
 import qrcode
 
@@ -2979,7 +3031,7 @@ def export_config_backup():
 
             cur.execute(
                 """
-                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, updated_at
+                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host, updated_at
                 FROM app_auth_config
                 WHERE id=1
                 """
@@ -3018,7 +3070,9 @@ def export_config_backup():
             "pushover_user_key": auth_row[8] or "",
             "gromate_api_password": auth_row[9] or "",
             "history_api_enabled": bool(auth_row[10]) if auth_row[10] is not None else True,
-            "updated_at": auth_row[11].isoformat() if auth_row[11] else None,
+            "air_sensor_enabled": bool(auth_row[11]) if auth_row[11] is not None else False,
+            "air_sensor_host": auth_row[12] or None,
+            "updated_at": auth_row[13].isoformat() if auth_row[13] else None,
         }
 
     strains = _read_strains_db()
@@ -3101,6 +3155,8 @@ def import_config_backup(payload: dict):
                         pushover_user_key=%s,
                         gromate_api_password=%s,
                         history_api_enabled=%s,
+                        air_sensor_enabled=%s,
+                        air_sensor_host=%s,
                         updated_at=NOW()
                     WHERE id=1
                     """,
@@ -3116,6 +3172,8 @@ def import_config_backup(payload: dict):
                         (str(auth.get("pushover_user_key")).strip() if auth.get("pushover_user_key") else None),
                         (str(auth.get("gromate_api_password")).strip() if auth.get("gromate_api_password") else None),
                         bool(auth.get("history_api_enabled", True)),
+                        bool(auth.get("air_sensor_enabled", False)),
+                        normalize_air_sensor_host(auth.get("air_sensor_host")),
                     ),
                 )
 
@@ -4356,12 +4414,13 @@ def setup_page(request: Request):
           #recoveryCard { grid-column:2; grid-row:5; }
           #guestCard { grid-column:2; grid-row:6; }
           #pushoverCard { grid-column:3; grid-row:3; }
+          #airSensorCard { grid-column:3; grid-row:4; }
           #backupCard { grid-column:4; grid-row:3; }
           #rubricDevices { grid-column:1 / -1; grid-row:7; }
           #setupTentsCard { grid-column:1 / -1; grid-row:8; }
           @media (max-width: 1200px) {
             .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
-            .section-title, #appearanceCard, #accessCard, #pushoverCard, #backupCard, #setupTentsCard, #guestCard, #twofaCard, #recoveryCard, #rubricDevices { grid-column:auto; grid-row:auto; }
+            .section-title, #appearanceCard, #accessCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestCard, #twofaCard, #recoveryCard, #rubricDevices { grid-column:auto; grid-row:auto; }
           }
           @media (max-width: 780px) { .setup-content { grid-template-columns:1fr; } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
@@ -4482,6 +4541,20 @@ def setup_page(request: Request):
               <div class=\"muted\">Status messages for online/offline transitions from poller.</div>
             </div>
 
+            <div class=\"card\" id=\"airSensorCard\" style=\"margin-bottom:12px; max-width:540px;\">
+              <div style=\"margin-bottom:8px;\"><strong id=\"airSensorTitle\">Luftdatensensor</strong></div>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
+                <input type=\"checkbox\" id=\"airSensorEnabled\" />
+                <span id=\"airSensorEnabledLabel\">Luftdatensensor aktivieren</span>
+              </label>
+              <div id=\"airSensorHostLabel\" style=\"margin-bottom:6px;\">Sensor Host/IP</div>
+              <input id=\"airSensorHost\" placeholder=\"192.168.178.50\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-bottom:10px;\" />
+              <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;\">
+                <button type=\"button\" id=\"saveAirSensorBtn\">Luftdatensensor speichern</button>
+              </div>
+              <div id=\"airSensorMsg\" style=\"margin-top:8px;\"></div>
+            </div>
+
             <!-- rubricSecurity removed -->
             <div class=\"card\" id=\"twofaCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong>2FA (TOTP)</strong></div>
@@ -4597,6 +4670,9 @@ def setup_page(request: Request):
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
+          const airSensorEnabledEl = document.getElementById('airSensorEnabled');
+          const airSensorHostEl = document.getElementById('airSensorHost');
+          const airSensorMsgEl = document.getElementById('airSensorMsg');
           let pending2faToken = '';
           let currentPlanTentId = 0;
           let authHasPassword = false;
@@ -4656,6 +4732,12 @@ def setup_page(request: Request):
               rubricDevices: 'Tents',
               pushoverTitle: 'Pushover status notifications',
               savePushover: 'Save Pushover',
+              airSensorTitle: 'Air sensor',
+              airSensorEnabled: 'Enable air sensor',
+              airSensorHost: 'Sensor host/IP',
+              saveAirSensor: 'Save air sensor',
+              airSensorSaved: 'Air sensor saved.',
+              airSensorSaveFailed: 'Failed to save air sensor.',
               apiHistoryPerTent: 'API History',
               potStrains: 'Pot strains',
               pot1Strain: 'Pot 1 strain',
@@ -4724,6 +4806,12 @@ def setup_page(request: Request):
               rubricDevices: 'Zelte',
               pushoverTitle: 'Pushover-Statusmeldungen',
               savePushover: 'Pushover speichern',
+              airSensorTitle: 'Luftdatensensor',
+              airSensorEnabled: 'Luftdatensensor aktivieren',
+              airSensorHost: 'Sensor Host/IP',
+              saveAirSensor: 'Luftdatensensor speichern',
+              airSensorSaved: 'Luftdatensensor gespeichert.',
+              airSensorSaveFailed: 'Luftdatensensor konnte nicht gespeichert werden.',
               apiHistoryPerTent: 'API-History',
               potStrains: 'Topf-Sorten',
               pot1Strain: 'Topf 1 Sorte',
@@ -4776,6 +4864,10 @@ def setup_page(request: Request):
             set('pushoverAppTokenLabel', tSetup('pushoverAppToken'));
             set('pushoverUserKeyLabel', tSetup('pushoverUserKey'));
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
+            set('airSensorTitle', tSetup('airSensorTitle'));
+            set('airSensorEnabledLabel', tSetup('airSensorEnabled'));
+            set('airSensorHostLabel', tSetup('airSensorHost'));
+            set('saveAirSensorBtn', tSetup('saveAirSensor'));
             set('auth2faEnabledLabel', tSetup('twofa'));
             set('regenRecoveryCodesLabel', tSetup('regenRecovery'));
             set('recoveryTitle', tSetup('recoveryTitle'));
@@ -5347,6 +5439,42 @@ def setup_page(request: Request):
             if (msgEl) msgEl.textContent = (langSel?.value === 'de') ? 'Pushover gespeichert.' : 'Pushover saved.';
           });
 
+          async function loadAirSensorConfigUi(){
+            if (!airSensorEnabledEl || !airSensorHostEl) return;
+            try {
+              const res = await fetch('/config/air-sensor', { cache: 'no-store' });
+              const cfg = await res.json().catch(() => ({}));
+              airSensorEnabledEl.checked = !!cfg.enabled;
+              airSensorHostEl.value = cfg.host || '';
+            } catch {
+              if (airSensorMsgEl) airSensorMsgEl.textContent = tSetup('airSensorSaveFailed');
+            }
+          }
+
+          document.getElementById('saveAirSensorBtn')?.addEventListener('click', async () => {
+            if (!airSensorEnabledEl || !airSensorHostEl) return;
+            try {
+              const res = await fetch('/config/air-sensor', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  enabled: !!airSensorEnabledEl.checked,
+                  host: (airSensorHostEl.value || '').trim() || null,
+                }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                if (airSensorMsgEl) airSensorMsgEl.textContent = body?.detail || tSetup('airSensorSaveFailed');
+                return;
+              }
+              airSensorEnabledEl.checked = !!body.enabled;
+              airSensorHostEl.value = body.host || '';
+              if (airSensorMsgEl) airSensorMsgEl.textContent = tSetup('airSensorSaved');
+            } catch {
+              if (airSensorMsgEl) airSensorMsgEl.textContent = tSetup('airSensorSaveFailed');
+            }
+          });
+
           document.getElementById('saveAuthBtn')?.addEventListener('click', async () => {
             if (!authEnabledEl || !authUsernameEl || !authPasswordEl) return;
 
@@ -5570,6 +5698,7 @@ def setup_page(request: Request):
             loadTents();
             loadSetupNavTents();
             loadAuthConfigUi();
+            loadAirSensorConfigUi();
             loadGuestUsers();
           })();
         </script>
@@ -5741,6 +5870,7 @@ def changelog_page():
                   <li><strong>v0.291:</strong> Strain detail popovers no longer block repeated clicks on dashboard pot strain links.</li>
                   <li><strong>v0.292:</strong> Restored the modular `/ui/preferences` routes used by guest display mode.</li>
                   <li><strong>v0.293:</strong> Pot strain links stay enabled after the guest dashboard refresh cycle.</li>
+                  <li><strong>v0.294:</strong> Added an optional Luftdaten-compatible live air sensor integration with cached backend polling and a compact header widget.</li>
                 </ul>
               </section>
             </div>
@@ -6291,6 +6421,11 @@ def app_shell_page():
           .status-pill.offline { color:#ef4444; background:rgba(239,68,68,.14); border:1px solid rgba(239,68,68,.35); }
           .status-pill.online .status-dot { background:#22c55e; }
           .status-pill.offline .status-dot { background:#ef4444; }
+          .air-widget { display:none; align-items:center; gap:6px; padding:3px 8px; border:1px solid rgba(34,197,94,.34); border-radius:8px; background:rgba(34,197,94,.10); color:var(--text); font-size:.74rem; white-space:nowrap; }
+          .air-widget.offline { border-color:rgba(239,68,68,.45); background:rgba(239,68,68,.12); color:#fecaca; }
+          :root[data-theme='light'] .air-widget.offline { color:#7f1d1d; }
+          .air-widget-symbol { color:#38bdf8; font-weight:800; }
+          .air-widget-values { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
           .muted { color:var(--muted); font-size:.84rem; margin-bottom:10px; }
           .header-btn { border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); border-radius:10px; padding:4px 8px; cursor:pointer; box-shadow:0 2px 10px rgba(2,6,23,.22); }
           .guest-badge-center { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); padding:4px 10px; border-radius:999px; border:1px solid rgba(239,68,68,.55); background:rgba(220,38,38,.22); color:#fecaca; font-size:.82rem; font-weight:700; white-space:nowrap; }
@@ -6317,7 +6452,7 @@ def app_shell_page():
         </script>
         <div class="shell">
           <header class="header">
-            <div class="header-left"><button class="menu-btn" id="menuBtn">☰</button><strong style="display:flex; align-items:center; gap:8px;"><img src="/favicon.svg" alt="CanopyOps" style="width:18px; height:18px;" />CanopyOps</strong></div>
+            <div class="header-left"><button class="menu-btn" id="menuBtn">☰</button><div id="airSensorWidget" class="air-widget" title=""><span class="air-widget-symbol">↗</span><span id="airSensorWidgetValues" class="air-widget-values"></span></div><strong style="display:flex; align-items:center; gap:8px;"><img src="/favicon.svg" alt="CanopyOps" style="width:18px; height:18px;" />CanopyOps</strong></div>
             <span id="guestModeBadge" class="guest-badge-center" style="display:none;">Gastmodus aktiv</span>
             <div style="display:flex; align-items:center; gap:10px;">
               <button class="header-btn" id="shellViewModeBtn">Mobile Ansicht</button>
@@ -6348,6 +6483,39 @@ def app_shell_page():
           let userRole = 'admin';
 
           function getLang(){ return (localStorage.getItem('gt_lang') || 'de') === 'de' ? 'de' : 'en'; }
+          function fmtAir(value, suffix, digits = 1){
+            const n = Number(value);
+            return Number.isFinite(n) ? `${n.toFixed(digits)} ${suffix}` : `- ${suffix}`;
+          }
+          function renderAirSensorWidget(data){
+            const widget = document.getElementById('airSensorWidget');
+            const values = document.getElementById('airSensorWidgetValues');
+            if (!widget || !values) return;
+            if (!data?.enabled || !data?.configured) {
+              widget.style.display = 'none';
+              return;
+            }
+            values.innerHTML = [
+              fmtAir(data.temperature_c, '°C', 1),
+              fmtAir(data.humidity_percent, '%', 0),
+              `PM10 ${fmtAir(data.sds_p1, 'µg/m³', 1)}`,
+              `PM2.5 ${fmtAir(data.sds_p2, 'µg/m³', 1)}`,
+            ].map(v => `<span>${v}</span>`).join('');
+            widget.classList.toggle('offline', !data.ok);
+            widget.title = data.ok
+              ? (data.cached ? 'Air sensor live values (cached)' : 'Air sensor live values')
+              : (data.last_error || 'Air sensor offline');
+            widget.style.display = 'inline-flex';
+          }
+          async function loadAirSensorWidget(){
+            try {
+              const res = await fetch('/air-sensor/current', { cache: 'no-store' });
+              const data = await res.json().catch(() => ({}));
+              if (res.ok) renderAirSensorWidget(data);
+            } catch {
+              renderAirSensorWidget({ enabled:true, configured:true, ok:false, last_error:'Air sensor request failed' });
+            }
+          }
           function applyShellI18n(){
             const de = getLang() === 'de';
             const labels = {
@@ -6482,6 +6650,8 @@ def app_shell_page():
               }
             } catch {}
             loadTentNav();
+            loadAirSensorWidget();
+            setInterval(loadAirSensorWidget, 30000);
             applyShellI18n();
             updateViewBtnLabel();
             setFrame();

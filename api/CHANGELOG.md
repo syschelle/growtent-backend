@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.294
+
+### Optional Luftdaten air sensor integration
+- Added optional Sensor.Community/Luftdaten DNMS-compatible live air sensor settings and current-value API endpoints.
+- Maps PM10, PM2.5, temperature, humidity, age and software version from `/data.json` with parser fallbacks and last-valid-value retention.
+- Caches successful sensor reads for 180 seconds, throttles failed retries for 30 seconds, blocks unsafe server-side hosts and redirects, and uses short HTTP timeouts.
+- Added setup controls and a compact header widget for current air sensor values.
+- Bumped the application version to `v0.294`.
+
 ## v0.293
 
 ### Persistent guest pot strain clicks

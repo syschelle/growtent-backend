@@ -101,6 +101,21 @@ def ui_preferences_save(payload: legacy.UiPreferencesPayload, request: Request):
     return legacy.save_ui_preferences(payload, request)
 
 
+@router.get('/config/air-sensor')
+def air_sensor_config_get():
+    return legacy.get_air_sensor_config()
+
+
+@router.post('/config/air-sensor')
+def air_sensor_config_save(payload: legacy.AirSensorSettings):
+    return legacy.set_air_sensor_config(payload)
+
+
+@router.get('/air-sensor/current')
+def air_sensor_current():
+    return legacy.air_sensor_current()
+
+
 @router.get('/api/history')
 def api_history(
     deviceId: str | None = None,

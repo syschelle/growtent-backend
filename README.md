@@ -47,6 +47,7 @@ Main features:
 - admin login and guest login modes
 - optional two-factor authentication for admin access
 - direct Shelly reads for fresher power and switch-state display
+- optional Sensor.Community/Luftdaten DNMS-compatible live air sensor display
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
@@ -189,7 +190,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.293
+ghcr.io/syschelle/growtent-backend-api:v0.294
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -281,8 +282,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.293 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.293 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.294 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.294 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -660,6 +661,9 @@ GET  /config/auth
 POST /config/auth
 POST /config/auth/2fa
 POST /config/auth/2fa/verify
+GET  /config/air-sensor
+POST /config/air-sensor
+GET  /air-sensor/current
 GET  /config/guests
 POST /config/guests
 PUT  /config/guests/{guest_id}
@@ -849,7 +853,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.293 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.294 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
