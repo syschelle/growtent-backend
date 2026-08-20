@@ -42,7 +42,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.295"
+APP_VERSION = "v0.296"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1611,50 +1611,116 @@ def _shelly_schedule_jobs(schedule_payload: object) -> list[dict]:
 
 
 def _schedule_job_turns_on(job: dict) -> bool:
+    return _schedule_job_action(job) == "on"
+
+
+def _schedule_job_action(job: dict) -> str | None:
     if not isinstance(job, dict):
-        return False
+        return None
     if job.get("enable") is False or job.get("enabled") is False:
-        return False
+        return None
     calls = job.get("calls") or []
     if isinstance(calls, dict):
         calls = [calls]
     if not isinstance(calls, list):
-        return False
+        return None
 
     for call in calls:
         if not isinstance(call, dict):
             continue
         method = str(call.get("method") or call.get("name") or "").strip().lower()
+        if not (method.endswith("switch.set") or method.endswith("light.set") or method in {"switch.set", "light.set"}):
+            continue
         params = call.get("params") or {}
         if not isinstance(params, dict):
             params = {}
+        on_value = params.get("on")
         turns_on = (
-            params.get("on") is True
-            or str(params.get("on")).strip().lower() in {"true", "1", "yes", "on"}
+            on_value is True
+            or str(on_value).strip().lower() in {"true", "1", "yes", "on"}
             or str(params.get("turn") or "").strip().lower() == "on"
         )
-        if not turns_on:
-            continue
-        if method.endswith("switch.set") or method.endswith("light.set") or method in {"switch.set", "light.set"}:
-            return True
-    return False
+        turns_off = (
+            on_value is False
+            or str(on_value).strip().lower() in {"false", "0", "no", "off"}
+            or str(params.get("turn") or "").strip().lower() == "off"
+        )
+        if turns_on:
+            return "on"
+        if turns_off:
+            return "off"
+    return None
 
 
-def _extract_light_on_schedule_minutes(schedule_payload: object) -> tuple[int | None, dict]:
+def _format_hours_for_cycle(minutes: int | None) -> str | None:
+    if minutes is None:
+        return None
+    hours = float(minutes) / 60.0
+    if abs(hours - round(hours)) < 0.01:
+        return str(int(round(hours)))
+    return f"{hours:.1f}".rstrip("0").rstrip(".")
+
+
+def _extract_light_cycle_from_schedule(schedule_payload: object) -> dict:
     jobs = _shelly_schedule_jobs(schedule_payload)
     enabled_jobs = [j for j in jobs if j.get("enable") is not False and j.get("enabled") is not False]
     matches = []
     for job in enabled_jobs:
-        if not _schedule_job_turns_on(job):
+        action = _schedule_job_action(job)
+        if action not in {"on", "off"}:
             continue
         minutes = _parse_shelly_timespec_minutes(job.get("timespec"))
         if minutes is None:
             continue
-        matches.append({"minutes": minutes, "time": _format_minutes_as_hhmm(minutes), "timespec": str(job.get("timespec") or "")})
+        matches.append(
+            {
+                "action": action,
+                "minutes": minutes,
+                "time": _format_minutes_as_hhmm(minutes),
+                "timespec": str(job.get("timespec") or ""),
+            }
+        )
 
     matches.sort(key=lambda item: item["minutes"])
-    info = {"jobs_seen": len(jobs), "enabled_jobs_seen": len(enabled_jobs), "matches": matches}
-    return (matches[0]["minutes"] if matches else None), info
+    on_matches = [m for m in matches if m["action"] == "on"]
+    off_matches = [m for m in matches if m["action"] == "off"]
+    on = on_matches[0] if on_matches else None
+    off = None
+    if on and off_matches:
+        off = next((m for m in off_matches if m["minutes"] > on["minutes"]), None) or off_matches[0]
+
+    light_minutes = dark_minutes = None
+    cycle_label = None
+    if on and off:
+        light_minutes = (int(off["minutes"]) - int(on["minutes"])) % (24 * 60)
+        if light_minutes == 0:
+            light_minutes = None
+        if light_minutes is not None:
+            dark_minutes = (24 * 60) - light_minutes
+            light_h = _format_hours_for_cycle(light_minutes)
+            dark_h = _format_hours_for_cycle(dark_minutes)
+            if light_h is not None and dark_h is not None:
+                cycle_label = f"{light_h}/{dark_h}"
+
+    return {
+        "jobs_seen": len(jobs),
+        "enabled_jobs_seen": len(enabled_jobs),
+        "matches": matches,
+        "on_minutes": on["minutes"] if on else None,
+        "on_time": on["time"] if on else None,
+        "off_minutes": off["minutes"] if off else None,
+        "off_time": off["time"] if off else None,
+        "light_minutes": light_minutes,
+        "dark_minutes": dark_minutes,
+        "light_hours": (light_minutes / 60.0) if light_minutes is not None else None,
+        "dark_hours": (dark_minutes / 60.0) if dark_minutes is not None else None,
+        "cycle_label": cycle_label,
+    }
+
+
+def _extract_light_on_schedule_minutes(schedule_payload: object) -> tuple[int | None, dict]:
+    info = _extract_light_cycle_from_schedule(schedule_payload)
+    return (info.get("on_minutes") if info.get("on_minutes") is not None else None), info
 
 
 def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh: bool = False) -> dict:
@@ -1728,6 +1794,8 @@ def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh
     else:
         on_minutes, info = _extract_light_on_schedule_minutes(schedule_payload)
         on_time = _format_minutes_as_hhmm(on_minutes)
+        off_minutes = info.get("off_minutes")
+        off_time = _format_minutes_as_hhmm(off_minutes)
         data = {
             "ok": True,
             "tent_id": tent_id,
@@ -1740,8 +1808,13 @@ def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh
             "cache_ttl_seconds": SHELLY_SCHEDULE_CACHE_SECONDS,
             "on_minutes": on_minutes,
             "on_time": on_time,
+            "off_minutes": off_minutes,
+            "off_time": off_time,
+            "light_hours": info.get("light_hours"),
+            "dark_hours": info.get("dark_hours"),
+            "cycle_label": info.get("cycle_label"),
             "line": f"ON {on_time}" if on_time else None,
-            "detail": "found light ON schedule" if on_minutes is not None else "no matching enabled light ON schedule found",
+            "detail": "found light schedule" if on_minutes is not None else "no matching enabled light ON schedule found",
             **info,
         }
 
@@ -5872,6 +5945,7 @@ def changelog_page():
                   <li><strong>v0.293:</strong> Pot strain links stay enabled after the guest dashboard refresh cycle.</li>
                   <li><strong>v0.294:</strong> Added an optional Luftdaten-compatible live air sensor integration with cached backend polling and a compact header widget.</li>
                   <li><strong>v0.295:</strong> Moved the compact air sensor widget behind the CanopyOps application name.</li>
+                  <li><strong>v0.296:</strong> Shows the Shelly light schedule as a light/dark cycle in the grow phase tile.</li>
                 </ul>
               </section>
             </div>
@@ -7334,6 +7408,7 @@ def dashboard_page(request: Request):
               irAmountTotal: 'Amount per pot',
               active: 'active',
               growSince: 'Grow since',
+              lightCycle: 'Light cycle',
               day: 'Day',
               week: 'Week',
               phaseVegetative: 'Vegetative',
@@ -7493,6 +7568,7 @@ def dashboard_page(request: Request):
               irAmountTotal: 'Menge pro Topf',
               active: 'aktiv',
               growSince: 'Grow seit',
+              lightCycle: 'Lichtzyklus',
               day: 'Tag',
               week: 'Woche',
               phaseVegetative: 'Vegetativ',
@@ -8085,6 +8161,53 @@ def dashboard_page(request: Request):
             const mi = Number(m[2]);
             if (!Number.isFinite(h) || !Number.isFinite(mi) || h < 0 || h > 23 || mi < 0 || mi > 59) return null;
             return (h * 60) + mi;
+          }
+
+          function parseLightOffMinFromLine(line){
+            const s = String(line || '');
+            const m = /OFF\\s*(\\d{1,2}):(\\d{2})/i.exec(s);
+            if (!m) return null;
+            const h = Number(m[1]);
+            const mi = Number(m[2]);
+            if (!Number.isFinite(h) || !Number.isFinite(mi) || h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+            return (h * 60) + mi;
+          }
+
+          function formatCycleHours(minutes){
+            const n = Number(minutes);
+            if (!Number.isFinite(n)) return null;
+            const hours = n / 60;
+            if (Math.abs(hours - Math.round(hours)) < 0.01) return String(Math.round(hours));
+            return hours.toFixed(1).replace(/\\.0$/, '');
+          }
+
+          function lightCycleFromMinutes(onMin, offMin){
+            const on = Number(onMin);
+            const off = Number(offMin);
+            if (!Number.isFinite(on) || !Number.isFinite(off)) return null;
+            let lightMin = (off - on + (24 * 60)) % (24 * 60);
+            if (!Number.isFinite(lightMin) || lightMin <= 0) return null;
+            const darkMin = (24 * 60) - lightMin;
+            const light = formatCycleHours(lightMin);
+            const dark = formatCycleHours(darkMin);
+            return (light && dark) ? `${light}/${dark}` : null;
+          }
+
+          function lightCycleFromLine(line){
+            return lightCycleFromMinutes(parseLightOnMinFromLine(line), parseLightOffMinFromLine(line));
+          }
+
+          function lightCycleFromSchedule(schedule){
+            if (!schedule || typeof schedule !== 'object') return null;
+            if (schedule.cycle_label) return String(schedule.cycle_label);
+            const lightHours = Number(schedule.light_hours);
+            const darkHours = Number(schedule.dark_hours);
+            if (Number.isFinite(lightHours) && Number.isFinite(darkHours)) {
+              const light = formatCycleHours(lightHours * 60);
+              const dark = formatCycleHours(darkHours * 60);
+              if (light && dark) return `${light}/${dark}`;
+            }
+            return lightCycleFromMinutes(schedule.on_minutes, schedule.off_minutes);
           }
 
           function formatNextRunDate(dt){
@@ -9660,7 +9783,13 @@ def dashboard_page(request: Request):
             const phaseWeek = firstNum(d, ['settings.grow.currentPhaseWeek']);
             txt('growTotals', `${tr('growSince')}: ${tr('day')} ${Number.isFinite(growDay) ? Number(growDay) : '-'} / ${tr('week')} ${Number.isFinite(growWeek) ? Number(growWeek) : '-'}`);
             const phaseName = phaseLabel(phase);
-            txt('growPhaseStats', `${phaseName !== '-' ? phaseName : 'Phase'}: ${tr('day')} ${Number.isFinite(phaseDay) ? Number(phaseDay) : '-'} / ${tr('week')} ${Number.isFinite(phaseWeek) ? Number(phaseWeek) : '-'}`);
+            const phaseStatsText = `${phaseName !== '-' ? phaseName : 'Phase'}: ${tr('day')} ${Number.isFinite(phaseDay) ? Number(phaseDay) : '-'} / ${tr('week')} ${Number.isFinite(phaseWeek) ? Number(phaseWeek) : '-'}`;
+            let lightCycle = lightCycleFromLine(d['settings.shelly.light.line']);
+            if (!lightCycle && hasTextValue(d['settings.shelly.light.ip'])) {
+              const sched = await readLightScheduleOnDemand(false);
+              lightCycle = lightCycleFromSchedule(sched);
+            }
+            html('growPhaseStats', `${escHtml(phaseStatsText)}<br><span class="small" style="font-weight:600;">${escHtml(tr('lightCycle'))}: ${escHtml(lightCycle || '-')}</span>`);
 
             const mainWh = firstNum(d, ['cur.shelly.main.Wh', 'shelly.main.wh']);
             txt('mainEnergyValue', Number.isFinite(Number(mainWh)) ? `${(Number(mainWh) / 1000).toFixed(3)} kWh` : '-');

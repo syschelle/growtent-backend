@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.296
+
+### Light cycle in grow phase tile
+- Shows the configured Shelly light schedule as a light/dark cycle in the grow phase tile, for example `18/6` or `12/12`.
+- Derives the value from the existing controller light schedule line when possible and falls back to the cached Shelly `Schedule.List` endpoint.
+- Extends the Shelly schedule parser with OFF time and light/dark duration metadata.
+- Bumped the application version to `v0.296`.
+
 ## v0.295
 
 ### Air sensor header placement
