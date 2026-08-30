@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.298
+
+### Grow date display
+- Shows calculated start dates next to the grow and current phase day/week values in the grow phase tile.
+- Keeps the existing day/week values and adds the localized date derived from the reported grow or phase day.
+- Bumped the application version to `v0.298`.
+
 ## v0.297
 
 ### Compact mobile air sensor header
