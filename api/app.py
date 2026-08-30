@@ -42,7 +42,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.299"
+APP_VERSION = "v0.300"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5948,6 +5948,7 @@ def changelog_page():
                   <li><strong>v0.296:</strong> Shows the Shelly light schedule as a light/dark cycle in the grow phase tile.</li>
                   <li><strong>v0.297:</strong> Optimized the air sensor header widget for mobile view.</li>
                   <li><strong>v0.299:</strong> Adds calculated start dates to the grow and phase day/week lines.</li>
+                  <li><strong>v0.300:</strong> Shows grow and phase dates without weekday or date label.</li>
                 </ul>
               </section>
             </div>
@@ -7425,7 +7426,6 @@ def dashboard_page(request: Request):
               active: 'active',
               growSince: 'Grow since',
               lightCycle: 'Light cycle',
-              date: 'Date',
               day: 'Day',
               week: 'Week',
               phaseVegetative: 'Vegetative',
@@ -7586,7 +7586,6 @@ def dashboard_page(request: Request):
               active: 'aktiv',
               growSince: 'Grow seit',
               lightCycle: 'Lichtzyklus',
-              date: 'Datum',
               day: 'Tag',
               week: 'Woche',
               phaseVegetative: 'Vegetativ',
@@ -8251,14 +8250,14 @@ def dashboard_page(request: Request):
             dt.setHours(0, 0, 0, 0);
             dt.setDate(dt.getDate() - (Math.floor(day) - 1));
             return dt.toLocaleDateString(currentLang === 'de' ? 'de-DE' : 'en-GB', {
-              weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit'
+              year: 'numeric', month: '2-digit', day: '2-digit'
             });
           }
 
           function formatGrowDayWeekDate(dayNumber, weekNumber){
             const dayText = Number.isFinite(dayNumber) ? Number(dayNumber) : '-';
             const weekText = Number.isFinite(weekNumber) ? Number(weekNumber) : '-';
-            return `${tr('day')} ${dayText} / ${tr('week')} ${weekText} / ${tr('date')} ${formatGrowDateFromDay(dayNumber)}`;
+            return `${tr('day')} ${dayText} / ${tr('week')} ${weekText} / ${formatGrowDateFromDay(dayNumber)}`;
           }
 
           function computeNextIrrigationDateFromOnMin(plan, lastRunDate, onMin){

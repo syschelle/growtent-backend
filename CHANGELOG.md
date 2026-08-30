@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.300
+
+### Date-only grow phase dates
+- Shows the calculated grow and phase dates as plain localized dates without weekday prefixes.
+- Removes the extra `Date`/`Datum` label from the day/week/date display.
+- Bumped the application version to `v0.300`.
+
 ## v0.299
 
 ### Grow date display
