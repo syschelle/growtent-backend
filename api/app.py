@@ -21,7 +21,8 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import ExhaustVpdPlanPayload, IrrigationPlanPayload, StrainPayload, TentPayload
+from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, IrrigationPlanPayload, StrainPayload, TentPayload
+from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
@@ -41,13 +42,21 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
+<<<<<<< HEAD
 APP_VERSION = "v0.288"
+=======
+APP_VERSION = "v0.297"
+>>>>>>> 56f6177652ed1880d00554821417bdbb747d9d5f
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
+FAVICON_LINKS = (
+    f'<link rel="icon" type="image/svg+xml" href="/favicon.svg?v={APP_VERSION}" />\n'
+    f'    <link rel="shortcut icon" href="/favicon.ico?v={APP_VERSION}" />'
+)
 
 SESSIONS: dict[str, dict] = {}
 TWOFA_ENROLL: dict[str, dict] = {}
@@ -106,6 +115,7 @@ WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
 SHELLY_SCHEDULE_CACHE_SECONDS = int(os.getenv("SHELLY_SCHEDULE_CACHE_SECONDS", "1800"))
 SHELLY_SCHEDULE_CACHE: dict[tuple[int, str, str], dict] = {}
 SHELLY_SCHEDULE_CACHE_LOCK = threading.RLock()
+AIR_SENSOR_SERVICE = AirSensorService()
 
 PASSWORD_HASHER = PasswordHasher()
 
@@ -208,7 +218,18 @@ def favicon_svg():
   <path d='M48 42c0-10-7-18-16-20 0 11 7 20 16 20z' fill='url(#g)' opacity='0.9'/>
   <circle cx='32' cy='26' r='4' fill='#86efac'/>
 </svg>"""
-    return HTMLResponse(content=svg, media_type="image/svg+xml")
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_ico():
+    response = RedirectResponse(url=f"/favicon.svg?v={APP_VERSION}", status_code=302)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.get("/auth/login", response_class=HTMLResponse)
@@ -220,6 +241,7 @@ def auth_login_page():
         pass
     return """
     <html><head><title>CanopyOps Login</title><meta name="viewport" content="width=device-width, initial-scale=1" />
+    __FAVICON_LINKS__
     <style>
       :root{--bg:#0f172a;--text:#e2e8f0;--card:#1e293b;--input:#0b1220;--inputBorder:rgba(148,163,184,.25);--btn:#2563eb}
       :root[data-theme='light']{--bg:#eef2f5;--text:#0f172a;--card:#f8fafc;--input:#ffffff;--inputBorder:rgba(51,65,85,.22);--btn:#1d4ed8}
@@ -249,7 +271,7 @@ def auth_login_page():
       [u,p].forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();b1.click();}}));
       [c,r].forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();b2.click();}}));
     </script></body></html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 class LoginPayload(BaseModel):
@@ -603,10 +625,10 @@ def _pot_strains_json(value) -> str:
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled FROM app_auth_config WHERE id=1")
+            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host FROM app_auth_config WHERE id=1")
             row = cur.fetchone()
             if not row:
-                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True}
+                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True, "air_sensor_enabled": False, "air_sensor_host": None}
             return {
                 "enabled": bool(row[0]),
                 "username": row[1],
@@ -623,6 +645,8 @@ def load_auth_config():
                 "pushover_user_key": row[12] or "",
                 "gromate_api_password": row[13] or "",
                 "history_api_enabled": bool(row[14]) if row[14] is not None else True,
+                "air_sensor_enabled": bool(row[15]) if row[15] is not None else False,
+                "air_sensor_host": row[16],
             }
 
 
@@ -741,6 +765,7 @@ def install_page():
         _not_installable()
     return f"""
     <html><head><title>CanopyOps Initial Setup</title><meta name="viewport" content="width=device-width, initial-scale=1" />
+    {FAVICON_LINKS}
     <style>
       :root{{--bg:#0f172a;--text:#e2e8f0;--card:#1e293b;--muted:#94a3b8;--input:#0b1220;--inputBorder:rgba(148,163,184,.25);--btn:#2563eb;--err:#fca5a5;--ok:#86efac}}
       :root[data-theme='light']{{--bg:#eef2f5;--text:#0f172a;--card:#f8fafc;--muted:#64748b;--input:#ffffff;--inputBorder:rgba(51,65,85,.22);--btn:#1d4ed8;--err:#b91c1c;--ok:#15803d}}
@@ -904,7 +929,7 @@ def require_admin(request: Request):
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt_prefixes = ("/health", "/favicon.svg", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/", "/install", "/api/install")
+    exempt_prefixes = ("/health", "/favicon.svg", "/favicon.ico", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/", "/install", "/api/install")
     if path.startswith(exempt_prefixes):
         return await call_next(request)
 
@@ -1017,6 +1042,8 @@ def init_db():
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_user_key TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS history_api_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
+            cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS air_sensor_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
+            cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS air_sensor_host TEXT;")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS app_guest_users (
@@ -1588,50 +1615,116 @@ def _shelly_schedule_jobs(schedule_payload: object) -> list[dict]:
 
 
 def _schedule_job_turns_on(job: dict) -> bool:
+    return _schedule_job_action(job) == "on"
+
+
+def _schedule_job_action(job: dict) -> str | None:
     if not isinstance(job, dict):
-        return False
+        return None
     if job.get("enable") is False or job.get("enabled") is False:
-        return False
+        return None
     calls = job.get("calls") or []
     if isinstance(calls, dict):
         calls = [calls]
     if not isinstance(calls, list):
-        return False
+        return None
 
     for call in calls:
         if not isinstance(call, dict):
             continue
         method = str(call.get("method") or call.get("name") or "").strip().lower()
+        if not (method.endswith("switch.set") or method.endswith("light.set") or method in {"switch.set", "light.set"}):
+            continue
         params = call.get("params") or {}
         if not isinstance(params, dict):
             params = {}
+        on_value = params.get("on")
         turns_on = (
-            params.get("on") is True
-            or str(params.get("on")).strip().lower() in {"true", "1", "yes", "on"}
+            on_value is True
+            or str(on_value).strip().lower() in {"true", "1", "yes", "on"}
             or str(params.get("turn") or "").strip().lower() == "on"
         )
-        if not turns_on:
-            continue
-        if method.endswith("switch.set") or method.endswith("light.set") or method in {"switch.set", "light.set"}:
-            return True
-    return False
+        turns_off = (
+            on_value is False
+            or str(on_value).strip().lower() in {"false", "0", "no", "off"}
+            or str(params.get("turn") or "").strip().lower() == "off"
+        )
+        if turns_on:
+            return "on"
+        if turns_off:
+            return "off"
+    return None
 
 
-def _extract_light_on_schedule_minutes(schedule_payload: object) -> tuple[int | None, dict]:
+def _format_hours_for_cycle(minutes: int | None) -> str | None:
+    if minutes is None:
+        return None
+    hours = float(minutes) / 60.0
+    if abs(hours - round(hours)) < 0.01:
+        return str(int(round(hours)))
+    return f"{hours:.1f}".rstrip("0").rstrip(".")
+
+
+def _extract_light_cycle_from_schedule(schedule_payload: object) -> dict:
     jobs = _shelly_schedule_jobs(schedule_payload)
     enabled_jobs = [j for j in jobs if j.get("enable") is not False and j.get("enabled") is not False]
     matches = []
     for job in enabled_jobs:
-        if not _schedule_job_turns_on(job):
+        action = _schedule_job_action(job)
+        if action not in {"on", "off"}:
             continue
         minutes = _parse_shelly_timespec_minutes(job.get("timespec"))
         if minutes is None:
             continue
-        matches.append({"minutes": minutes, "time": _format_minutes_as_hhmm(minutes), "timespec": str(job.get("timespec") or "")})
+        matches.append(
+            {
+                "action": action,
+                "minutes": minutes,
+                "time": _format_minutes_as_hhmm(minutes),
+                "timespec": str(job.get("timespec") or ""),
+            }
+        )
 
     matches.sort(key=lambda item: item["minutes"])
-    info = {"jobs_seen": len(jobs), "enabled_jobs_seen": len(enabled_jobs), "matches": matches}
-    return (matches[0]["minutes"] if matches else None), info
+    on_matches = [m for m in matches if m["action"] == "on"]
+    off_matches = [m for m in matches if m["action"] == "off"]
+    on = on_matches[0] if on_matches else None
+    off = None
+    if on and off_matches:
+        off = next((m for m in off_matches if m["minutes"] > on["minutes"]), None) or off_matches[0]
+
+    light_minutes = dark_minutes = None
+    cycle_label = None
+    if on and off:
+        light_minutes = (int(off["minutes"]) - int(on["minutes"])) % (24 * 60)
+        if light_minutes == 0:
+            light_minutes = None
+        if light_minutes is not None:
+            dark_minutes = (24 * 60) - light_minutes
+            light_h = _format_hours_for_cycle(light_minutes)
+            dark_h = _format_hours_for_cycle(dark_minutes)
+            if light_h is not None and dark_h is not None:
+                cycle_label = f"{light_h}/{dark_h}"
+
+    return {
+        "jobs_seen": len(jobs),
+        "enabled_jobs_seen": len(enabled_jobs),
+        "matches": matches,
+        "on_minutes": on["minutes"] if on else None,
+        "on_time": on["time"] if on else None,
+        "off_minutes": off["minutes"] if off else None,
+        "off_time": off["time"] if off else None,
+        "light_minutes": light_minutes,
+        "dark_minutes": dark_minutes,
+        "light_hours": (light_minutes / 60.0) if light_minutes is not None else None,
+        "dark_hours": (dark_minutes / 60.0) if dark_minutes is not None else None,
+        "cycle_label": cycle_label,
+    }
+
+
+def _extract_light_on_schedule_minutes(schedule_payload: object) -> tuple[int | None, dict]:
+    info = _extract_light_cycle_from_schedule(schedule_payload)
+    return (info.get("on_minutes") if info.get("on_minutes") is not None else None), info
 
 
 def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh: bool = False) -> dict:
@@ -1705,6 +1798,8 @@ def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh
     else:
         on_minutes, info = _extract_light_on_schedule_minutes(schedule_payload)
         on_time = _format_minutes_as_hhmm(on_minutes)
+        off_minutes = info.get("off_minutes")
+        off_time = _format_minutes_as_hhmm(off_minutes)
         data = {
             "ok": True,
             "tent_id": tent_id,
@@ -1717,8 +1812,13 @@ def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh
             "cache_ttl_seconds": SHELLY_SCHEDULE_CACHE_SECONDS,
             "on_minutes": on_minutes,
             "on_time": on_time,
+            "off_minutes": off_minutes,
+            "off_time": off_time,
+            "light_hours": info.get("light_hours"),
+            "dark_hours": info.get("dark_hours"),
+            "cycle_label": info.get("cycle_label"),
             "line": f"ON {on_time}" if on_time else None,
-            "detail": "found light ON schedule" if on_minutes is not None else "no matching enabled light ON schedule found",
+            "detail": "found light schedule" if on_minutes is not None else "no matching enabled light ON schedule found",
             **info,
         }
 
@@ -2252,6 +2352,52 @@ def get_auth_config():
         "otpauth_url": otpauth_url,
         "qr_png_url": qr_png_url,
     }
+
+
+def load_air_sensor_settings() -> AirSensorSettings:
+    cfg = load_auth_config()
+    return AirSensorSettings(
+        enabled=bool(cfg.get("air_sensor_enabled")),
+        host=cfg.get("air_sensor_host"),
+    )
+
+
+@app.get("/config/air-sensor")
+def get_air_sensor_config():
+    settings = load_air_sensor_settings()
+    return settings.model_dump()
+
+
+@app.post("/config/air-sensor")
+def set_air_sensor_config(payload: AirSensorSettings):
+    host = normalize_air_sensor_host(payload.host)
+    if payload.enabled and not host:
+        raise HTTPException(status_code=400, detail="air sensor host is required")
+    if payload.enabled and host:
+        try:
+            host = validate_safe_sensor_host(host)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE app_auth_config
+                SET air_sensor_enabled=%s,
+                    air_sensor_host=%s,
+                    updated_at=NOW()
+                WHERE id=1
+                """,
+                (bool(payload.enabled), host),
+            )
+    AIR_SENSOR_SERVICE.reset()
+    return AirSensorSettings(enabled=bool(payload.enabled), host=host).model_dump()
+
+
+@app.get("/air-sensor/current")
+def air_sensor_current():
+    settings = load_air_sensor_settings()
+    return AIR_SENSOR_SERVICE.current(settings).model_dump()
 
 
 import pyotp
@@ -2859,6 +3005,7 @@ def poll_errors_page(request: Request):
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Polling-Fehler (Live)</title>
+    __FAVICON_LINKS__
     <style>
       :root { color-scheme: dark; }
       body { font-family: Arial, sans-serif; background:#0f172a; color:#e2e8f0; margin:0; padding:16px; }
@@ -2917,7 +3064,7 @@ def poll_errors_page(request: Request):
     </script>
   </body>
 </html>
-        """.replace("__TENT_FILTER__", tent_q_js)
+        """.replace("__TENT_FILTER__", tent_q_js).replace("__FAVICON_LINKS__", FAVICON_LINKS)
     )
 
 
@@ -2961,7 +3108,7 @@ def export_config_backup():
 
             cur.execute(
                 """
-                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, updated_at
+                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host, updated_at
                 FROM app_auth_config
                 WHERE id=1
                 """
@@ -3000,7 +3147,9 @@ def export_config_backup():
             "pushover_user_key": auth_row[8] or "",
             "gromate_api_password": auth_row[9] or "",
             "history_api_enabled": bool(auth_row[10]) if auth_row[10] is not None else True,
-            "updated_at": auth_row[11].isoformat() if auth_row[11] else None,
+            "air_sensor_enabled": bool(auth_row[11]) if auth_row[11] is not None else False,
+            "air_sensor_host": auth_row[12] or None,
+            "updated_at": auth_row[13].isoformat() if auth_row[13] else None,
         }
 
     strains = _read_strains_db()
@@ -3083,6 +3232,8 @@ def import_config_backup(payload: dict):
                         pushover_user_key=%s,
                         gromate_api_password=%s,
                         history_api_enabled=%s,
+                        air_sensor_enabled=%s,
+                        air_sensor_host=%s,
                         updated_at=NOW()
                     WHERE id=1
                     """,
@@ -3098,6 +3249,8 @@ def import_config_backup(payload: dict):
                         (str(auth.get("pushover_user_key")).strip() if auth.get("pushover_user_key") else None),
                         (str(auth.get("gromate_api_password")).strip() if auth.get("gromate_api_password") else None),
                         bool(auth.get("history_api_enabled", True)),
+                        bool(auth.get("air_sensor_enabled", False)),
+                        normalize_air_sensor_host(auth.get("air_sensor_host")),
                     ),
                 )
 
@@ -4296,6 +4449,7 @@ def setup_page(request: Request):
       <head>
         <title>GrowTent Setup</title>
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+        __FAVICON_LINKS__
         <style>
           :root {
             --bg:#0f172a;
@@ -4337,12 +4491,13 @@ def setup_page(request: Request):
           #recoveryCard { grid-column:2; grid-row:5; }
           #guestCard { grid-column:2; grid-row:6; }
           #pushoverCard { grid-column:3; grid-row:3; }
+          #airSensorCard { grid-column:3; grid-row:4; }
           #backupCard { grid-column:4; grid-row:3; }
           #rubricDevices { grid-column:1 / -1; grid-row:7; }
           #setupTentsCard { grid-column:1 / -1; grid-row:8; }
           @media (max-width: 1200px) {
             .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
-            .section-title, #appearanceCard, #accessCard, #pushoverCard, #backupCard, #setupTentsCard, #guestCard, #twofaCard, #recoveryCard, #rubricDevices { grid-column:auto; grid-row:auto; }
+            .section-title, #appearanceCard, #accessCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestCard, #twofaCard, #recoveryCard, #rubricDevices { grid-column:auto; grid-row:auto; }
           }
           @media (max-width: 780px) { .setup-content { grid-template-columns:1fr; } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
@@ -4463,6 +4618,20 @@ def setup_page(request: Request):
               <div class=\"muted\">Status messages for online/offline transitions from poller.</div>
             </div>
 
+            <div class=\"card\" id=\"airSensorCard\" style=\"margin-bottom:12px; max-width:540px;\">
+              <div style=\"margin-bottom:8px;\"><strong id=\"airSensorTitle\">Luftdatensensor</strong></div>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
+                <input type=\"checkbox\" id=\"airSensorEnabled\" />
+                <span id=\"airSensorEnabledLabel\">Luftdatensensor aktivieren</span>
+              </label>
+              <div id=\"airSensorHostLabel\" style=\"margin-bottom:6px;\">Sensor Host/IP</div>
+              <input id=\"airSensorHost\" placeholder=\"192.168.178.50\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-bottom:10px;\" />
+              <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;\">
+                <button type=\"button\" id=\"saveAirSensorBtn\">Luftdatensensor speichern</button>
+              </div>
+              <div id=\"airSensorMsg\" style=\"margin-top:8px;\"></div>
+            </div>
+
             <!-- rubricSecurity removed -->
             <div class=\"card\" id=\"twofaCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong>2FA (TOTP)</strong></div>
@@ -4578,6 +4747,9 @@ def setup_page(request: Request):
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
+          const airSensorEnabledEl = document.getElementById('airSensorEnabled');
+          const airSensorHostEl = document.getElementById('airSensorHost');
+          const airSensorMsgEl = document.getElementById('airSensorMsg');
           let pending2faToken = '';
           let currentPlanTentId = 0;
           let authHasPassword = false;
@@ -4637,6 +4809,12 @@ def setup_page(request: Request):
               rubricDevices: 'Tents',
               pushoverTitle: 'Pushover status notifications',
               savePushover: 'Save Pushover',
+              airSensorTitle: 'Air sensor',
+              airSensorEnabled: 'Enable air sensor',
+              airSensorHost: 'Sensor host/IP',
+              saveAirSensor: 'Save air sensor',
+              airSensorSaved: 'Air sensor saved.',
+              airSensorSaveFailed: 'Failed to save air sensor.',
               apiHistoryPerTent: 'API History',
               potStrains: 'Pot strains',
               pot1Strain: 'Pot 1 strain',
@@ -4705,6 +4883,12 @@ def setup_page(request: Request):
               rubricDevices: 'Zelte',
               pushoverTitle: 'Pushover-Statusmeldungen',
               savePushover: 'Pushover speichern',
+              airSensorTitle: 'Luftdatensensor',
+              airSensorEnabled: 'Luftdatensensor aktivieren',
+              airSensorHost: 'Sensor Host/IP',
+              saveAirSensor: 'Luftdatensensor speichern',
+              airSensorSaved: 'Luftdatensensor gespeichert.',
+              airSensorSaveFailed: 'Luftdatensensor konnte nicht gespeichert werden.',
               apiHistoryPerTent: 'API-History',
               potStrains: 'Topf-Sorten',
               pot1Strain: 'Topf 1 Sorte',
@@ -4757,6 +4941,10 @@ def setup_page(request: Request):
             set('pushoverAppTokenLabel', tSetup('pushoverAppToken'));
             set('pushoverUserKeyLabel', tSetup('pushoverUserKey'));
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
+            set('airSensorTitle', tSetup('airSensorTitle'));
+            set('airSensorEnabledLabel', tSetup('airSensorEnabled'));
+            set('airSensorHostLabel', tSetup('airSensorHost'));
+            set('saveAirSensorBtn', tSetup('saveAirSensor'));
             set('auth2faEnabledLabel', tSetup('twofa'));
             set('regenRecoveryCodesLabel', tSetup('regenRecovery'));
             set('recoveryTitle', tSetup('recoveryTitle'));
@@ -5328,6 +5516,42 @@ def setup_page(request: Request):
             if (msgEl) msgEl.textContent = (langSel?.value === 'de') ? 'Pushover gespeichert.' : 'Pushover saved.';
           });
 
+          async function loadAirSensorConfigUi(){
+            if (!airSensorEnabledEl || !airSensorHostEl) return;
+            try {
+              const res = await fetch('/config/air-sensor', { cache: 'no-store' });
+              const cfg = await res.json().catch(() => ({}));
+              airSensorEnabledEl.checked = !!cfg.enabled;
+              airSensorHostEl.value = cfg.host || '';
+            } catch {
+              if (airSensorMsgEl) airSensorMsgEl.textContent = tSetup('airSensorSaveFailed');
+            }
+          }
+
+          document.getElementById('saveAirSensorBtn')?.addEventListener('click', async () => {
+            if (!airSensorEnabledEl || !airSensorHostEl) return;
+            try {
+              const res = await fetch('/config/air-sensor', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  enabled: !!airSensorEnabledEl.checked,
+                  host: (airSensorHostEl.value || '').trim() || null,
+                }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                if (airSensorMsgEl) airSensorMsgEl.textContent = body?.detail || tSetup('airSensorSaveFailed');
+                return;
+              }
+              airSensorEnabledEl.checked = !!body.enabled;
+              airSensorHostEl.value = body.host || '';
+              if (airSensorMsgEl) airSensorMsgEl.textContent = tSetup('airSensorSaved');
+            } catch {
+              if (airSensorMsgEl) airSensorMsgEl.textContent = tSetup('airSensorSaveFailed');
+            }
+          });
+
           document.getElementById('saveAuthBtn')?.addEventListener('click', async () => {
             if (!authEnabledEl || !authUsernameEl || !authPasswordEl) return;
 
@@ -5551,12 +5775,13 @@ def setup_page(request: Request):
             loadTents();
             loadSetupNavTents();
             loadAuthConfigUi();
+            loadAirSensorConfigUi();
             loadGuestUsers();
           })();
         </script>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 @app.get("/download/project.zip")
@@ -5717,6 +5942,16 @@ def changelog_page():
                   <li><strong>v0.279:</strong> Normalized Shelly toggle responses so proxied devices report usable state data.</li>
                   <li><strong>v0.280:</strong> Switched configured Shelly devices directly from the backend to avoid controller action proxy timeouts.</li>
                   <li><strong>v0.281:</strong> Bumped the release version and updated deployment metadata for the direct Shelly toggle hotfix.</li>
+                  <li><strong>v0.288:</strong> Added browser tab favicon links and an ico compatibility route.</li>
+                  <li><strong>v0.289:</strong> Versioned favicon URLs and disabled favicon response caching so browser tabs refresh the icon reliably.</li>
+                  <li><strong>v0.290:</strong> Guest users can open pot strain detail popovers, and the default library includes Cereal Milk, Green Poison and Oreoz.</li>
+                  <li><strong>v0.291:</strong> Strain detail popovers no longer block repeated clicks on dashboard pot strain links.</li>
+                  <li><strong>v0.292:</strong> Restored the modular `/ui/preferences` routes used by guest display mode.</li>
+                  <li><strong>v0.293:</strong> Pot strain links stay enabled after the guest dashboard refresh cycle.</li>
+                  <li><strong>v0.294:</strong> Added an optional Luftdaten-compatible live air sensor integration with cached backend polling and a compact header widget.</li>
+                  <li><strong>v0.295:</strong> Moved the compact air sensor widget behind the CanopyOps application name.</li>
+                  <li><strong>v0.296:</strong> Shows the Shelly light schedule as a light/dark cycle in the grow phase tile.</li>
+                  <li><strong>v0.297:</strong> Optimized the air sensor header widget for mobile view.</li>
                 </ul>
               </section>
             </div>
@@ -5739,8 +5974,7 @@ def changelog_page():
       <head>
         <title>GrowTent About</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        {FAVICON_LINKS}
         <style>
           :root {{ --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.15); }}
           :root[data-theme='light'] {{ --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); }}
@@ -5812,6 +6046,7 @@ def strain_library_page(request: Request):
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>CanopyOps Strains</title>
+        __FAVICON_LINKS__
         <style>
           :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.18); --accent:#3b82f6; --danger:#ef4444; }
           :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); --accent:#2563eb; --danger:#dc2626; }
@@ -6178,7 +6413,7 @@ def strain_library_page(request: Request):
         </script>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 @app.get("/grow-guide", response_class=HTMLResponse)
@@ -6191,6 +6426,7 @@ def grow_guide_page(request: Request):
       <head>
         <title>Grow-Guide</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        __FAVICON_LINKS__
         <style>
           :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --grid:rgba(148,163,184,.15); }
           :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --grid:rgba(51,65,85,.18); }
@@ -6223,7 +6459,7 @@ def grow_guide_page(request: Request):
         </main>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 @app.get("/app", response_class=HTMLResponse)
 def app_shell_page():
     return """
@@ -6231,8 +6467,7 @@ def app_shell_page():
       <head>
         <title>CanopyOps</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+        __FAVICON_LINKS__
         <style>
           :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --muted:#94a3b8; --grid:rgba(148,163,184,.15); }
           :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --muted:#475569; --grid:rgba(51,65,85,.18); }
@@ -6267,6 +6502,12 @@ def app_shell_page():
           .status-pill.offline { color:#ef4444; background:rgba(239,68,68,.14); border:1px solid rgba(239,68,68,.35); }
           .status-pill.online .status-dot { background:#22c55e; }
           .status-pill.offline .status-dot { background:#ef4444; }
+          .air-widget { display:none; align-items:center; gap:6px; padding:3px 8px; border:1px solid rgba(34,197,94,.34); border-radius:8px; background:rgba(34,197,94,.10); color:var(--text); font-size:.74rem; white-space:nowrap; }
+          .air-widget.offline { border-color:rgba(239,68,68,.45); background:rgba(239,68,68,.12); color:#fecaca; }
+          :root[data-theme='light'] .air-widget.offline { color:#7f1d1d; }
+          .air-widget-symbol { color:#38bdf8; font-weight:800; }
+          .air-widget-values { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+          .air-item { white-space:nowrap; }
           .muted { color:var(--muted); font-size:.84rem; margin-bottom:10px; }
           .header-btn { border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); border-radius:10px; padding:4px 8px; cursor:pointer; box-shadow:0 2px 10px rgba(2,6,23,.22); }
           .guest-badge-center { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); padding:4px 10px; border-radius:999px; border:1px solid rgba(239,68,68,.55); background:rgba(220,38,38,.22); color:#fecaca; font-size:.82rem; font-weight:700; white-space:nowrap; }
@@ -6284,6 +6525,15 @@ def app_shell_page():
               border-bottom:1px solid var(--grid);
             }
           }
+          @media (max-width:640px){
+            .header { padding:0 8px; gap:6px; }
+            .header-left { gap:6px; min-width:0; flex:1 1 auto; }
+            .header-left strong { gap:6px !important; flex:0 0 auto; }
+            .air-widget { max-width:150px; padding:2px 5px; gap:3px; border-radius:7px; font-size:.62rem; line-height:1.12; }
+            .air-widget-symbol { font-size:.72rem; line-height:1; }
+            .air-widget-values { display:grid; grid-template-columns:auto auto; gap:1px 5px; align-items:center; }
+            .air-unit-pm { display:none; }
+          }
         </style>
       </head>
       <body>
@@ -6293,7 +6543,7 @@ def app_shell_page():
         </script>
         <div class="shell">
           <header class="header">
-            <div class="header-left"><button class="menu-btn" id="menuBtn">☰</button><strong style="display:flex; align-items:center; gap:8px;"><img src="/favicon.svg" alt="CanopyOps" style="width:18px; height:18px;" />CanopyOps</strong></div>
+            <div class="header-left"><button class="menu-btn" id="menuBtn">☰</button><strong style="display:flex; align-items:center; gap:8px;"><img src="/favicon.svg" alt="CanopyOps" style="width:18px; height:18px;" />CanopyOps</strong><div id="airSensorWidget" class="air-widget" title=""><span class="air-widget-symbol">↗</span><span id="airSensorWidgetValues" class="air-widget-values"></span></div></div>
             <span id="guestModeBadge" class="guest-badge-center" style="display:none;">Gastmodus aktiv</span>
             <div style="display:flex; align-items:center; gap:10px;">
               <button class="header-btn" id="shellViewModeBtn">Mobile Ansicht</button>
@@ -6324,6 +6574,43 @@ def app_shell_page():
           let userRole = 'admin';
 
           function getLang(){ return (localStorage.getItem('gt_lang') || 'de') === 'de' ? 'de' : 'en'; }
+          function fmtAir(value, suffix, digits = 1){
+            const n = Number(value);
+            return Number.isFinite(n) ? `${n.toFixed(digits)} ${suffix}` : `- ${suffix}`;
+          }
+          function fmtAirValue(value, digits = 1){
+            const n = Number(value);
+            return Number.isFinite(n) ? n.toFixed(digits) : '-';
+          }
+          function renderAirSensorWidget(data){
+            const widget = document.getElementById('airSensorWidget');
+            const values = document.getElementById('airSensorWidgetValues');
+            if (!widget || !values) return;
+            if (!data?.enabled || !data?.configured) {
+              widget.style.display = 'none';
+              return;
+            }
+            values.innerHTML = [
+              `<span class="air-item">${fmtAirValue(data.temperature_c, 1)} <span class="air-unit">°C</span></span>`,
+              `<span class="air-item">${fmtAirValue(data.humidity_percent, 0)} <span class="air-unit">%</span></span>`,
+              `<span class="air-item">PM10 ${fmtAirValue(data.sds_p1, 1)} <span class="air-unit air-unit-pm">µg/m³</span></span>`,
+              `<span class="air-item">PM2.5 ${fmtAirValue(data.sds_p2, 1)} <span class="air-unit air-unit-pm">µg/m³</span></span>`,
+            ].join('');
+            widget.classList.toggle('offline', !data.ok);
+            widget.title = data.ok
+              ? (data.cached ? 'Air sensor live values (cached)' : 'Air sensor live values')
+              : (data.last_error || 'Air sensor offline');
+            widget.style.display = 'inline-flex';
+          }
+          async function loadAirSensorWidget(){
+            try {
+              const res = await fetch('/air-sensor/current', { cache: 'no-store' });
+              const data = await res.json().catch(() => ({}));
+              if (res.ok) renderAirSensorWidget(data);
+            } catch {
+              renderAirSensorWidget({ enabled:true, configured:true, ok:false, last_error:'Air sensor request failed' });
+            }
+          }
           function applyShellI18n(){
             const de = getLang() === 'de';
             const labels = {
@@ -6458,6 +6745,8 @@ def app_shell_page():
               }
             } catch {}
             loadTentNav();
+            loadAirSensorWidget();
+            setInterval(loadAirSensorWidget, 30000);
             applyShellI18n();
             updateViewBtnLabel();
             setFrame();
@@ -6465,7 +6754,7 @@ def app_shell_page():
         </script>
       </body>
     </html>
-    """.replace("__APP_VERSION__", APP_VERSION)
+    """.replace("__APP_VERSION__", APP_VERSION).replace("__FAVICON_LINKS__", FAVICON_LINKS)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -6477,6 +6766,7 @@ def dashboard_page(request: Request):
       <head>
         <title>GrowTent Dashboard</title>
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+        __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
         <style>
           :root {
@@ -6531,8 +6821,8 @@ def dashboard_page(request: Request):
           .pot-strain-link { width:auto !important; display:inline; padding:0; border:0; box-shadow:none; background:none; color:var(--link); font:inherit; font-weight:700; cursor:pointer; text-decoration:none; }
           .pot-strain-link:hover { filter:none; box-shadow:none; text-decoration:none; }
           button { padding:7px 11px; border-radius:9px; border:1px solid rgba(14,165,233,.45); background:linear-gradient(180deg, rgba(14,165,233,.22), rgba(2,132,199,.18)); color:var(--text); font-size:.8rem; font-weight:700; box-shadow:0 2px 8px rgba(2,6,23,.2); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; cursor:pointer; }
-          body.role-pending button:not(#viewModeBtn):not(#mobileNavToggle),
-          body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle) {
+          body.role-pending button:not(#viewModeBtn):not(#mobileNavToggle):not(.pot-strain-link),
+          body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle):not(.pot-strain-link) {
             pointer-events:none; opacity:.55; cursor:not-allowed;
           }
           body.role-pending #espOpenBtn, body.role-pending #espStatsBtn, body.role-pending #pollErrorsBtn,
@@ -6699,6 +6989,7 @@ def dashboard_page(request: Request):
             position: fixed;
             z-index: 1400;
             max-width: 460px;
+            pointer-events: none;
             background: var(--bg);
             color: var(--text);
             border: 1px solid var(--grid);
@@ -7137,6 +7428,7 @@ def dashboard_page(request: Request):
               irAmountTotal: 'Amount per pot',
               active: 'active',
               growSince: 'Grow since',
+              lightCycle: 'Light cycle',
               day: 'Day',
               week: 'Week',
               startDate: 'Start',
@@ -7297,6 +7589,7 @@ def dashboard_page(request: Request):
               irAmountTotal: 'Menge pro Topf',
               active: 'aktiv',
               growSince: 'Grow seit',
+              lightCycle: 'Lichtzyklus',
               day: 'Tag',
               week: 'Woche',
               startDate: 'Start',
@@ -7890,6 +8183,53 @@ def dashboard_page(request: Request):
             const mi = Number(m[2]);
             if (!Number.isFinite(h) || !Number.isFinite(mi) || h < 0 || h > 23 || mi < 0 || mi > 59) return null;
             return (h * 60) + mi;
+          }
+
+          function parseLightOffMinFromLine(line){
+            const s = String(line || '');
+            const m = /OFF\\s*(\\d{1,2}):(\\d{2})/i.exec(s);
+            if (!m) return null;
+            const h = Number(m[1]);
+            const mi = Number(m[2]);
+            if (!Number.isFinite(h) || !Number.isFinite(mi) || h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+            return (h * 60) + mi;
+          }
+
+          function formatCycleHours(minutes){
+            const n = Number(minutes);
+            if (!Number.isFinite(n)) return null;
+            const hours = n / 60;
+            if (Math.abs(hours - Math.round(hours)) < 0.01) return String(Math.round(hours));
+            return hours.toFixed(1).replace(/\\.0$/, '');
+          }
+
+          function lightCycleFromMinutes(onMin, offMin){
+            const on = Number(onMin);
+            const off = Number(offMin);
+            if (!Number.isFinite(on) || !Number.isFinite(off)) return null;
+            let lightMin = (off - on + (24 * 60)) % (24 * 60);
+            if (!Number.isFinite(lightMin) || lightMin <= 0) return null;
+            const darkMin = (24 * 60) - lightMin;
+            const light = formatCycleHours(lightMin);
+            const dark = formatCycleHours(darkMin);
+            return (light && dark) ? `${light}/${dark}` : null;
+          }
+
+          function lightCycleFromLine(line){
+            return lightCycleFromMinutes(parseLightOnMinFromLine(line), parseLightOffMinFromLine(line));
+          }
+
+          function lightCycleFromSchedule(schedule){
+            if (!schedule || typeof schedule !== 'object') return null;
+            if (schedule.cycle_label) return String(schedule.cycle_label);
+            const lightHours = Number(schedule.light_hours);
+            const darkHours = Number(schedule.dark_hours);
+            if (Number.isFinite(lightHours) && Number.isFinite(darkHours)) {
+              const light = formatCycleHours(lightHours * 60);
+              const dark = formatCycleHours(darkHours * 60);
+              if (light && dark) return `${light}/${dark}`;
+            }
+            return lightCycleFromMinutes(schedule.on_minutes, schedule.off_minutes);
           }
 
           function formatNextRunDate(dt){
@@ -9486,7 +9826,17 @@ def dashboard_page(request: Request):
             const phaseStartDate = formatGrowStartDate(phaseDay, growDateReference);
             txt('growTotals', `${tr('growSince')}: ${tr('day')} ${Number.isFinite(growDay) ? Number(growDay) : '-'} / ${tr('week')} ${Number.isFinite(growWeek) ? Number(growWeek) : '-'} / ${tr('startDate')}: ${growStartDate}`);
             const phaseName = phaseLabel(phase);
+<<<<<<< HEAD
             txt('growPhaseStats', `${phaseName !== '-' ? phaseName : 'Phase'}: ${tr('day')} ${Number.isFinite(phaseDay) ? Number(phaseDay) : '-'} / ${tr('week')} ${Number.isFinite(phaseWeek) ? Number(phaseWeek) : '-'} / ${tr('startDate')}: ${phaseStartDate}`);
+=======
+            const phaseStatsText = `${phaseName !== '-' ? phaseName : 'Phase'}: ${tr('day')} ${Number.isFinite(phaseDay) ? Number(phaseDay) : '-'} / ${tr('week')} ${Number.isFinite(phaseWeek) ? Number(phaseWeek) : '-'}`;
+            let lightCycle = lightCycleFromLine(d['settings.shelly.light.line']);
+            if (!lightCycle && hasTextValue(d['settings.shelly.light.ip'])) {
+              const sched = await readLightScheduleOnDemand(false);
+              lightCycle = lightCycleFromSchedule(sched);
+            }
+            html('growPhaseStats', `${escHtml(phaseStatsText)}<br><span class="small" style="font-weight:600;">${escHtml(tr('lightCycle'))}: ${escHtml(lightCycle || '-')}</span>`);
+>>>>>>> 56f6177652ed1880d00554821417bdbb747d9d5f
 
             const mainWh = firstNum(d, ['cur.shelly.main.Wh', 'shelly.main.wh']);
             txt('mainEnergyValue', Number.isFinite(Number(mainWh)) ? `${(Number(mainWh) / 1000).toFixed(3)} kWh` : '-');
@@ -10009,7 +10359,7 @@ def dashboard_page(request: Request):
             }
             document.querySelectorAll('button').forEach(btn => {
               const id = btn.id || '';
-              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle');
+              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || btn.classList.contains('pot-strain-link'));
               btn.disabled = isGuestMode && !keep;
             });
           }
@@ -10059,4 +10409,4 @@ def dashboard_page(request: Request):
         </script>
       </body>
     </html>
-    """
+    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)

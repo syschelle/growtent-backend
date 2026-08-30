@@ -2,6 +2,7 @@
 
 Entries are maintained in project language (English/German as needed).
 
+<<<<<<< HEAD
 ## v0.288
 
 ### Grow and phase start dates
@@ -10,6 +11,80 @@ Entries are maintained in project language (English/German as needed).
 - Displays both counters as day / week / start date in the dashboard.
 - Uses calendar-day arithmetic so daylight-saving-time changes do not shift the calculated date.
 - Falls back to the browser's current local date if the state has no `captured_at` timestamp.
+=======
+## v0.297
+
+### Compact mobile air sensor header
+- Optimizes the air sensor header widget for mobile view.
+- Uses smaller spacing and a compact 2x2 value grid on narrow screens.
+- Hides the PM unit suffix on mobile so the outside values no longer dominate the header.
+- Bumped the application version to `v0.297`.
+
+## v0.296
+
+### Light cycle in grow phase tile
+- Shows the configured Shelly light schedule as a light/dark cycle in the grow phase tile, for example `18/6` or `12/12`.
+- Derives the value from the existing controller light schedule line when possible and falls back to the cached Shelly `Schedule.List` endpoint.
+- Extends the Shelly schedule parser with OFF time and light/dark duration metadata.
+- Bumped the application version to `v0.296`.
+
+## v0.295
+
+### Air sensor header placement
+- Moves the compact air sensor widget behind the CanopyOps application name in the header.
+- Bumped the application version to `v0.295`.
+
+## v0.294
+
+### Optional Luftdaten air sensor integration
+- Added optional Sensor.Community/Luftdaten DNMS-compatible live air sensor settings and current-value API endpoints.
+- Maps PM10, PM2.5, temperature, humidity, age and software version from `/data.json` with parser fallbacks and last-valid-value retention.
+- Caches successful sensor reads for 180 seconds, throttles failed retries for 30 seconds, blocks unsafe server-side hosts and redirects, and uses short HTTP timeouts.
+- Added setup controls and a compact header widget for current air sensor values.
+- Bumped the application version to `v0.294`.
+
+## v0.293
+
+### Persistent guest pot strain clicks
+- Keeps dashboard pot strain buttons enabled when the 30-second guest refresh reapplies read-only button restrictions.
+- Prevents clickable pot strain names from becoming disabled after the first refresh cycle.
+- Bumped the application version to `v0.293`.
+
+## v0.292
+
+### UI preferences route restore
+- Adds the missing modular `GET /ui/preferences` and `POST /ui/preferences` route forwarding.
+- Removes the 404 browser-console errors from guest display mode preference loading/saving.
+- Bumped the application version to `v0.292`.
+
+## v0.291
+
+### Repeatable pot strain clicks
+- Prevents the dashboard strain detail popover from intercepting pointer events after it opens.
+- Keeps guest users able to click pot strain links repeatedly without needing to dismiss the popover first.
+- Bumped the application version to `v0.291`.
+
+## v0.290
+
+### Guest pot strain details
+- Keeps dashboard pot strain links active for guest users so they can open the strain detail popover.
+- Adds Cereal Milk, Green Poison and Oreoz to the bundled default strain library.
+- Bumped the application version to `v0.290`.
+
+## v0.289
+
+### Favicon cache refresh
+- Versioned the browser favicon links with the application version.
+- Added no-cache headers to the SVG favicon response and ico redirect so browser tabs refresh the icon reliably.
+- Bumped the application version to `v0.289`.
+
+## v0.288
+
+### Browser tab favicon
+- Added explicit favicon links to the web UI pages.
+- Added `/favicon.ico` as a compatibility redirect to the existing SVG favicon.
+- Bumped the application version to `v0.288`.
+>>>>>>> 56f6177652ed1880d00554821417bdbb747d9d5f
 
 ## v0.287
 

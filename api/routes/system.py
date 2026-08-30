@@ -16,6 +16,11 @@ def favicon_svg():
     return legacy.favicon_svg()
 
 
+@router.get('/favicon.ico', include_in_schema=False)
+def favicon_ico():
+    return legacy.favicon_ico()
+
+
 @router.get('/health')
 def health():
     return legacy.health()
@@ -84,6 +89,31 @@ def api_poll_errors(request: Request):
 @router.get('/api/export')
 def api_export(tent_id: int, range: str = '24h'):
     return legacy.export_history_csv(tent_id, range)
+
+
+@router.get('/ui/preferences')
+def ui_preferences_get(request: Request):
+    return legacy.get_ui_preferences(request)
+
+
+@router.post('/ui/preferences')
+def ui_preferences_save(payload: legacy.UiPreferencesPayload, request: Request):
+    return legacy.save_ui_preferences(payload, request)
+
+
+@router.get('/config/air-sensor')
+def air_sensor_config_get():
+    return legacy.get_air_sensor_config()
+
+
+@router.post('/config/air-sensor')
+def air_sensor_config_save(payload: legacy.AirSensorSettings):
+    return legacy.set_air_sensor_config(payload)
+
+
+@router.get('/air-sensor/current')
+def air_sensor_current():
+    return legacy.air_sensor_current()
 
 
 @router.get('/api/history')

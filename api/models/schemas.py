@@ -90,6 +90,34 @@ class ExhaustVpdPlanPayload(StrictModel):
     hysteresis_kpa: float = Field(default=0.05, ge=0, le=10)
 
 
+class AirSensorSettings(StrictModel):
+    enabled: bool = False
+    host: str | None = Field(default=None, max_length=255)
+
+    @field_validator("host", mode="before")
+    @classmethod
+    def strip_host(cls, value):
+        if value is None:
+            return None
+        value = str(value).strip()
+        return value or None
+
+
+class AirSensorCurrent(BaseModel):
+    enabled: bool
+    configured: bool
+    ok: bool
+    cached: bool
+    temperature_c: float | None = None
+    humidity_percent: float | None = None
+    sds_p1: float | None = None
+    sds_p2: float | None = None
+    age_seconds: int | None = None
+    software_version: str | None = None
+    last_success_at: str | None = None
+    last_error: str | None = None
+
+
 class AuthPayload(StrictModel):
     enabled: bool = False
     username: str | None = None
