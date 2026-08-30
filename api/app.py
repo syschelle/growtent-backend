@@ -41,7 +41,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.287"
+APP_VERSION = "v0.288"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5699,6 +5699,7 @@ def changelog_page():
                   <li><strong>v0.283:</strong> Reads the light Shelly schedule on demand and caches it to calculate the next irrigation run without permanent schedule polling.</li>
                   <li><strong>v0.286:</strong> Uses the controller pump-enable flags to disable and gray out unavailable irrigation pump controls.</li>
                   <li><strong>v0.287:</strong> Makes irrigation pump mapping board-aware: relays 6-8 on legacy 8-relay controllers and relays 1-3 on ESP32-S3-Relay-6Ch controllers.</li>
+                  <li><strong>v0.288:</strong> Shows the calculated grow start date and current phase start date next to their day and week counters.</li>
                 </ul>
                 <h3 class="section-changes">Exhaust and history</h3>
                 <ul>
@@ -7138,6 +7139,7 @@ def dashboard_page(request: Request):
               growSince: 'Grow since',
               day: 'Day',
               week: 'Week',
+              startDate: 'Start',
               phaseVegetative: 'Vegetative',
               phaseFlower: 'Flower',
               phaseDry: 'Dry',
@@ -7297,6 +7299,7 @@ def dashboard_page(request: Request):
               growSince: 'Grow seit',
               day: 'Tag',
               week: 'Woche',
+              startDate: 'Start',
               phaseVegetative: 'Vegetativ',
               phaseFlower: 'Blüte',
               phaseDry: 'Trocknung',
@@ -7974,6 +7977,24 @@ def dashboard_page(request: Request):
             if (p === 2) return 'phase-flower';
             if (p === 3) return 'phase-dry';
             return '';
+          }
+
+          function startDateFromElapsedDay(day, referenceDate=null){
+            const n = Number(day);
+            if (!Number.isFinite(n) || n < 1) return null;
+            const ref = referenceDate instanceof Date && !Number.isNaN(referenceDate.getTime())
+              ? referenceDate
+              : new Date();
+            const start = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+            start.setDate(start.getDate() - (Math.floor(n) - 1));
+            return start;
+          }
+
+          function formatGrowStartDate(day, referenceDate=null){
+            const start = startDateFromElapsedDay(day, referenceDate);
+            if (!start) return '-';
+            const locale = currentLang === 'de' ? 'de-DE' : 'en-GB';
+            return new Intl.DateTimeFormat(locale, { day:'2-digit', month:'2-digit', year:'numeric' }).format(start);
           }
 
           function normalizeShellyDeviceFromPayload(d, key){
@@ -9460,9 +9481,12 @@ def dashboard_page(request: Request):
             const growWeek = firstNum(d, ['settings.grow.currentGrowWeek']);
             const phaseDay = firstNum(d, ['settings.grow.currentPhaseDay']);
             const phaseWeek = firstNum(d, ['settings.grow.currentPhaseWeek']);
-            txt('growTotals', `${tr('growSince')}: ${tr('day')} ${Number.isFinite(growDay) ? Number(growDay) : '-'} / ${tr('week')} ${Number.isFinite(growWeek) ? Number(growWeek) : '-'}`);
+            const growDateReference = j?.captured_at ? new Date(j.captured_at) : new Date();
+            const growStartDate = formatGrowStartDate(growDay, growDateReference);
+            const phaseStartDate = formatGrowStartDate(phaseDay, growDateReference);
+            txt('growTotals', `${tr('growSince')}: ${tr('day')} ${Number.isFinite(growDay) ? Number(growDay) : '-'} / ${tr('week')} ${Number.isFinite(growWeek) ? Number(growWeek) : '-'} / ${tr('startDate')}: ${growStartDate}`);
             const phaseName = phaseLabel(phase);
-            txt('growPhaseStats', `${phaseName !== '-' ? phaseName : 'Phase'}: ${tr('day')} ${Number.isFinite(phaseDay) ? Number(phaseDay) : '-'} / ${tr('week')} ${Number.isFinite(phaseWeek) ? Number(phaseWeek) : '-'}`);
+            txt('growPhaseStats', `${phaseName !== '-' ? phaseName : 'Phase'}: ${tr('day')} ${Number.isFinite(phaseDay) ? Number(phaseDay) : '-'} / ${tr('week')} ${Number.isFinite(phaseWeek) ? Number(phaseWeek) : '-'} / ${tr('startDate')}: ${phaseStartDate}`);
 
             const mainWh = firstNum(d, ['cur.shelly.main.Wh', 'shelly.main.wh']);
             txt('mainEnergyValue', Number.isFinite(Number(mainWh)) ? `${(Number(mainWh) / 1000).toFixed(3)} kWh` : '-');

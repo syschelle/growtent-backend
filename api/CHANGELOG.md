@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.288
+
+### Grow and phase start dates
+- Calculates the grow start date from `settings.grow.currentGrowDay` using the captured controller state date as the reference.
+- Calculates the current grow-phase start date independently from `settings.grow.currentPhaseDay`.
+- Displays both counters as day / week / start date in the dashboard.
+- Uses calendar-day arithmetic so daylight-saving-time changes do not shift the calculated date.
+- Falls back to the browser's current local date if the state has no `captured_at` timestamp.
+
 ## v0.287
 
 ### Board-aware irrigation pump mapping
