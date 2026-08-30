@@ -42,7 +42,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.298"
+APP_VERSION = "v0.299"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5947,7 +5947,7 @@ def changelog_page():
                   <li><strong>v0.295:</strong> Moved the compact air sensor widget behind the CanopyOps application name.</li>
                   <li><strong>v0.296:</strong> Shows the Shelly light schedule as a light/dark cycle in the grow phase tile.</li>
                   <li><strong>v0.297:</strong> Optimized the air sensor header widget for mobile view.</li>
-                  <li><strong>v0.298:</strong> Adds calculated start dates to the grow and phase day/week lines.</li>
+                  <li><strong>v0.299:</strong> Adds calculated start dates to the grow and phase day/week lines.</li>
                 </ul>
               </section>
             </div>
