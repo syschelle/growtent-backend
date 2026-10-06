@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.306
+
+### Soil sensor detail line layout
+- Places the raw ADC value and ESP soil sensor name on separate lines in the live soil moisture tile.
+- Keeps the sensor name directly below the raw value for improved readability.
+- Bumped the application version to `v0.306`.
+
 ## v0.305
 
 ### Soil moisture tile labels

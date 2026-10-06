@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.305"
+APP_VERSION = "v0.306"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6229,6 +6229,7 @@ def changelog_page():
                   <li><strong>v0.303:</strong> Persists soil sensor IPs through the active setup API so saved values remain visible after updating a tent.</li>
                   <li><strong>v0.304:</strong> Lets setup save soil sensor IPs without retyping tent name and source URL when the target tent is known.</li>
                   <li><strong>v0.305:</strong> Shows soil moisture live cards as Topf 1/2/3 and moves the ESP sensor name into the detail line while hiding firmware metadata.</li>
+                  <li><strong>v0.306:</strong> Places the soil sensor name on its own line below the raw ADC value in the live moisture tile.</li>
                 </ul>
               </section>
             </div>
@@ -7257,8 +7258,8 @@ def dashboard_page(request: Request):
           .soil-row:first-child { border-top:0; padding-top:0; }
           .soil-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
           .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; }
-          .soil-meta { display:flex; justify-content:space-between; gap:10px; }
-          .soil-meta > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+          .soil-meta { display:block; text-align:right; }
+          .soil-meta > span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
           .history-card { position:relative; }
