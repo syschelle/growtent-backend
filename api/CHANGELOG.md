@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.304
+
+### Soil sensor IP setup ergonomics
+- Allows saving soil sensor IPs without retyping tent name and source URL when editing an existing tent.
+- If exactly one tent exists, entering only soil sensor IPs updates that tent automatically.
+- Shows a clearer message when multiple tents exist and no tent has been selected for editing.
+- Bumped the application version to `v0.304`.
+
 ## v0.303
 
 ### Soil sensor setup persistence

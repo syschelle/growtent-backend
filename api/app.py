@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.303"
+APP_VERSION = "v0.304"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -4944,6 +4944,7 @@ def setup_page(request: Request):
           let pending2faToken = '';
           let currentPlanTentId = 0;
           let authHasPassword = false;
+          let setupTentsCache = [];
 
           const I18N_SETUP = {
             en: {
@@ -5376,6 +5377,7 @@ def setup_page(request: Request):
             try {
               const res = await fetch('/tents', { cache: 'no-store' });
               const tents = await res.json();
+              setupTentsCache = Array.isArray(tents) ? tents : [];
               if (!Array.isArray(tents) || tents.length === 0) {
                 list.innerHTML = '<div>No tents configured.</div>';
                 return;
@@ -5921,20 +5923,55 @@ def setup_page(request: Request):
             const shelly_main_password = (document.getElementById('tentMainPass')?.value || '').trim();
             const pot_strains = readPotStrainsFromForm();
             const soil_sensors = readSoilSensorsFromForm();
+            let effectiveEditId = editId;
+            let effectiveName = name;
+            let effectiveSourceUrl = source_url;
+            let effectiveRtspUrl = rtsp_url;
+            let effectiveShellyMainUser = shelly_main_user;
+            let effectivePotStrains = pot_strains;
 
-            if (!name || !source_url) {
-              tentMsg.textContent = 'Please provide name and source URL.';
+            if ((!effectiveName || !effectiveSourceUrl) && soil_sensors.length) {
+              const fallbackTent = effectiveEditId > 0
+                ? setupTentsCache.find(t => Number(t.id) === effectiveEditId)
+                : (setupTentsCache.length === 1 ? setupTentsCache[0] : null);
+              if (fallbackTent) {
+                effectiveEditId = Number(fallbackTent.id || effectiveEditId);
+                effectiveName = effectiveName || String(fallbackTent.name || '').trim();
+                effectiveSourceUrl = effectiveSourceUrl || String(fallbackTent.source_url || '').trim();
+                effectiveRtspUrl = effectiveRtspUrl || String(fallbackTent.rtsp_url || '').trim();
+                effectiveShellyMainUser = effectiveShellyMainUser || String(fallbackTent.shelly_main_user || '').trim();
+                effectivePotStrains = {
+                  ...(fallbackTent.pot_strains || {}),
+                  ...pot_strains,
+                };
+              }
+            }
+
+            if (!effectiveName || !effectiveSourceUrl) {
+              tentMsg.textContent = soil_sensors.length
+                ? (setupTentsCache.length > 1
+                  ? (langSel?.value === 'de' ? 'Bitte zuerst ein Zelt über Bearbeiten auswählen.' : 'Please edit a tent first.')
+                  : (langSel?.value === 'de' ? 'Bitte Zeltname und Source URL angeben.' : 'Please provide name and source URL.'))
+                : 'Please provide name and source URL.';
               return;
             }
 
             try {
-              const url = editId > 0 ? `/tents/${editId}` : '/tents';
-              const method = editId > 0 ? 'PUT' : 'POST';
+              const url = effectiveEditId > 0 ? `/tents/${effectiveEditId}` : '/tents';
+              const method = effectiveEditId > 0 ? 'PUT' : 'POST';
 
               const res = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains, soil_sensors })
+                body: JSON.stringify({
+                  name: effectiveName,
+                  source_url: effectiveSourceUrl,
+                  rtsp_url: effectiveRtspUrl,
+                  shelly_main_user: effectiveShellyMainUser,
+                  shelly_main_password,
+                  pot_strains: effectivePotStrains,
+                  soil_sensors,
+                })
               });
 
               if (!res.ok) {
@@ -5943,7 +5980,7 @@ def setup_page(request: Request):
                 return;
               }
 
-              tentMsg.textContent = editId > 0 ? 'Tent updated.' : 'Tent added.';
+              tentMsg.textContent = effectiveEditId > 0 ? 'Tent updated.' : 'Tent added.';
               document.getElementById('tentName').value = '';
               document.getElementById('tentUrl').value = '';
               document.getElementById('tentRtsp').value = '';
@@ -5955,7 +5992,7 @@ def setup_page(request: Request):
               btn.textContent = tSetup('addTent');
               await loadTents();
             } catch (e) {
-              tentMsg.textContent = editId > 0 ? 'Update failed.' : 'Add failed.';
+              tentMsg.textContent = effectiveEditId > 0 ? 'Update failed.' : 'Add failed.';
             }
           });
 
@@ -6190,6 +6227,7 @@ def changelog_page():
                   <li><strong>v0.301:</strong> Adds 40-second soil moisture polling, live values and colored history lines for up to three sensors per tent.</li>
                   <li><strong>v0.302:</strong> Configures dedicated ESP8266 soil sensor IPs per tent instead of deriving them from the controller URL.</li>
                   <li><strong>v0.303:</strong> Persists soil sensor IPs through the active setup API so saved values remain visible after updating a tent.</li>
+                  <li><strong>v0.304:</strong> Lets setup save soil sensor IPs without retyping tent name and source URL when the target tent is known.</li>
                 </ul>
               </section>
             </div>
