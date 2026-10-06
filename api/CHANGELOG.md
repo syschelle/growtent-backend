@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.301
+
+### Soil moisture sensors
+- Polls each tent controller's `/api/current-values` endpoint every 40 seconds for up to three soil moisture sensors.
+- Stores soil moisture readings in the normal tent history payload so dashboard history includes all detected sensors.
+- Adds a live soil moisture dashboard card and a multi-line soil moisture history chart with distinct colors per sensor.
+- Bumped the application version to `v0.301`.
+
 ## v0.300
 
 ### Date-only grow phase dates

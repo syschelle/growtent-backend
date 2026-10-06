@@ -29,6 +29,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 # POLL_URL removed: no default tent source is injected on fresh installs.
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
+SOIL_SENSOR_POLL_SECONDS = int(os.getenv("SOIL_SENSOR_POLL_SECONDS", "40"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 OFFLINE_NOTIFY_DELAY_SECONDS = int(os.getenv("OFFLINE_NOTIFY_DELAY_SECONDS", "300"))
 HEAP_WARN_FREE_BYTES = int(os.getenv("HEAP_WARN_FREE_BYTES", "120000"))
@@ -42,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.300"
+APP_VERSION = "v0.301"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -61,6 +62,7 @@ SESSION_REFRESH_THRESHOLD_SECONDS = int(os.getenv("SESSION_REFRESH_THRESHOLD_SEC
 EMA_ALPHA = float(os.getenv("EMA_ALPHA", "0.3"))
 EMA_STATE: dict[int, dict] = {}
 SENSOR_INIT: dict[int, bool] = {}
+SOIL_SENSOR_CACHE: dict[int, dict] = {}
 LOGGER = logging.getLogger("growtent.api")
 STRAINS_CSV_LOCK = threading.RLock()
 STRAINS_CSV_COLUMNS = (
@@ -1357,6 +1359,118 @@ def _get_last_payload(tent_id: int):
         return {}
 
 
+def _soil_sensor_url(source_url: str | None) -> str | None:
+    raw = str(source_url or "").strip()
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+    except Exception:
+        return None
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}/api/current-values"
+
+
+def _clean_soil_sensor(item: object, index: int) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    moisture = _to_float(item.get("moisture_percent"))
+    raw_adc = _to_float(item.get("raw_adc"))
+    if moisture is None and raw_adc is None:
+        return None
+
+    calibrated_raw = item.get("calibrated")
+    calibrated = None
+    if isinstance(calibrated_raw, bool):
+        calibrated = calibrated_raw
+    elif calibrated_raw is not None:
+        calibrated = str(calibrated_raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    sensor_name = str(item.get("sensor") or item.get("device") or f"SoilSensor-{index}").strip()
+    device_name = str(item.get("device") or sensor_name).strip()
+    return {
+        "id": sensor_name or device_name or f"SoilSensor-{index}",
+        "device": device_name or sensor_name or f"SoilSensor-{index}",
+        "sensor": sensor_name or device_name or f"SoilSensor-{index}",
+        "signal_pin": str(item.get("signal_pin") or "").strip() or None,
+        "firmware_version": str(item.get("firmware_version") or "").strip() or None,
+        "raw_adc": int(raw_adc) if raw_adc is not None else None,
+        "moisture_percent": round(max(0.0, min(100.0, moisture)), 2) if moisture is not None else None,
+        "calibrated": calibrated,
+        "last_measurement_at": str(item.get("last_measurement_at") or "").strip() or None,
+        "wifi_rssi": int(_to_float(item.get("wifi_rssi"))) if _to_float(item.get("wifi_rssi")) is not None else None,
+        "uptime_seconds": int(_to_float(item.get("uptime_seconds"))) if _to_float(item.get("uptime_seconds")) is not None else None,
+    }
+
+
+def _parse_soil_sensor_payload(payload: object) -> list[dict]:
+    candidates: object
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        for key in ("sensors", "soil_sensors", "current_values", "values"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                candidates = value
+                break
+        else:
+            candidates = [payload]
+    else:
+        candidates = []
+
+    sensors: list[dict] = []
+    seen: set[str] = set()
+    for index, item in enumerate(candidates, start=1):
+        cleaned = _clean_soil_sensor(item, index)
+        if not cleaned:
+            continue
+        sid = str(cleaned.get("id") or f"SoilSensor-{index}")
+        if sid in seen:
+            continue
+        seen.add(sid)
+        sensors.append(cleaned)
+        if len(sensors) >= 3:
+            break
+    return sensors
+
+
+def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Client) -> None:
+    tent_id = int(tent.get("id"))
+    url = _soil_sensor_url(tent.get("source_url"))
+    if not url:
+        return
+
+    now = time.monotonic()
+    cache = SOIL_SENSOR_CACHE.get(tent_id) or {}
+    should_poll = cache.get("last_poll_monotonic") is None or (
+        now - float(cache.get("last_poll_monotonic") or 0.0)
+    ) >= max(1, SOIL_SENSOR_POLL_SECONDS)
+
+    if should_poll:
+        cache = {
+            **cache,
+            "last_poll_monotonic": now,
+            "last_poll_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            r = client.get(url, timeout=5.0)
+            r.raise_for_status()
+            sensors = _parse_soil_sensor_payload(r.json())
+            cache.update({"ok": True, "sensors": sensors, "last_error": None})
+        except Exception as exc:
+            cache.update({"ok": False, "last_error": str(exc)})
+        SOIL_SENSOR_CACHE[tent_id] = cache
+
+    sensors = cache.get("sensors") or []
+    if sensors:
+        payload["soil.sensors"] = sensors
+    payload["soil.poll.ok"] = bool(cache.get("ok")) if cache else False
+    payload["soil.poll.url"] = url
+    payload["soil.poll.lastPollAt"] = cache.get("last_poll_at")
+    payload["soil.poll.lastError"] = cache.get("last_error")
+
+
 def save_state(tent_id: int, payload: dict):
     captured_at = datetime.now(timezone.utc)
 
@@ -2162,6 +2276,7 @@ def poll_loop():
 
                         # Keep main consumption history sourced from Shelly directly.
                         _refresh_main_shelly_in_payload(payload, tent)
+                        _refresh_soil_sensors_in_payload(payload, tent, client)
 
                         save_state(tent["id"], payload)
                         _track_watering_run_from_payload(tent["id"], payload)
@@ -3729,6 +3844,14 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
         if vpd_raw is None:
             vpd_raw = _calc_vpd_kpa(temp_raw, leaf_offset, hum_raw)
 
+        soil_sensors = []
+        raw_soil_sensors = d.get("soil.sensors")
+        if isinstance(raw_soil_sensors, list):
+            for sensor in raw_soil_sensors[:3]:
+                cleaned = _clean_soil_sensor(sensor, len(soil_sensors) + 1)
+                if cleaned:
+                    soil_sensors.append(cleaned)
+
         # Ignore invalid startup/noise samples in history pipeline.
         if not _sensor_values_valid(temp_raw, hum_raw, vpd_raw):
             continue
@@ -3757,6 +3880,7 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "sysMinFreeHeap": _to_float(d.get("sys.minFreeHeap")),
                 "sysLargestFreeHeapBlock": _to_float(d.get("sys.largestFreeHeapBlock")),
                 "sysHeapSize": _to_float(d.get("sys.heapSize")),
+                "soilSensors": soil_sensors,
             }
         )
 
@@ -5949,6 +6073,7 @@ def changelog_page():
                   <li><strong>v0.297:</strong> Optimized the air sensor header widget for mobile view.</li>
                   <li><strong>v0.299:</strong> Adds calculated start dates to the grow and phase day/week lines.</li>
                   <li><strong>v0.300:</strong> Shows grow and phase dates without weekday or date label.</li>
+                  <li><strong>v0.301:</strong> Adds 40-second soil moisture polling, live values and colored history lines for up to three sensors per tent.</li>
                 </ul>
               </section>
             </div>
@@ -6972,6 +7097,11 @@ def dashboard_page(request: Request):
           #hum { color:#a78bfa; }
           #vpd { color:#f59e0b; }
           #extTemp { color:#10b981; }
+          #soilSensorsList { display:grid; gap:6px; }
+          .soil-row { display:flex; justify-content:space-between; gap:10px; align-items:baseline; border-top:1px solid var(--grid); padding-top:6px; }
+          .soil-row:first-child { border-top:0; padding-top:0; }
+          .soil-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+          .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
           .history-card { position:relative; }
@@ -7103,6 +7233,13 @@ def dashboard_page(request: Request):
             </div>
             <div class=\"value\" id=\"extTemp\">-</div>
           </div>
+          <div class=\"card\" id=\"soilSensorsCard\" style=\"display:none;\">
+            <div class=\"card-head\">
+              <div class=\"label\"><span>🌱</span> <span id=\"lblSoilSensors\">Soil moisture</span></div>
+              <div class=\"small\" id=\"soilSensorsLastChange\">Update: -</div>
+            </div>
+            <div id=\"soilSensorsList\"></div>
+          </div>
           <div class=\"card\" id=\"tankCurrentCard\" style=\"display:none;\">
             <div class=\"card-head\">
               <div class=\"label\"><span>🛢️</span> <span id=\"lblTankLevel\">Tank level</span></div>
@@ -7157,6 +7294,12 @@ def dashboard_page(request: Request):
           <div class=\"label\" id=\"lblVpdHistory\"><span id=\"lblVpdHistoryText\">VPD History</span> <span id=\"vpdHistoryMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"vpdChart\"></canvas>
           <div id=\"historyOverlayVpd\" class=\"history-overlay\"></div>
+        </div>
+
+        <div class=\"card history-card\" id=\"soilMoistureHistoryCard\" style=\"display:none;\">
+          <div class=\"label\" id=\"lblSoilMoistureHistory\">Soil moisture history</div>
+          <canvas id=\"soilMoistureChart\"></canvas>
+          <div id=\"historyOverlaySoilMoisture\" class=\"history-overlay\"></div>
         </div>
 
         <div class=\"card history-card\">
@@ -7315,6 +7458,8 @@ def dashboard_page(request: Request):
               tempUnit: 'Temperature Unit:',
               temperature: 'Temperature',
               humidity: 'Humidity',
+              soilMoisture: 'Soil moisture',
+              soilMoistureHistory: 'Soil moisture history',
               rawValue: 'Raw',
               vpd: 'VPD',
               extTemp: 'Tank temperature',
@@ -7475,6 +7620,8 @@ def dashboard_page(request: Request):
               tempUnit: 'Temperatureinheit:',
               temperature: 'Temperatur',
               humidity: 'Luftfeuchte',
+              soilMoisture: 'Bodenfeuchte',
+              soilMoistureHistory: 'Bodenfeuchteverlauf',
               rawValue: 'Rohwert',
               vpd: 'VPD',
               extTemp: 'Wassertanktemperatur',
@@ -7684,6 +7831,8 @@ def dashboard_page(request: Request):
             txt('lblHum', tr('humidity'));
             txt('lblVpd', tr('vpd'));
             txt('lblExtTemp', 'DS18B20');
+            txt('lblSoilSensors', tr('soilMoisture'));
+            txt('soilSensorsLastChange', `${tr('lastChange')}: -`);
             txt('lblTankLevel', tr('tankLevel'));
             txt('tankLevelSub', `${tr('tankDistance')}: - cm`);
             txt('tankPercent', '- %');
@@ -7698,6 +7847,7 @@ def dashboard_page(request: Request):
             txt('lblTempHistoryText', tr('tempHistory'));
             txt('lblHumHistoryText', tr('humHistory'));
             txt('lblVpdHistoryText', tr('vpdHistory'));
+            txt('lblSoilMoistureHistory', tr('soilMoistureHistory'));
             txt('lblAlphaHistoryText', tr('alphaHistory'));
             const showInfoPopover = (anchorEl, text) => {
               const pop = document.getElementById('alphaHintPopover');
@@ -7764,6 +7914,7 @@ def dashboard_page(request: Request):
             txt('lblLightWHistory', tr('lightConsumptionHistory'));
             txt('lblHumidifierWHistory', tr('humidifierConsumptionHistory'));
             txt('lblExhaustWHistory', tr('exhaustHistory'));
+            txt('lblSoilMoistureHistory', tr('soilMoistureHistory'));
             txt('lblHeapHistoryText', tr('heapHistory'));
             const heapHistoryHintEl = document.getElementById('heapHistoryHint');
             if (heapHistoryHintEl) {
@@ -8036,7 +8187,7 @@ def dashboard_page(request: Request):
           function setHistoryOverlays(message){
             const ids = [
               'historyOverlayTemp', 'historyOverlayHum', 'historyOverlayVpd',
-              'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW',
+              'historyOverlaySoilMoisture', 'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW',
               'historyOverlayLightW', 'historyOverlayHumidifierW', 'historyOverlayExhaustW'
             ];
             ids.forEach((id) => {
@@ -9269,6 +9420,7 @@ def dashboard_page(request: Request):
           let tempChart;
           let humChart;
           let vpdChart;
+          let soilMoistureChart;
           let alphaChart;
           let extTempChart;
           let mainWChart;
@@ -9319,6 +9471,95 @@ def dashboard_page(request: Request):
                     title: { display: true, text: unitLabel, color:'#cbd5e1' },
                     afterFit: (scale) => { scale.width = 56; }
                   }
+                },
+                plugins: { legend: { labels: legendLabelsWithCurrent() } }
+              }
+            });
+          }
+
+          function soilSensorColor(index){
+            return ['#14b8a6', '#f97316', '#38bdf8'][index % 3];
+          }
+
+          function normaliseSoilSensors(raw){
+            const items = Array.isArray(raw) ? raw : [];
+            return items.slice(0, 3).map((item, index) => {
+              const name = String(item?.sensor || item?.device || item?.id || `SoilSensor-${index + 1}`).trim() || `SoilSensor-${index + 1}`;
+              const moisture = Number(item?.moisture_percent);
+              const rawAdc = Number(item?.raw_adc);
+              return {
+                id: String(item?.id || name).trim() || name,
+                name,
+                moisture: Number.isFinite(moisture) ? moisture : null,
+                rawAdc: Number.isFinite(rawAdc) ? rawAdc : null,
+                calibrated: item?.calibrated,
+                lastMeasurementAt: item?.last_measurement_at || null,
+                signalPin: item?.signal_pin || null,
+                firmwareVersion: item?.firmware_version || null
+              };
+            }).filter((item) => item.moisture !== null || item.rawAdc !== null);
+          }
+
+          function renderSoilSensors(payload){
+            const card = document.getElementById('soilSensorsCard');
+            const list = document.getElementById('soilSensorsList');
+            if (!card || !list) return;
+            const sensors = normaliseSoilSensors(payload?.['soil.sensors']);
+            if (!sensors.length) {
+              card.style.display = 'none';
+              list.innerHTML = '';
+              txt('soilSensorsLastChange', `${tr('lastChange')}: -`);
+              return;
+            }
+            card.style.display = 'block';
+            list.innerHTML = sensors.map((sensor, index) => {
+              const moisture = Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %';
+              const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
+              const meta = [sensor.signalPin, sensor.firmwareVersion ? `FW ${sensor.firmwareVersion}` : ''].filter(Boolean).join(' · ');
+              return `<div class="soil-row">
+                <div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(index)}">${escHtml(sensor.name)}</div>
+                <div style="text-align:right;">
+                  <div class="soil-value" style="color:${soilSensorColor(index)}">${escHtml(moisture)}</div>
+                  <div class="small">${escHtml(raw)}${meta ? ` · ${escHtml(meta)}` : ''}</div>
+                </div>
+              </div>`;
+            }).join('');
+            const latest = sensors.map((sensor) => sensor.lastMeasurementAt).filter(Boolean).sort().pop();
+            txt('soilSensorsLastChange', `${tr('lastChange')}: ${latest ? formatShellyChangeTime(new Date(latest).getTime()) : '-'}`);
+          }
+
+          function buildSoilMoistureChart(labels, soilSeries){
+            const card = document.getElementById('soilMoistureHistoryCard');
+            const ctx = document.getElementById('soilMoistureChart');
+            const series = Array.isArray(soilSeries) ? soilSeries : [];
+            if (card) card.style.display = series.length ? 'block' : 'none';
+            if (!ctx || !series.length || typeof Chart === 'undefined') return null;
+
+            return new Chart(ctx, {
+              type: 'line',
+              data: {
+                labels,
+                datasets: series.map((sensor, index) => ({
+                  label: sensor.name,
+                  data: sensor.values,
+                  borderColor: soilSensorColor(index),
+                  tension: 0.2,
+                  pointRadius: 0,
+                  pointHoverRadius: 5,
+                  pointHitRadius: 18,
+                  yAxisID: 'y'
+                })).concat([
+                  { label: '', data: series[0]?.values || [], borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.2, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' }
+                ])
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'nearest', intersect: false },
+                scales: {
+                  x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
+                  y: { position:'left', min:0, max:100, ticks:{ color:'#14b8a6' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display:true, text:'%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                  yR: { position:'right', min:0, max:100, ticks:{ color:'#14b8a6' }, grid:{ drawOnChartArea:false }, title: { display:true, text:'%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                 },
                 plugins: { legend: { labels: legendLabelsWithCurrent() } }
               }
@@ -9437,7 +9678,7 @@ def dashboard_page(request: Request):
             };
           }
 
-          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries){
+          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries = []){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
               return;
@@ -9455,6 +9696,7 @@ def dashboard_page(request: Request):
             if (tempChart) tempChart.destroy();
             if (humChart) humChart.destroy();
             if (vpdChart) vpdChart.destroy();
+            if (soilMoistureChart) soilMoistureChart.destroy();
             if (extTempChart) extTempChart.destroy();
             if (mainWChart) mainWChart.destroy();
             if (lightWChart) lightWChart.destroy();
@@ -9573,6 +9815,8 @@ def dashboard_page(request: Request):
               });
               syncRightAxisToLeft(vpdChart);
             }
+
+            soilMoistureChart = buildSoilMoistureChart(labels, soilSeries);
 
             const alphaCtx = document.getElementById('alphaChart');
             if (alphaCtx) {
@@ -9771,6 +10015,7 @@ def dashboard_page(request: Request):
             extTempSensorName = extName || 'DS18B20';
             txt('lblExtTemp', extTempSensorName);
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
+            renderSoilSensors(d);
             // main power tile removed
 
             const tgtTempC = firstNum(d, ['settings.grow.targetTemperature', 'settings.targetTemperature', 'target.targetTempC']);
@@ -10137,6 +10382,25 @@ def dashboard_page(request: Request):
               const v = Number(p.vpd);
               return Number.isFinite(v) ? Number(v.toFixed(2)) : null;
             });
+            const soilOrder = [];
+            const soilByPoint = points.map((p) => {
+              const mapped = {};
+              normaliseSoilSensors(p?.soilSensors).forEach((sensor) => {
+                if (!soilOrder.some((item) => item.id === sensor.id) && soilOrder.length < 3) {
+                  soilOrder.push({ id: sensor.id, name: sensor.name });
+                }
+                mapped[sensor.id] = sensor.moisture;
+              });
+              return mapped;
+            });
+            const soilSeries = soilOrder.map((sensor) => ({
+              id: sensor.id,
+              name: sensor.name,
+              values: soilByPoint.map((mapped) => {
+                const n = Number(mapped[sensor.id]);
+                return Number.isFinite(n) ? Number(n.toFixed(1)) : null;
+              })
+            }));
             const extTemp = points.map(p => {
               const c = Number(p.extTemp);
               if (!Number.isFinite(c)) return null;
@@ -10185,7 +10449,7 @@ def dashboard_page(request: Request):
               const n = Number(p.sysHeapSize);
               return Number.isFinite(n) ? Math.round(n) : null;
             });
-            buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries);
+            buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries);
           }
 
           async function loadTentNav(){

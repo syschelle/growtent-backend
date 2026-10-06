@@ -39,9 +39,9 @@ GrowTent Backend is the central UI and API layer for a GrowTent installation.
 Main features:
 
 - dashboard for one or more tents/controllers
-- live tiles for temperature, humidity, VPD, tank temperature, tank level, and device states
+- live tiles for temperature, humidity, VPD, tank temperature, soil moisture, tank level, and device states
 - historical storage of telemetry in PostgreSQL
-- charts for temperature, humidity, VPD, alpha values, power usage, and system/storage metrics
+- charts for temperature, humidity, VPD, soil moisture, alpha values, power usage, and system/storage metrics
 - CSV/history access through backend API endpoints
 - setup UI for tents, authentication, guests, appearance, language, units, and controller settings
 - admin login and guest login modes
