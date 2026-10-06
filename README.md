@@ -39,15 +39,16 @@ GrowTent Backend is the central UI and API layer for a GrowTent installation.
 Main features:
 
 - dashboard for one or more tents/controllers
-- live tiles for temperature, humidity, VPD, tank temperature, tank level, and device states
+- live tiles for temperature, humidity, VPD, tank temperature, soil moisture, tank level, and device states
 - historical storage of telemetry in PostgreSQL
-- charts for temperature, humidity, VPD, alpha values, power usage, and system/storage metrics
+- charts for temperature, humidity, VPD, soil moisture, alpha values, power usage, and system/storage metrics
 - CSV/history access through backend API endpoints
 - setup UI for tents, authentication, guests, appearance, language, units, and controller settings
 - admin login and guest login modes
 - optional two-factor authentication for admin access
 - direct Shelly reads for fresher power and switch-state display
 - optional Sensor.Community/Luftdaten DNMS-compatible live air sensor display
+- up to three dedicated ESP8266 soil moisture sensor IPs per tent
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
@@ -190,7 +191,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.297
+ghcr.io/syschelle/growtent-backend-api:v0.305
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -282,8 +283,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.297 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.297 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.305 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.305 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -853,7 +854,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.297 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.305 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

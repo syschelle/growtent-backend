@@ -2,6 +2,59 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.305
+
+### Soil moisture tile labels
+- Uses the configured soil sensor slot order to label the live moisture tile as `Topf 1/2/3` or `Pot 1/2/3` instead of the raw ESP sensor identifier.
+- Keeps only the raw ADC value in the bottom detail line and removes the appended pin/firmware metadata.
+- Shows the ESP soil sensor name in the bottom-right detail position of the live moisture tile.
+- Bumped the application version to `v0.305`.
+
+## v0.304
+
+### Soil sensor IP setup ergonomics
+- Allows saving soil sensor IPs without retyping tent name and source URL when editing an existing tent.
+- If exactly one tent exists, entering only soil sensor IPs updates that tent automatically.
+- Shows a clearer message when multiple tents exist and no tent has been selected for editing.
+- Bumped the application version to `v0.304`.
+
+## v0.303
+
+### Soil sensor setup persistence
+- Fixes saving soil moisture sensor IPs through the active modular `/tents` API path.
+- Returns configured soil sensor IPs from `/tents` so the setup list and edit form stay populated after saving.
+- Bumped the application version to `v0.303`.
+
+## v0.302
+
+### Per-sensor ESP8266 soil sensor IPs
+- Adds per-tent setup fields for up to three dedicated soil moisture sensor IPs.
+- Polls each configured ESP8266 sensor at `http://<sensor-ip>/api/current-values` every 40 seconds instead of deriving the endpoint from the tent controller URL.
+- Includes configured soil sensor hosts in backup/export/import and keeps the v0.301 live tile/history chart behavior.
+- Bumped the application version to `v0.302`.
+
+## v0.301
+
+### Soil moisture sensors
+- Polls each tent controller's `/api/current-values` endpoint every 40 seconds for up to three soil moisture sensors.
+- Stores soil moisture readings in the normal tent history payload so dashboard history includes all detected sensors.
+- Adds a live soil moisture dashboard card and a multi-line soil moisture history chart with distinct colors per sensor.
+- Bumped the application version to `v0.301`.
+
+## v0.300
+
+### Date-only grow phase dates
+- Shows the calculated grow and phase dates as plain localized dates without weekday prefixes.
+- Removes the extra `Date`/`Datum` label from the day/week/date display.
+- Bumped the application version to `v0.300`.
+
+## v0.299
+
+### Grow date display
+- Shows calculated start dates next to the grow and current phase day/week values in the grow phase tile.
+- Keeps the existing day/week values and adds the localized date derived from the reported grow or phase day.
+- Bumped the application version to `v0.299`.
+
 ## v0.297
 
 ### Compact mobile air sensor header

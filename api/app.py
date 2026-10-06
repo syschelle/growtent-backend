@@ -29,6 +29,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 # POLL_URL removed: no default tent source is injected on fresh installs.
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
+SOIL_SENSOR_POLL_SECONDS = int(os.getenv("SOIL_SENSOR_POLL_SECONDS", "40"))
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
 OFFLINE_NOTIFY_DELAY_SECONDS = int(os.getenv("OFFLINE_NOTIFY_DELAY_SECONDS", "300"))
 HEAP_WARN_FREE_BYTES = int(os.getenv("HEAP_WARN_FREE_BYTES", "120000"))
@@ -42,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.297"
+APP_VERSION = "v0.305"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -61,6 +62,7 @@ SESSION_REFRESH_THRESHOLD_SECONDS = int(os.getenv("SESSION_REFRESH_THRESHOLD_SEC
 EMA_ALPHA = float(os.getenv("EMA_ALPHA", "0.3"))
 EMA_STATE: dict[int, dict] = {}
 SENSOR_INIT: dict[int, bool] = {}
+SOIL_SENSOR_CACHE: dict[int, dict] = {}
 LOGGER = logging.getLogger("growtent.api")
 STRAINS_CSV_LOCK = threading.RLock()
 STRAINS_CSV_COLUMNS = (
@@ -618,6 +620,36 @@ def _pot_strains_json(value) -> str:
     return json.dumps(_normalise_pot_strains(value), ensure_ascii=False)
 
 
+def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list[str]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value or "[]")
+            value = parsed
+        except Exception:
+            value = [line.strip() for line in value.splitlines()]
+    if isinstance(value, dict):
+        value = [value.get(f"sensor{idx}") or value.get(f"soil{idx}") for idx in range(1, 4)]
+    if not isinstance(value, list):
+        value = []
+
+    result: list[str] = []
+    for item in value[:3]:
+        raw = str(item or "").strip()
+        if not raw:
+            continue
+        try:
+            host = validate_safe_sensor_host(raw) if validate_hosts else normalize_air_sensor_host(raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid soil sensor host: {exc}")
+        if host and host not in result:
+            result.append(host)
+    return result[:3]
+
+
+def _soil_sensors_json(value, *, validate_hosts: bool = False) -> str:
+    return json.dumps(_normalise_soil_sensor_hosts(value, validate_hosts=validate_hosts), ensure_ascii=False)
+
+
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -993,6 +1025,7 @@ def init_db():
                     irrigation_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}',
                     irrigation_last_run_date DATE,
                     pot_strains_json TEXT NOT NULL DEFAULT '{"pot1":"","pot2":"","pot3":""}',
+                    soil_sensors_json TEXT NOT NULL DEFAULT '[]',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
@@ -1003,6 +1036,7 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"every_n_days\":1,\"offset_after_light_on_min\":0}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_last_run_date DATE;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_strains_json TEXT NOT NULL DEFAULT '{\"pot1\":\"\",\"pot2\":\"\",\"pot3\":\"\"}';")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS soil_sensors_json TEXT NOT NULL DEFAULT '[]';")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_plan_json;")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_triggered;")
             cur.execute(
@@ -1357,6 +1391,143 @@ def _get_last_payload(tent_id: int):
         return {}
 
 
+def _soil_sensor_url(host: str | None) -> str | None:
+    try:
+        normalized = normalize_air_sensor_host(host)
+    except ValueError:
+        return None
+    if not normalized:
+        return None
+    return f"http://{normalized}/api/current-values"
+
+
+def _clean_soil_sensor(item: object, index: int) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    moisture = _to_float(item.get("moisture_percent"))
+    raw_adc = _to_float(item.get("raw_adc"))
+    if moisture is None and raw_adc is None:
+        return None
+
+    calibrated_raw = item.get("calibrated")
+    calibrated = None
+    if isinstance(calibrated_raw, bool):
+        calibrated = calibrated_raw
+    elif calibrated_raw is not None:
+        calibrated = str(calibrated_raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    sensor_name = str(item.get("sensor") or item.get("device") or f"SoilSensor-{index}").strip()
+    device_name = str(item.get("device") or sensor_name).strip()
+    return {
+        "id": sensor_name or device_name or f"SoilSensor-{index}",
+        "device": device_name or sensor_name or f"SoilSensor-{index}",
+        "sensor": sensor_name or device_name or f"SoilSensor-{index}",
+        "signal_pin": str(item.get("signal_pin") or "").strip() or None,
+        "firmware_version": str(item.get("firmware_version") or "").strip() or None,
+        "raw_adc": int(raw_adc) if raw_adc is not None else None,
+        "moisture_percent": round(max(0.0, min(100.0, moisture)), 2) if moisture is not None else None,
+        "calibrated": calibrated,
+        "last_measurement_at": str(item.get("last_measurement_at") or "").strip() or None,
+        "wifi_rssi": int(_to_float(item.get("wifi_rssi"))) if _to_float(item.get("wifi_rssi")) is not None else None,
+        "uptime_seconds": int(_to_float(item.get("uptime_seconds"))) if _to_float(item.get("uptime_seconds")) is not None else None,
+    }
+
+
+def _parse_soil_sensor_payload(payload: object) -> list[dict]:
+    candidates: object
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        for key in ("sensors", "soil_sensors", "current_values", "values"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                candidates = value
+                break
+        else:
+            candidates = [payload]
+    else:
+        candidates = []
+
+    sensors: list[dict] = []
+    seen: set[str] = set()
+    for index, item in enumerate(candidates, start=1):
+        cleaned = _clean_soil_sensor(item, index)
+        if not cleaned:
+            continue
+        sid = str(cleaned.get("id") or f"SoilSensor-{index}")
+        if sid in seen:
+            continue
+        seen.add(sid)
+        sensors.append(cleaned)
+        if len(sensors) >= 3:
+            break
+    return sensors
+
+
+def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Client) -> None:
+    tent_id = int(tent.get("id"))
+    hosts = _normalise_soil_sensor_hosts(tent.get("soil_sensors"))
+    if not hosts:
+        return
+
+    now = time.monotonic()
+    cache = SOIL_SENSOR_CACHE.get(tent_id) or {}
+    hosts_key = "|".join(hosts)
+    if cache.get("hosts_key") != hosts_key:
+        cache = {"hosts_key": hosts_key}
+    should_poll = cache.get("last_poll_monotonic") is None or (
+        now - float(cache.get("last_poll_monotonic") or 0.0)
+    ) >= max(1, SOIL_SENSOR_POLL_SECONDS)
+
+    if should_poll:
+        sensors_by_host = dict(cache.get("sensors_by_host") or {})
+        errors: dict[str, str] = {}
+        last_poll_at = datetime.now(timezone.utc).isoformat()
+        cache = {
+            **cache,
+            "last_poll_monotonic": now,
+            "last_poll_at": last_poll_at,
+            "hosts_key": hosts_key,
+        }
+        for host in hosts:
+            url = _soil_sensor_url(host)
+            if not url:
+                errors[host] = "invalid soil sensor host"
+                continue
+            try:
+                r = client.get(url, timeout=5.0)
+                r.raise_for_status()
+                sensors = _parse_soil_sensor_payload(r.json())
+                if sensors:
+                    sensor = sensors[0]
+                    sensor["host"] = host
+                    sensor["poll_url"] = url
+                    sensor["poll_ok"] = True
+                    sensor["last_error"] = None
+                    sensors_by_host[host] = sensor
+                else:
+                    errors[host] = "soil sensor response contained no usable values"
+            except Exception as exc:
+                errors[host] = str(exc)
+                if host in sensors_by_host and isinstance(sensors_by_host[host], dict):
+                    sensors_by_host[host] = {
+                        **sensors_by_host[host],
+                        "poll_ok": False,
+                        "last_error": str(exc),
+                    }
+        sensors = [sensors_by_host[host] for host in hosts if host in sensors_by_host][:3]
+        cache.update({"ok": not errors, "sensors_by_host": sensors_by_host, "sensors": sensors, "last_errors": errors})
+        SOIL_SENSOR_CACHE[tent_id] = cache
+
+    sensors = cache.get("sensors") or []
+    if sensors:
+        payload["soil.sensors"] = sensors
+    payload["soil.poll.ok"] = bool(cache.get("ok")) if cache else False
+    payload["soil.poll.hosts"] = hosts
+    payload["soil.poll.lastPollAt"] = cache.get("last_poll_at")
+    payload["soil.poll.lastErrors"] = cache.get("last_errors") or {}
+
+
 def save_state(tent_id: int, payload: dict):
     captured_at = datetime.now(timezone.utc)
 
@@ -1464,7 +1635,7 @@ def _stored_shelly_main_password(tent: dict | None) -> str:
 def list_tent_sources():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -1477,6 +1648,7 @@ def list_tent_sources():
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                     "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
+                    "soil_sensors": _normalise_soil_sensor_hosts(r[9] if len(r) > 9 else None),
                 }
                 for r in rows
             ]
@@ -2162,6 +2334,7 @@ def poll_loop():
 
                         # Keep main consumption history sourced from Shelly directly.
                         _refresh_main_shelly_in_payload(payload, tent)
+                        _refresh_soil_sensors_in_payload(payload, tent, client)
 
                         save_state(tent["id"], payload)
                         _track_watering_run_from_payload(tent["id"], payload)
@@ -2801,7 +2974,7 @@ def set_2fa_config(payload: TwoFAConfigPayload):
 def list_tents():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, created_at FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json, created_at FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -2814,7 +2987,8 @@ def list_tents():
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                     "pot_strains": _normalise_pot_strains(r[8]),
-                    "created_at": r[9].isoformat(),
+                    "soil_sensors": _normalise_soil_sensor_hosts(r[9]),
+                    "created_at": r[10].isoformat(),
                 }
                 for r in rows
             ]
@@ -3095,7 +3269,7 @@ def export_config_backup():
             cur.execute(
                 """
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                       irrigation_plan_json, irrigation_last_run_date, pot_strains_json, created_at
+                       irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -3125,7 +3299,8 @@ def export_config_backup():
                 "irrigation_plan_json": r[6],
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "pot_strains": _normalise_pot_strains(r[8]),
-                "created_at": r[9].isoformat() if r[9] else None,
+                "soil_sensors": _normalise_soil_sensor_hosts(r[9]),
+                "created_at": r[10].isoformat() if r[10] else None,
             }
         )
 
@@ -3152,7 +3327,7 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 5,
+        "schema_version": 6,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -3195,9 +3370,9 @@ def import_config_backup(payload: dict):
                     """
                     INSERT INTO tents(
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json,
+                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
                         created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
                     """,
                     (
                         int(t.get("id") or 0),
@@ -3209,6 +3384,7 @@ def import_config_backup(payload: dict):
                         str(t.get("irrigation_plan_json") or '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}'),
                         t.get("irrigation_last_run_date"),
                         _pot_strains_json(t.get("pot_strains") or t.get("pot_strains_json")),
+                        _soil_sensors_json(t.get("soil_sensors") or t.get("soil_sensors_json"), validate_hosts=False),
                         t.get("created_at"),
                     ),
                 )
@@ -3269,6 +3445,7 @@ def create_tent(payload: TentPayload):
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
     pot_strains = _normalise_pot_strains(payload.get("pot_strains"))
     pot_strains_json = _pot_strains_json(pot_strains)
+    soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True)
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -3277,17 +3454,17 @@ def create_tent(payload: TentPayload):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=409, detail="tent with same source_url already exists")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "created_at": row[7].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
 
 
 @app.put("/tents/{tent_id}")
@@ -3303,6 +3480,8 @@ def update_tent(tent_id: int, payload: TentPayload):
     shelly_main_password = shelly_main_password_raw or None
     pot_strains_provided = "pot_strains" in payload
     pot_strains_json = _pot_strains_json(payload.get("pot_strains")) if pot_strains_provided else None
+    soil_sensors_provided = "soil_sensors" in payload
+    soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True) if soil_sensors_provided else None
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -3321,16 +3500,17 @@ def update_tent(tent_id: int, payload: TentPayload):
                         WHEN %s THEN %s
                         ELSE shelly_main_password
                     END,
-                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END
+                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END,
+                    soil_sensors_json=CASE WHEN %s::boolean THEN %s::text ELSE soil_sensors_json END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, tent_id),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "created_at": row[7].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
 
 
 @app.get("/tents/{tent_id}/irrigation-plan")
@@ -3729,6 +3909,14 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
         if vpd_raw is None:
             vpd_raw = _calc_vpd_kpa(temp_raw, leaf_offset, hum_raw)
 
+        soil_sensors = []
+        raw_soil_sensors = d.get("soil.sensors")
+        if isinstance(raw_soil_sensors, list):
+            for sensor in raw_soil_sensors[:3]:
+                cleaned = _clean_soil_sensor(sensor, len(soil_sensors) + 1)
+                if cleaned:
+                    soil_sensors.append(cleaned)
+
         # Ignore invalid startup/noise samples in history pipeline.
         if not _sensor_values_valid(temp_raw, hum_raw, vpd_raw):
             continue
@@ -3757,6 +3945,7 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "sysMinFreeHeap": _to_float(d.get("sys.minFreeHeap")),
                 "sysLargestFreeHeapBlock": _to_float(d.get("sys.largestFreeHeapBlock")),
                 "sysHeapSize": _to_float(d.get("sys.heapSize")),
+                "soilSensors": soil_sensors,
             }
         )
 
@@ -4677,6 +4866,12 @@ def setup_page(request: Request):
                 <select id=\"tentPot2Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 2 strain</option></select>
                 <select id=\"tentPot3Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 3 strain</option></select>
               </div>
+              <div id=\"soilSensorsSetupLabel\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Soil sensor IPs</div>
+              <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;\">
+                <input id=\"tentSoilSensor1\" placeholder=\"Soil sensor 1 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
+                <input id=\"tentSoilSensor2\" placeholder=\"Soil sensor 2 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
+                <input id=\"tentSoilSensor3\" placeholder=\"Soil sensor 3 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
+              </div>
               <button id=\"addTentBtn\" style=\"margin-top:8px;\">Add tent</button>
               <div id=\"tentMsg\" style=\"margin-top:10px;\"></div>
             </div>
@@ -4749,6 +4944,7 @@ def setup_page(request: Request):
           let pending2faToken = '';
           let currentPlanTentId = 0;
           let authHasPassword = false;
+          let setupTentsCache = [];
 
           const I18N_SETUP = {
             en: {
@@ -4816,6 +5012,10 @@ def setup_page(request: Request):
               pot1Strain: 'Pot 1 strain',
               pot2Strain: 'Pot 2 strain',
               pot3Strain: 'Pot 3 strain',
+              soilSensors: 'Soil sensor IPs',
+              soilSensor1: 'Soil sensor 1 IP',
+              soilSensor2: 'Soil sensor 2 IP',
+              soilSensor3: 'Soil sensor 3 IP',
               noStrain: 'No strain',
               editTent: 'Edit',
               saveTent: 'Save tent',
@@ -4890,6 +5090,10 @@ def setup_page(request: Request):
               pot1Strain: 'Topf 1 Sorte',
               pot2Strain: 'Topf 2 Sorte',
               pot3Strain: 'Topf 3 Sorte',
+              soilSensors: 'Bodenfeuchte-Sensor-IPs',
+              soilSensor1: 'Bodenfeuchte 1 IP',
+              soilSensor2: 'Bodenfeuchte 2 IP',
+              soilSensor3: 'Bodenfeuchte 3 IP',
               noStrain: 'Keine Sorte',
               editTent: 'Bearbeiten',
               saveTent: 'Zelt speichern',
@@ -4922,8 +5126,10 @@ def setup_page(request: Request):
             set('labelTempUnit', tSetup('tempUnit'));
             set('tentsTitle', tSetup('tents'));
             set('potStrainsLabel', tSetup('potStrains'));
+            set('soilSensorsSetupLabel', tSetup('soilSensors'));
             set('saveBtn', tSetup('save'));
             refreshPotStrainPlaceholders();
+            refreshSoilSensorPlaceholders();
             set('accessTitle', tSetup('access'));
             set('authEnabledLabel', tSetup('enableAuth'));
             set('authUserLabel', tSetup('username'));
@@ -5019,6 +5225,34 @@ def setup_page(request: Request):
             };
           }
           function clearPotStrainForm(){ fillPotStrainSelects({ pot1:'', pot2:'', pot3:'' }); }
+          function soilSensorInputs(){
+            return [1, 2, 3]
+              .map(idx => document.getElementById(`tentSoilSensor${idx}`))
+              .filter(Boolean);
+          }
+          function refreshSoilSensorPlaceholders(){
+            const labels = [tSetup('soilSensor1'), tSetup('soilSensor2'), tSetup('soilSensor3')];
+            soilSensorInputs().forEach((input, index) => {
+              input.placeholder = labels[index] || tSetup('soilSensors');
+            });
+          }
+          function fillSoilSensorInputs(values = []){
+            const sensors = Array.isArray(values) ? values : [];
+            soilSensorInputs().forEach((input, index) => {
+              input.value = sensors[index] || '';
+            });
+          }
+          function readSoilSensorsFromForm(){
+            return soilSensorInputs()
+              .map(input => (input.value || '').trim())
+              .filter(Boolean)
+              .slice(0, 3);
+          }
+          function clearSoilSensorForm(){ fillSoilSensorInputs([]); }
+          function formatSoilSensors(values = []){
+            const sensors = Array.isArray(values) ? values.filter(Boolean) : [];
+            return sensors.length ? sensors.join(' · ') : '-';
+          }
           function formatPotStrains(potStrains = {}){
             const parts = [1, 2, 3]
               .map(idx => `${tSetup(`pot${idx}Strain`)}: ${potStrains[`pot${idx}`] || '-'}`);
@@ -5143,6 +5377,7 @@ def setup_page(request: Request):
             try {
               const res = await fetch('/tents', { cache: 'no-store' });
               const tents = await res.json();
+              setupTentsCache = Array.isArray(tents) ? tents : [];
               if (!Array.isArray(tents) || tents.length === 0) {
                 list.innerHTML = '<div>No tents configured.</div>';
                 return;
@@ -5153,6 +5388,7 @@ def setup_page(request: Request):
                   ? `${tSetup('everyDays')}: ${Number(p.every_n_days || 1)} · ${tSetup('offsetAfterLight')}: ${Number(p.offset_after_light_on_min || 0)}`
                   : '-';
                 const potTxt = formatPotStrains(t.pot_strains || {});
+                const soilTxt = formatSoilSensors(t.soil_sensors || []);
                 return `
                 <div style="padding:6px 0; border-bottom:1px solid var(--grid);">
                   <strong>#${t.id} ${t.name}</strong><br>
@@ -5160,6 +5396,7 @@ def setup_page(request: Request):
                   <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
                   <span style="opacity:.85">Shelly Main Auth: ${(t.shelly_main_user || t.has_shelly_main_password) ? 'set' : '-'}</span><br>
                   <span style="opacity:.85">${tSetup('potStrains')}: ${potTxt}</span><br>
+                  <span style="opacity:.85">${tSetup('soilSensors')}: ${soilTxt}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
                   <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">${tSetup('editTent')}</button>
@@ -5181,6 +5418,7 @@ def setup_page(request: Request):
                   document.getElementById('tentMainPass').value = '';
                   document.getElementById('tentMainPass').placeholder = tent.has_shelly_main_password ? 'Stored - leave blank to keep' : 'Optional Shelly password';
                   fillPotStrainSelects(tent.pot_strains || {});
+                  fillSoilSensorInputs(tent.soil_sensors || []);
                   document.getElementById('addTentBtn').setAttribute('data-edit-id', String(id));
                   document.getElementById('addTentBtn').textContent = tSetup('saveTent');
                 });
@@ -5684,20 +5922,56 @@ def setup_page(request: Request):
             const shelly_main_user = (document.getElementById('tentMainUser')?.value || '').trim();
             const shelly_main_password = (document.getElementById('tentMainPass')?.value || '').trim();
             const pot_strains = readPotStrainsFromForm();
+            const soil_sensors = readSoilSensorsFromForm();
+            let effectiveEditId = editId;
+            let effectiveName = name;
+            let effectiveSourceUrl = source_url;
+            let effectiveRtspUrl = rtsp_url;
+            let effectiveShellyMainUser = shelly_main_user;
+            let effectivePotStrains = pot_strains;
 
-            if (!name || !source_url) {
-              tentMsg.textContent = 'Please provide name and source URL.';
+            if ((!effectiveName || !effectiveSourceUrl) && soil_sensors.length) {
+              const fallbackTent = effectiveEditId > 0
+                ? setupTentsCache.find(t => Number(t.id) === effectiveEditId)
+                : (setupTentsCache.length === 1 ? setupTentsCache[0] : null);
+              if (fallbackTent) {
+                effectiveEditId = Number(fallbackTent.id || effectiveEditId);
+                effectiveName = effectiveName || String(fallbackTent.name || '').trim();
+                effectiveSourceUrl = effectiveSourceUrl || String(fallbackTent.source_url || '').trim();
+                effectiveRtspUrl = effectiveRtspUrl || String(fallbackTent.rtsp_url || '').trim();
+                effectiveShellyMainUser = effectiveShellyMainUser || String(fallbackTent.shelly_main_user || '').trim();
+                effectivePotStrains = {
+                  ...(fallbackTent.pot_strains || {}),
+                  ...pot_strains,
+                };
+              }
+            }
+
+            if (!effectiveName || !effectiveSourceUrl) {
+              tentMsg.textContent = soil_sensors.length
+                ? (setupTentsCache.length > 1
+                  ? (langSel?.value === 'de' ? 'Bitte zuerst ein Zelt über Bearbeiten auswählen.' : 'Please edit a tent first.')
+                  : (langSel?.value === 'de' ? 'Bitte Zeltname und Source URL angeben.' : 'Please provide name and source URL.'))
+                : 'Please provide name and source URL.';
               return;
             }
 
             try {
-              const url = editId > 0 ? `/tents/${editId}` : '/tents';
-              const method = editId > 0 ? 'PUT' : 'POST';
+              const url = effectiveEditId > 0 ? `/tents/${effectiveEditId}` : '/tents';
+              const method = effectiveEditId > 0 ? 'PUT' : 'POST';
 
               const res = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains })
+                body: JSON.stringify({
+                  name: effectiveName,
+                  source_url: effectiveSourceUrl,
+                  rtsp_url: effectiveRtspUrl,
+                  shelly_main_user: effectiveShellyMainUser,
+                  shelly_main_password,
+                  pot_strains: effectivePotStrains,
+                  soil_sensors,
+                })
               });
 
               if (!res.ok) {
@@ -5706,18 +5980,19 @@ def setup_page(request: Request):
                 return;
               }
 
-              tentMsg.textContent = editId > 0 ? 'Tent updated.' : 'Tent added.';
+              tentMsg.textContent = effectiveEditId > 0 ? 'Tent updated.' : 'Tent added.';
               document.getElementById('tentName').value = '';
               document.getElementById('tentUrl').value = '';
               document.getElementById('tentRtsp').value = '';
               document.getElementById('tentMainUser').value = '';
               document.getElementById('tentMainPass').value = '';
               clearPotStrainForm();
+              clearSoilSensorForm();
               btn.removeAttribute('data-edit-id');
               btn.textContent = tSetup('addTent');
               await loadTents();
             } catch (e) {
-              tentMsg.textContent = editId > 0 ? 'Update failed.' : 'Add failed.';
+              tentMsg.textContent = effectiveEditId > 0 ? 'Update failed.' : 'Add failed.';
             }
           });
 
@@ -5947,6 +6222,13 @@ def changelog_page():
                   <li><strong>v0.295:</strong> Moved the compact air sensor widget behind the CanopyOps application name.</li>
                   <li><strong>v0.296:</strong> Shows the Shelly light schedule as a light/dark cycle in the grow phase tile.</li>
                   <li><strong>v0.297:</strong> Optimized the air sensor header widget for mobile view.</li>
+                  <li><strong>v0.299:</strong> Adds calculated start dates to the grow and phase day/week lines.</li>
+                  <li><strong>v0.300:</strong> Shows grow and phase dates without weekday or date label.</li>
+                  <li><strong>v0.301:</strong> Adds 40-second soil moisture polling, live values and colored history lines for up to three sensors per tent.</li>
+                  <li><strong>v0.302:</strong> Configures dedicated ESP8266 soil sensor IPs per tent instead of deriving them from the controller URL.</li>
+                  <li><strong>v0.303:</strong> Persists soil sensor IPs through the active setup API so saved values remain visible after updating a tent.</li>
+                  <li><strong>v0.304:</strong> Lets setup save soil sensor IPs without retyping tent name and source URL when the target tent is known.</li>
+                  <li><strong>v0.305:</strong> Shows soil moisture live cards as Topf 1/2/3 and moves the ESP sensor name into the detail line while hiding firmware metadata.</li>
                 </ul>
               </section>
             </div>
@@ -6970,6 +7252,13 @@ def dashboard_page(request: Request):
           #hum { color:#a78bfa; }
           #vpd { color:#f59e0b; }
           #extTemp { color:#10b981; }
+          #soilSensorsList { display:grid; gap:6px; }
+          .soil-row { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; border-top:1px solid var(--grid); padding-top:6px; }
+          .soil-row:first-child { border-top:0; padding-top:0; }
+          .soil-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+          .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; }
+          .soil-meta { display:flex; justify-content:space-between; gap:10px; }
+          .soil-meta > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
           .history-card { position:relative; }
@@ -7101,6 +7390,13 @@ def dashboard_page(request: Request):
             </div>
             <div class=\"value\" id=\"extTemp\">-</div>
           </div>
+          <div class=\"card\" id=\"soilSensorsCard\" style=\"display:none;\">
+            <div class=\"card-head\">
+              <div class=\"label\"><span>🌱</span> <span id=\"lblSoilSensors\">Soil moisture</span></div>
+              <div class=\"small\" id=\"soilSensorsLastChange\">Update: -</div>
+            </div>
+            <div id=\"soilSensorsList\"></div>
+          </div>
           <div class=\"card\" id=\"tankCurrentCard\" style=\"display:none;\">
             <div class=\"card-head\">
               <div class=\"label\"><span>🛢️</span> <span id=\"lblTankLevel\">Tank level</span></div>
@@ -7155,6 +7451,12 @@ def dashboard_page(request: Request):
           <div class=\"label\" id=\"lblVpdHistory\"><span id=\"lblVpdHistoryText\">VPD History</span> <span id=\"vpdHistoryMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
           <canvas id=\"vpdChart\"></canvas>
           <div id=\"historyOverlayVpd\" class=\"history-overlay\"></div>
+        </div>
+
+        <div class=\"card history-card\" id=\"soilMoistureHistoryCard\" style=\"display:none;\">
+          <div class=\"label\" id=\"lblSoilMoistureHistory\">Soil moisture history</div>
+          <canvas id=\"soilMoistureChart\"></canvas>
+          <div id=\"historyOverlaySoilMoisture\" class=\"history-overlay\"></div>
         </div>
 
         <div class=\"card history-card\">
@@ -7313,6 +7615,8 @@ def dashboard_page(request: Request):
               tempUnit: 'Temperature Unit:',
               temperature: 'Temperature',
               humidity: 'Humidity',
+              soilMoisture: 'Soil moisture',
+              soilMoistureHistory: 'Soil moisture history',
               rawValue: 'Raw',
               vpd: 'VPD',
               extTemp: 'Tank temperature',
@@ -7473,6 +7777,8 @@ def dashboard_page(request: Request):
               tempUnit: 'Temperatureinheit:',
               temperature: 'Temperatur',
               humidity: 'Luftfeuchte',
+              soilMoisture: 'Bodenfeuchte',
+              soilMoistureHistory: 'Bodenfeuchteverlauf',
               rawValue: 'Rohwert',
               vpd: 'VPD',
               extTemp: 'Wassertanktemperatur',
@@ -7682,6 +7988,8 @@ def dashboard_page(request: Request):
             txt('lblHum', tr('humidity'));
             txt('lblVpd', tr('vpd'));
             txt('lblExtTemp', 'DS18B20');
+            txt('lblSoilSensors', tr('soilMoisture'));
+            txt('soilSensorsLastChange', `${tr('lastChange')}: -`);
             txt('lblTankLevel', tr('tankLevel'));
             txt('tankLevelSub', `${tr('tankDistance')}: - cm`);
             txt('tankPercent', '- %');
@@ -7696,6 +8004,7 @@ def dashboard_page(request: Request):
             txt('lblTempHistoryText', tr('tempHistory'));
             txt('lblHumHistoryText', tr('humHistory'));
             txt('lblVpdHistoryText', tr('vpdHistory'));
+            txt('lblSoilMoistureHistory', tr('soilMoistureHistory'));
             txt('lblAlphaHistoryText', tr('alphaHistory'));
             const showInfoPopover = (anchorEl, text) => {
               const pop = document.getElementById('alphaHintPopover');
@@ -7762,6 +8071,7 @@ def dashboard_page(request: Request):
             txt('lblLightWHistory', tr('lightConsumptionHistory'));
             txt('lblHumidifierWHistory', tr('humidifierConsumptionHistory'));
             txt('lblExhaustWHistory', tr('exhaustHistory'));
+            txt('lblSoilMoistureHistory', tr('soilMoistureHistory'));
             txt('lblHeapHistoryText', tr('heapHistory'));
             const heapHistoryHintEl = document.getElementById('heapHistoryHint');
             if (heapHistoryHintEl) {
@@ -8034,7 +8344,7 @@ def dashboard_page(request: Request):
           function setHistoryOverlays(message){
             const ids = [
               'historyOverlayTemp', 'historyOverlayHum', 'historyOverlayVpd',
-              'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW',
+              'historyOverlaySoilMoisture', 'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW',
               'historyOverlayLightW', 'historyOverlayHumidifierW', 'historyOverlayExhaustW'
             ];
             ids.forEach((id) => {
@@ -8239,6 +8549,23 @@ def dashboard_page(request: Request):
             return dt.toLocaleDateString(currentLang === 'de' ? 'de-DE' : 'en-GB', {
               weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit'
             });
+          }
+
+          function formatGrowDateFromDay(dayNumber){
+            const day = Number(dayNumber);
+            if (!Number.isFinite(day) || day < 1) return '-';
+            const dt = new Date();
+            dt.setHours(0, 0, 0, 0);
+            dt.setDate(dt.getDate() - (Math.floor(day) - 1));
+            return dt.toLocaleDateString(currentLang === 'de' ? 'de-DE' : 'en-GB', {
+              year: 'numeric', month: '2-digit', day: '2-digit'
+            });
+          }
+
+          function formatGrowDayWeekDate(dayNumber, weekNumber){
+            const dayText = Number.isFinite(dayNumber) ? Number(dayNumber) : '-';
+            const weekText = Number.isFinite(weekNumber) ? Number(weekNumber) : '-';
+            return `${tr('day')} ${dayText} / ${tr('week')} ${weekText} / ${formatGrowDateFromDay(dayNumber)}`;
           }
 
           function computeNextIrrigationDateFromOnMin(plan, lastRunDate, onMin){
@@ -9250,6 +9577,7 @@ def dashboard_page(request: Request):
           let tempChart;
           let humChart;
           let vpdChart;
+          let soilMoistureChart;
           let alphaChart;
           let extTempChart;
           let mainWChart;
@@ -9300,6 +9628,95 @@ def dashboard_page(request: Request):
                     title: { display: true, text: unitLabel, color:'#cbd5e1' },
                     afterFit: (scale) => { scale.width = 56; }
                   }
+                },
+                plugins: { legend: { labels: legendLabelsWithCurrent() } }
+              }
+            });
+          }
+
+          function soilSensorColor(index){
+            return ['#14b8a6', '#f97316', '#38bdf8'][index % 3];
+          }
+
+          function normaliseSoilSensors(raw){
+            const items = Array.isArray(raw) ? raw : [];
+            return items.slice(0, 3).map((item, index) => {
+              const name = String(item?.sensor || item?.device || item?.id || `SoilSensor-${index + 1}`).trim() || `SoilSensor-${index + 1}`;
+              const moisture = Number(item?.moisture_percent);
+              const rawAdc = Number(item?.raw_adc);
+              return {
+                id: String(item?.id || name).trim() || name,
+                name,
+                potLabel: tr(`pot${index + 1}`),
+                moisture: Number.isFinite(moisture) ? moisture : null,
+                rawAdc: Number.isFinite(rawAdc) ? rawAdc : null,
+                calibrated: item?.calibrated,
+                lastMeasurementAt: item?.last_measurement_at || null,
+                signalPin: item?.signal_pin || null,
+                firmwareVersion: item?.firmware_version || null
+              };
+            }).filter((item) => item.moisture !== null || item.rawAdc !== null);
+          }
+
+          function renderSoilSensors(payload){
+            const card = document.getElementById('soilSensorsCard');
+            const list = document.getElementById('soilSensorsList');
+            if (!card || !list) return;
+            const sensors = normaliseSoilSensors(payload?.['soil.sensors']);
+            if (!sensors.length) {
+              card.style.display = 'none';
+              list.innerHTML = '';
+              txt('soilSensorsLastChange', `${tr('lastChange')}: -`);
+              return;
+            }
+            card.style.display = 'block';
+            list.innerHTML = sensors.map((sensor, index) => {
+              const moisture = Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %';
+              const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
+              return `<div class="soil-row">
+                <div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(index)}">${escHtml(sensor.potLabel || sensor.name)}</div>
+                <div style="text-align:right; min-width:0;">
+                  <div class="soil-value" style="color:${soilSensorColor(index)}">${escHtml(moisture)}</div>
+                  <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
+                </div>
+              </div>`;
+            }).join('');
+            const latest = sensors.map((sensor) => sensor.lastMeasurementAt).filter(Boolean).sort().pop();
+            txt('soilSensorsLastChange', `${tr('lastChange')}: ${latest ? formatShellyChangeTime(new Date(latest).getTime()) : '-'}`);
+          }
+
+          function buildSoilMoistureChart(labels, soilSeries){
+            const card = document.getElementById('soilMoistureHistoryCard');
+            const ctx = document.getElementById('soilMoistureChart');
+            const series = Array.isArray(soilSeries) ? soilSeries : [];
+            if (card) card.style.display = series.length ? 'block' : 'none';
+            if (!ctx || !series.length || typeof Chart === 'undefined') return null;
+
+            return new Chart(ctx, {
+              type: 'line',
+              data: {
+                labels,
+                datasets: series.map((sensor, index) => ({
+                  label: sensor.name,
+                  data: sensor.values,
+                  borderColor: soilSensorColor(index),
+                  tension: 0.2,
+                  pointRadius: 0,
+                  pointHoverRadius: 5,
+                  pointHitRadius: 18,
+                  yAxisID: 'y'
+                })).concat([
+                  { label: '', data: series[0]?.values || [], borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.2, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' }
+                ])
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'nearest', intersect: false },
+                scales: {
+                  x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
+                  y: { position:'left', min:0, max:100, ticks:{ color:'#14b8a6' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display:true, text:'%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                  yR: { position:'right', min:0, max:100, ticks:{ color:'#14b8a6' }, grid:{ drawOnChartArea:false }, title: { display:true, text:'%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                 },
                 plugins: { legend: { labels: legendLabelsWithCurrent() } }
               }
@@ -9418,7 +9835,7 @@ def dashboard_page(request: Request):
             };
           }
 
-          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries){
+          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries = []){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
               return;
@@ -9436,6 +9853,7 @@ def dashboard_page(request: Request):
             if (tempChart) tempChart.destroy();
             if (humChart) humChart.destroy();
             if (vpdChart) vpdChart.destroy();
+            if (soilMoistureChart) soilMoistureChart.destroy();
             if (extTempChart) extTempChart.destroy();
             if (mainWChart) mainWChart.destroy();
             if (lightWChart) lightWChart.destroy();
@@ -9554,6 +9972,8 @@ def dashboard_page(request: Request):
               });
               syncRightAxisToLeft(vpdChart);
             }
+
+            soilMoistureChart = buildSoilMoistureChart(labels, soilSeries);
 
             const alphaCtx = document.getElementById('alphaChart');
             if (alphaCtx) {
@@ -9752,6 +10172,7 @@ def dashboard_page(request: Request):
             extTempSensorName = extName || 'DS18B20';
             txt('lblExtTemp', extTempSensorName);
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
+            renderSoilSensors(d);
             // main power tile removed
 
             const tgtTempC = firstNum(d, ['settings.grow.targetTemperature', 'settings.targetTemperature', 'target.targetTempC']);
@@ -9796,9 +10217,9 @@ def dashboard_page(request: Request):
             const growWeek = firstNum(d, ['settings.grow.currentGrowWeek']);
             const phaseDay = firstNum(d, ['settings.grow.currentPhaseDay']);
             const phaseWeek = firstNum(d, ['settings.grow.currentPhaseWeek']);
-            txt('growTotals', `${tr('growSince')}: ${tr('day')} ${Number.isFinite(growDay) ? Number(growDay) : '-'} / ${tr('week')} ${Number.isFinite(growWeek) ? Number(growWeek) : '-'}`);
+            txt('growTotals', `${tr('growSince')}: ${formatGrowDayWeekDate(growDay, growWeek)}`);
             const phaseName = phaseLabel(phase);
-            const phaseStatsText = `${phaseName !== '-' ? phaseName : 'Phase'}: ${tr('day')} ${Number.isFinite(phaseDay) ? Number(phaseDay) : '-'} / ${tr('week')} ${Number.isFinite(phaseWeek) ? Number(phaseWeek) : '-'}`;
+            const phaseStatsText = `${phaseName !== '-' ? phaseName : 'Phase'}: ${formatGrowDayWeekDate(phaseDay, phaseWeek)}`;
             let lightCycle = lightCycleFromLine(d['settings.shelly.light.line']);
             if (!lightCycle && hasTextValue(d['settings.shelly.light.ip'])) {
               const sched = await readLightScheduleOnDemand(false);
@@ -10118,6 +10539,25 @@ def dashboard_page(request: Request):
               const v = Number(p.vpd);
               return Number.isFinite(v) ? Number(v.toFixed(2)) : null;
             });
+            const soilOrder = [];
+            const soilByPoint = points.map((p) => {
+              const mapped = {};
+              normaliseSoilSensors(p?.soilSensors).forEach((sensor) => {
+                if (!soilOrder.some((item) => item.id === sensor.id) && soilOrder.length < 3) {
+                  soilOrder.push({ id: sensor.id, name: sensor.name });
+                }
+                mapped[sensor.id] = sensor.moisture;
+              });
+              return mapped;
+            });
+            const soilSeries = soilOrder.map((sensor) => ({
+              id: sensor.id,
+              name: sensor.name,
+              values: soilByPoint.map((mapped) => {
+                const n = Number(mapped[sensor.id]);
+                return Number.isFinite(n) ? Number(n.toFixed(1)) : null;
+              })
+            }));
             const extTemp = points.map(p => {
               const c = Number(p.extTemp);
               if (!Number.isFinite(c)) return null;
@@ -10166,7 +10606,7 @@ def dashboard_page(request: Request):
               const n = Number(p.sysHeapSize);
               return Number.isFinite(n) ? Math.round(n) : null;
             });
-            buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries);
+            buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries);
           }
 
           async function loadTentNav(){
