@@ -48,6 +48,7 @@ Main features:
 - optional two-factor authentication for admin access
 - direct Shelly reads for fresher power and switch-state display
 - optional Sensor.Community/Luftdaten DNMS-compatible live air sensor display
+- up to three dedicated ESP8266 soil moisture sensor IPs per tent
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access

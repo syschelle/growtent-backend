@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.301"
+APP_VERSION = "v0.302"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -620,6 +620,36 @@ def _pot_strains_json(value) -> str:
     return json.dumps(_normalise_pot_strains(value), ensure_ascii=False)
 
 
+def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list[str]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value or "[]")
+            value = parsed
+        except Exception:
+            value = [line.strip() for line in value.splitlines()]
+    if isinstance(value, dict):
+        value = [value.get(f"sensor{idx}") or value.get(f"soil{idx}") for idx in range(1, 4)]
+    if not isinstance(value, list):
+        value = []
+
+    result: list[str] = []
+    for item in value[:3]:
+        raw = str(item or "").strip()
+        if not raw:
+            continue
+        try:
+            host = validate_safe_sensor_host(raw) if validate_hosts else normalize_air_sensor_host(raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid soil sensor host: {exc}")
+        if host and host not in result:
+            result.append(host)
+    return result[:3]
+
+
+def _soil_sensors_json(value, *, validate_hosts: bool = False) -> str:
+    return json.dumps(_normalise_soil_sensor_hosts(value, validate_hosts=validate_hosts), ensure_ascii=False)
+
+
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -995,6 +1025,7 @@ def init_db():
                     irrigation_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}',
                     irrigation_last_run_date DATE,
                     pot_strains_json TEXT NOT NULL DEFAULT '{"pot1":"","pot2":"","pot3":""}',
+                    soil_sensors_json TEXT NOT NULL DEFAULT '[]',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
@@ -1005,6 +1036,7 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"every_n_days\":1,\"offset_after_light_on_min\":0}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_last_run_date DATE;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_strains_json TEXT NOT NULL DEFAULT '{\"pot1\":\"\",\"pot2\":\"\",\"pot3\":\"\"}';")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS soil_sensors_json TEXT NOT NULL DEFAULT '[]';")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_plan_json;")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_triggered;")
             cur.execute(
@@ -1359,17 +1391,14 @@ def _get_last_payload(tent_id: int):
         return {}
 
 
-def _soil_sensor_url(source_url: str | None) -> str | None:
-    raw = str(source_url or "").strip()
-    if not raw:
-        return None
+def _soil_sensor_url(host: str | None) -> str | None:
     try:
-        parts = urlsplit(raw)
-    except Exception:
+        normalized = normalize_air_sensor_host(host)
+    except ValueError:
         return None
-    if not parts.scheme or not parts.netloc:
+    if not normalized:
         return None
-    return f"{parts.scheme}://{parts.netloc}/api/current-values"
+    return f"http://{normalized}/api/current-values"
 
 
 def _clean_soil_sensor(item: object, index: int) -> dict | None:
@@ -1437,38 +1466,66 @@ def _parse_soil_sensor_payload(payload: object) -> list[dict]:
 
 def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Client) -> None:
     tent_id = int(tent.get("id"))
-    url = _soil_sensor_url(tent.get("source_url"))
-    if not url:
+    hosts = _normalise_soil_sensor_hosts(tent.get("soil_sensors"))
+    if not hosts:
         return
 
     now = time.monotonic()
     cache = SOIL_SENSOR_CACHE.get(tent_id) or {}
+    hosts_key = "|".join(hosts)
+    if cache.get("hosts_key") != hosts_key:
+        cache = {"hosts_key": hosts_key}
     should_poll = cache.get("last_poll_monotonic") is None or (
         now - float(cache.get("last_poll_monotonic") or 0.0)
     ) >= max(1, SOIL_SENSOR_POLL_SECONDS)
 
     if should_poll:
+        sensors_by_host = dict(cache.get("sensors_by_host") or {})
+        errors: dict[str, str] = {}
+        last_poll_at = datetime.now(timezone.utc).isoformat()
         cache = {
             **cache,
             "last_poll_monotonic": now,
-            "last_poll_at": datetime.now(timezone.utc).isoformat(),
+            "last_poll_at": last_poll_at,
+            "hosts_key": hosts_key,
         }
-        try:
-            r = client.get(url, timeout=5.0)
-            r.raise_for_status()
-            sensors = _parse_soil_sensor_payload(r.json())
-            cache.update({"ok": True, "sensors": sensors, "last_error": None})
-        except Exception as exc:
-            cache.update({"ok": False, "last_error": str(exc)})
+        for host in hosts:
+            url = _soil_sensor_url(host)
+            if not url:
+                errors[host] = "invalid soil sensor host"
+                continue
+            try:
+                r = client.get(url, timeout=5.0)
+                r.raise_for_status()
+                sensors = _parse_soil_sensor_payload(r.json())
+                if sensors:
+                    sensor = sensors[0]
+                    sensor["host"] = host
+                    sensor["poll_url"] = url
+                    sensor["poll_ok"] = True
+                    sensor["last_error"] = None
+                    sensors_by_host[host] = sensor
+                else:
+                    errors[host] = "soil sensor response contained no usable values"
+            except Exception as exc:
+                errors[host] = str(exc)
+                if host in sensors_by_host and isinstance(sensors_by_host[host], dict):
+                    sensors_by_host[host] = {
+                        **sensors_by_host[host],
+                        "poll_ok": False,
+                        "last_error": str(exc),
+                    }
+        sensors = [sensors_by_host[host] for host in hosts if host in sensors_by_host][:3]
+        cache.update({"ok": not errors, "sensors_by_host": sensors_by_host, "sensors": sensors, "last_errors": errors})
         SOIL_SENSOR_CACHE[tent_id] = cache
 
     sensors = cache.get("sensors") or []
     if sensors:
         payload["soil.sensors"] = sensors
     payload["soil.poll.ok"] = bool(cache.get("ok")) if cache else False
-    payload["soil.poll.url"] = url
+    payload["soil.poll.hosts"] = hosts
     payload["soil.poll.lastPollAt"] = cache.get("last_poll_at")
-    payload["soil.poll.lastError"] = cache.get("last_error")
+    payload["soil.poll.lastErrors"] = cache.get("last_errors") or {}
 
 
 def save_state(tent_id: int, payload: dict):
@@ -1578,7 +1635,7 @@ def _stored_shelly_main_password(tent: dict | None) -> str:
 def list_tent_sources():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -1591,6 +1648,7 @@ def list_tent_sources():
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                     "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
+                    "soil_sensors": _normalise_soil_sensor_hosts(r[9] if len(r) > 9 else None),
                 }
                 for r in rows
             ]
@@ -2916,7 +2974,7 @@ def set_2fa_config(payload: TwoFAConfigPayload):
 def list_tents():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, created_at FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json, created_at FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -2929,7 +2987,8 @@ def list_tents():
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                     "pot_strains": _normalise_pot_strains(r[8]),
-                    "created_at": r[9].isoformat(),
+                    "soil_sensors": _normalise_soil_sensor_hosts(r[9]),
+                    "created_at": r[10].isoformat(),
                 }
                 for r in rows
             ]
@@ -3210,7 +3269,7 @@ def export_config_backup():
             cur.execute(
                 """
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                       irrigation_plan_json, irrigation_last_run_date, pot_strains_json, created_at
+                       irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -3240,7 +3299,8 @@ def export_config_backup():
                 "irrigation_plan_json": r[6],
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "pot_strains": _normalise_pot_strains(r[8]),
-                "created_at": r[9].isoformat() if r[9] else None,
+                "soil_sensors": _normalise_soil_sensor_hosts(r[9]),
+                "created_at": r[10].isoformat() if r[10] else None,
             }
         )
 
@@ -3267,7 +3327,7 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 5,
+        "schema_version": 6,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -3310,9 +3370,9 @@ def import_config_backup(payload: dict):
                     """
                     INSERT INTO tents(
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json,
+                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
                         created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
                     """,
                     (
                         int(t.get("id") or 0),
@@ -3324,6 +3384,7 @@ def import_config_backup(payload: dict):
                         str(t.get("irrigation_plan_json") or '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}'),
                         t.get("irrigation_last_run_date"),
                         _pot_strains_json(t.get("pot_strains") or t.get("pot_strains_json")),
+                        _soil_sensors_json(t.get("soil_sensors") or t.get("soil_sensors_json"), validate_hosts=False),
                         t.get("created_at"),
                     ),
                 )
@@ -3384,6 +3445,7 @@ def create_tent(payload: TentPayload):
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
     pot_strains = _normalise_pot_strains(payload.get("pot_strains"))
     pot_strains_json = _pot_strains_json(pot_strains)
+    soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True)
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -3392,17 +3454,17 @@ def create_tent(payload: TentPayload):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=409, detail="tent with same source_url already exists")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "created_at": row[7].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
 
 
 @app.put("/tents/{tent_id}")
@@ -3418,6 +3480,8 @@ def update_tent(tent_id: int, payload: TentPayload):
     shelly_main_password = shelly_main_password_raw or None
     pot_strains_provided = "pot_strains" in payload
     pot_strains_json = _pot_strains_json(payload.get("pot_strains")) if pot_strains_provided else None
+    soil_sensors_provided = "soil_sensors" in payload
+    soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True) if soil_sensors_provided else None
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -3436,16 +3500,17 @@ def update_tent(tent_id: int, payload: TentPayload):
                         WHEN %s THEN %s
                         ELSE shelly_main_password
                     END,
-                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END
+                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END,
+                    soil_sensors_json=CASE WHEN %s::boolean THEN %s::text ELSE soil_sensors_json END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, tent_id),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "created_at": row[7].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
 
 
 @app.get("/tents/{tent_id}/irrigation-plan")
@@ -4801,6 +4866,12 @@ def setup_page(request: Request):
                 <select id=\"tentPot2Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 2 strain</option></select>
                 <select id=\"tentPot3Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 3 strain</option></select>
               </div>
+              <div id=\"soilSensorsSetupLabel\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Soil sensor IPs</div>
+              <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;\">
+                <input id=\"tentSoilSensor1\" placeholder=\"Soil sensor 1 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
+                <input id=\"tentSoilSensor2\" placeholder=\"Soil sensor 2 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
+                <input id=\"tentSoilSensor3\" placeholder=\"Soil sensor 3 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
+              </div>
               <button id=\"addTentBtn\" style=\"margin-top:8px;\">Add tent</button>
               <div id=\"tentMsg\" style=\"margin-top:10px;\"></div>
             </div>
@@ -4940,6 +5011,10 @@ def setup_page(request: Request):
               pot1Strain: 'Pot 1 strain',
               pot2Strain: 'Pot 2 strain',
               pot3Strain: 'Pot 3 strain',
+              soilSensors: 'Soil sensor IPs',
+              soilSensor1: 'Soil sensor 1 IP',
+              soilSensor2: 'Soil sensor 2 IP',
+              soilSensor3: 'Soil sensor 3 IP',
               noStrain: 'No strain',
               editTent: 'Edit',
               saveTent: 'Save tent',
@@ -5014,6 +5089,10 @@ def setup_page(request: Request):
               pot1Strain: 'Topf 1 Sorte',
               pot2Strain: 'Topf 2 Sorte',
               pot3Strain: 'Topf 3 Sorte',
+              soilSensors: 'Bodenfeuchte-Sensor-IPs',
+              soilSensor1: 'Bodenfeuchte 1 IP',
+              soilSensor2: 'Bodenfeuchte 2 IP',
+              soilSensor3: 'Bodenfeuchte 3 IP',
               noStrain: 'Keine Sorte',
               editTent: 'Bearbeiten',
               saveTent: 'Zelt speichern',
@@ -5046,8 +5125,10 @@ def setup_page(request: Request):
             set('labelTempUnit', tSetup('tempUnit'));
             set('tentsTitle', tSetup('tents'));
             set('potStrainsLabel', tSetup('potStrains'));
+            set('soilSensorsSetupLabel', tSetup('soilSensors'));
             set('saveBtn', tSetup('save'));
             refreshPotStrainPlaceholders();
+            refreshSoilSensorPlaceholders();
             set('accessTitle', tSetup('access'));
             set('authEnabledLabel', tSetup('enableAuth'));
             set('authUserLabel', tSetup('username'));
@@ -5143,6 +5224,34 @@ def setup_page(request: Request):
             };
           }
           function clearPotStrainForm(){ fillPotStrainSelects({ pot1:'', pot2:'', pot3:'' }); }
+          function soilSensorInputs(){
+            return [1, 2, 3]
+              .map(idx => document.getElementById(`tentSoilSensor${idx}`))
+              .filter(Boolean);
+          }
+          function refreshSoilSensorPlaceholders(){
+            const labels = [tSetup('soilSensor1'), tSetup('soilSensor2'), tSetup('soilSensor3')];
+            soilSensorInputs().forEach((input, index) => {
+              input.placeholder = labels[index] || tSetup('soilSensors');
+            });
+          }
+          function fillSoilSensorInputs(values = []){
+            const sensors = Array.isArray(values) ? values : [];
+            soilSensorInputs().forEach((input, index) => {
+              input.value = sensors[index] || '';
+            });
+          }
+          function readSoilSensorsFromForm(){
+            return soilSensorInputs()
+              .map(input => (input.value || '').trim())
+              .filter(Boolean)
+              .slice(0, 3);
+          }
+          function clearSoilSensorForm(){ fillSoilSensorInputs([]); }
+          function formatSoilSensors(values = []){
+            const sensors = Array.isArray(values) ? values.filter(Boolean) : [];
+            return sensors.length ? sensors.join(' · ') : '-';
+          }
           function formatPotStrains(potStrains = {}){
             const parts = [1, 2, 3]
               .map(idx => `${tSetup(`pot${idx}Strain`)}: ${potStrains[`pot${idx}`] || '-'}`);
@@ -5277,6 +5386,7 @@ def setup_page(request: Request):
                   ? `${tSetup('everyDays')}: ${Number(p.every_n_days || 1)} · ${tSetup('offsetAfterLight')}: ${Number(p.offset_after_light_on_min || 0)}`
                   : '-';
                 const potTxt = formatPotStrains(t.pot_strains || {});
+                const soilTxt = formatSoilSensors(t.soil_sensors || []);
                 return `
                 <div style="padding:6px 0; border-bottom:1px solid var(--grid);">
                   <strong>#${t.id} ${t.name}</strong><br>
@@ -5284,6 +5394,7 @@ def setup_page(request: Request):
                   <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
                   <span style="opacity:.85">Shelly Main Auth: ${(t.shelly_main_user || t.has_shelly_main_password) ? 'set' : '-'}</span><br>
                   <span style="opacity:.85">${tSetup('potStrains')}: ${potTxt}</span><br>
+                  <span style="opacity:.85">${tSetup('soilSensors')}: ${soilTxt}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
                   <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">${tSetup('editTent')}</button>
@@ -5305,6 +5416,7 @@ def setup_page(request: Request):
                   document.getElementById('tentMainPass').value = '';
                   document.getElementById('tentMainPass').placeholder = tent.has_shelly_main_password ? 'Stored - leave blank to keep' : 'Optional Shelly password';
                   fillPotStrainSelects(tent.pot_strains || {});
+                  fillSoilSensorInputs(tent.soil_sensors || []);
                   document.getElementById('addTentBtn').setAttribute('data-edit-id', String(id));
                   document.getElementById('addTentBtn').textContent = tSetup('saveTent');
                 });
@@ -5808,6 +5920,7 @@ def setup_page(request: Request):
             const shelly_main_user = (document.getElementById('tentMainUser')?.value || '').trim();
             const shelly_main_password = (document.getElementById('tentMainPass')?.value || '').trim();
             const pot_strains = readPotStrainsFromForm();
+            const soil_sensors = readSoilSensorsFromForm();
 
             if (!name || !source_url) {
               tentMsg.textContent = 'Please provide name and source URL.';
@@ -5821,7 +5934,7 @@ def setup_page(request: Request):
               const res = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains })
+                body: JSON.stringify({ name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains, soil_sensors })
               });
 
               if (!res.ok) {
@@ -5837,6 +5950,7 @@ def setup_page(request: Request):
               document.getElementById('tentMainUser').value = '';
               document.getElementById('tentMainPass').value = '';
               clearPotStrainForm();
+              clearSoilSensorForm();
               btn.removeAttribute('data-edit-id');
               btn.textContent = tSetup('addTent');
               await loadTents();
@@ -6074,6 +6188,7 @@ def changelog_page():
                   <li><strong>v0.299:</strong> Adds calculated start dates to the grow and phase day/week lines.</li>
                   <li><strong>v0.300:</strong> Shows grow and phase dates without weekday or date label.</li>
                   <li><strong>v0.301:</strong> Adds 40-second soil moisture polling, live values and colored history lines for up to three sensors per tent.</li>
+                  <li><strong>v0.302:</strong> Configures dedicated ESP8266 soil sensor IPs per tent instead of deriving them from the controller URL.</li>
                 </ul>
               </section>
             </div>

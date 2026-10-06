@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.302
+
+### Per-sensor ESP8266 soil sensor IPs
+- Adds per-tent setup fields for up to three dedicated soil moisture sensor IPs.
+- Polls each configured ESP8266 sensor at `http://<sensor-ip>/api/current-values` every 40 seconds instead of deriving the endpoint from the tent controller URL.
+- Includes configured soil sensor hosts in backup/export/import and keeps the v0.301 live tile/history chart behavior.
+- Bumped the application version to `v0.302`.
+
 ## v0.301
 
 ### Soil moisture sensors
