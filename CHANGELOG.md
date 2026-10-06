@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.303
+
+### Soil sensor setup persistence
+- Fixes saving soil moisture sensor IPs through the active modular `/tents` API path.
+- Returns configured soil sensor IPs from `/tents` so the setup list and edit form stay populated after saving.
+- Bumped the application version to `v0.303`.
+
 ## v0.302
 
 ### Per-sensor ESP8266 soil sensor IPs

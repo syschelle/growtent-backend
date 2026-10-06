@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.302"
+APP_VERSION = "v0.303"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6189,6 +6189,7 @@ def changelog_page():
                   <li><strong>v0.300:</strong> Shows grow and phase dates without weekday or date label.</li>
                   <li><strong>v0.301:</strong> Adds 40-second soil moisture polling, live values and colored history lines for up to three sensors per tent.</li>
                   <li><strong>v0.302:</strong> Configures dedicated ESP8266 soil sensor IPs per tent instead of deriving them from the controller URL.</li>
+                  <li><strong>v0.303:</strong> Persists soil sensor IPs through the active setup API so saved values remain visible after updating a tent.</li>
                 </ul>
               </section>
             </div>

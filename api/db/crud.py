@@ -4,6 +4,7 @@ from datetime import date
 from fastapi import HTTPException
 
 from db.database import get_conn
+from services.air_sensor_service import normalize_air_sensor_host, validate_safe_sensor_host
 
 
 def _clean_optional_str(value):
@@ -41,6 +42,36 @@ def _pot_strains_json(value) -> str:
     return json.dumps(_normalise_pot_strains(value), ensure_ascii=False)
 
 
+def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list[str]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value or "[]")
+            value = parsed
+        except Exception:
+            value = [line.strip() for line in value.splitlines()]
+    if isinstance(value, dict):
+        value = [value.get(f"sensor{idx}") or value.get(f"soil{idx}") for idx in range(1, 4)]
+    if not isinstance(value, list):
+        value = []
+
+    result: list[str] = []
+    for item in value[:3]:
+        raw = str(item or "").strip()
+        if not raw:
+            continue
+        try:
+            host = validate_safe_sensor_host(raw) if validate_hosts else normalize_air_sensor_host(raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid soil sensor host: {exc}")
+        if host and host not in result:
+            result.append(host)
+    return result[:3]
+
+
+def _soil_sensors_json(value, *, validate_hosts: bool = False) -> str:
+    return json.dumps(_normalise_soil_sensor_hosts(value, validate_hosts=validate_hosts), ensure_ascii=False)
+
+
 def list_tents_raw():
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -49,7 +80,7 @@ def list_tents_raw():
                 SELECT id, name, source_url, rtsp_url,
                        shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date,
-                       pot_strains_json, created_at
+                       pot_strains_json, soil_sensors_json, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -68,7 +99,8 @@ def list_tents_raw():
                 "irrigation_plan": json.loads(r[6] or "{}") if r[6] else {},
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
-                "created_at": r[9].isoformat(),
+                "soil_sensors": _normalise_soil_sensor_hosts(r[9] if len(r) > 9 else None),
+                "created_at": r[10].isoformat(),
             }
         )
     return out
@@ -81,6 +113,7 @@ def create_tent_raw(payload: dict):
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
     pot_strains_json = _pot_strains_json(payload.get("pot_strains"))
+    soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True)
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -89,12 +122,12 @@ def create_tent_raw(payload: dict):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json),
             )
             row = cur.fetchone()
             if not row:
@@ -108,7 +141,8 @@ def create_tent_raw(payload: dict):
         "shelly_main_user": row[4] or "",
         "has_shelly_main_password": bool(row[5]),
         "pot_strains": _normalise_pot_strains(row[6]),
-        "created_at": row[7].isoformat(),
+        "soil_sensors": _normalise_soil_sensor_hosts(row[7]),
+        "created_at": row[8].isoformat(),
     }
 
 
@@ -141,6 +175,8 @@ def update_tent_raw(tent_id: int, payload: dict):
     shelly_main_password = shelly_main_password_raw or None
     pot_strains_provided = "pot_strains" in payload
     pot_strains_json = _pot_strains_json(payload.get("pot_strains")) if pot_strains_provided else None
+    soil_sensors_provided = "soil_sensors" in payload
+    soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True) if soil_sensors_provided else None
 
     if not name or not source_url:
         raise HTTPException(status_code=400, detail="name and source_url are required")
@@ -159,11 +195,12 @@ def update_tent_raw(tent_id: int, payload: dict):
                         WHEN %s THEN %s
                         ELSE shelly_main_password
                     END,
-                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END
+                    pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END,
+                    soil_sensors_json=CASE WHEN %s::boolean THEN %s::text ELSE soil_sensors_json END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, tent_id),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id),
             )
             row = cur.fetchone()
             if not row:
@@ -177,7 +214,8 @@ def update_tent_raw(tent_id: int, payload: dict):
         "shelly_main_user": row[4] or "",
         "has_shelly_main_password": bool(row[5]),
         "pot_strains": _normalise_pot_strains(row[6]),
-        "created_at": row[7].isoformat(),
+        "soil_sensors": _normalise_soil_sensor_hosts(row[7]),
+        "created_at": row[8].isoformat(),
     }
 
 
