@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.310"
+APP_VERSION = "v0.311"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9701,7 +9701,7 @@ def dashboard_page(request: Request):
               return `<div class="soil-row">
                 ${singleSensor ? '' : `<div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(potColorIndex)}">${escHtml(sensor.potLabel || sensor.name)}</div>`}
                 <div class="soil-value" style="color:${soilSensorColor(potColorIndex)}">${escHtml(moisture)}</div>
-                <div class="small soil-meta"><span>${escHtml(raw)}</span></div>
+                <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
               </div>`;
             }).join('');
             const latest = sensors.map((sensor) => sensor.lastMeasurementAt).filter(Boolean).sort().pop();

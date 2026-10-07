@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.311
+
+### Soil moisture sensor detail restore
+- Restores the ESP soil sensor name below the raw value in the live soil moisture tile.
+- Keeps the pot label as the title for single-sensor soil moisture tiles.
+- Bumped the application version to `v0.311`.
+
 ## v0.310
 
 ### Soil moisture live tile title cleanup
