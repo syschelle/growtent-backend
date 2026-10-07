@@ -43,6 +43,11 @@ def _pot_strains_json(value) -> str:
 
 
 def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list[str]:
+    """Return exactly three pot-aligned soil sensor host slots.
+
+    Empty entries are intentionally preserved so sensor 2 remains assigned to
+    pot 2 even when pot 1 has no configured sensor.
+    """
     if isinstance(value, str):
         try:
             parsed = json.loads(value or "[]")
@@ -54,8 +59,9 @@ def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list
     if not isinstance(value, list):
         value = []
 
-    result: list[str] = []
-    for item in value[:3]:
+    result: list[str] = ["", "", ""]
+    seen: set[str] = set()
+    for index, item in enumerate(value[:3]):
         raw = str(item or "").strip()
         if not raw:
             continue
@@ -63,9 +69,10 @@ def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list
             host = validate_safe_sensor_host(raw) if validate_hosts else normalize_air_sensor_host(raw)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"invalid soil sensor host: {exc}")
-        if host and host not in result:
-            result.append(host)
-    return result[:3]
+        if host and host not in seen:
+            result[index] = host
+            seen.add(host)
+    return result
 
 
 def _soil_sensors_json(value, *, validate_hosts: bool = False) -> str:

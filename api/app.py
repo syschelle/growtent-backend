@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.306"
+APP_VERSION = "v0.307"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -621,6 +621,11 @@ def _pot_strains_json(value) -> str:
 
 
 def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list[str]:
+    """Return exactly three pot-aligned soil sensor host slots.
+
+    Empty entries are intentionally preserved so sensor 2 remains assigned to
+    pot 2 even when pot 1 has no configured sensor.
+    """
     if isinstance(value, str):
         try:
             parsed = json.loads(value or "[]")
@@ -632,8 +637,9 @@ def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list
     if not isinstance(value, list):
         value = []
 
-    result: list[str] = []
-    for item in value[:3]:
+    result: list[str] = ["", "", ""]
+    seen: set[str] = set()
+    for index, item in enumerate(value[:3]):
         raw = str(item or "").strip()
         if not raw:
             continue
@@ -641,9 +647,10 @@ def _normalise_soil_sensor_hosts(value, *, validate_hosts: bool = False) -> list
             host = validate_safe_sensor_host(raw) if validate_hosts else normalize_air_sensor_host(raw)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"invalid soil sensor host: {exc}")
-        if host and host not in result:
-            result.append(host)
-    return result[:3]
+        if host and host not in seen:
+            result[index] = host
+            seen.add(host)
+    return result
 
 
 def _soil_sensors_json(value, *, validate_hosts: bool = False) -> str:
@@ -1416,10 +1423,13 @@ def _clean_soil_sensor(item: object, index: int) -> dict | None:
     elif calibrated_raw is not None:
         calibrated = str(calibrated_raw).strip().lower() in {"1", "true", "yes", "on"}
 
+    pot_index_raw = _to_float(item.get("pot_index"))
+    pot_index = int(pot_index_raw) if pot_index_raw is not None and 1 <= int(pot_index_raw) <= 3 else index
     sensor_name = str(item.get("sensor") or item.get("device") or f"SoilSensor-{index}").strip()
     device_name = str(item.get("device") or sensor_name).strip()
     return {
         "id": sensor_name or device_name or f"SoilSensor-{index}",
+        "pot_index": pot_index,
         "device": device_name or sensor_name or f"SoilSensor-{index}",
         "sensor": sensor_name or device_name or f"SoilSensor-{index}",
         "signal_pin": str(item.get("signal_pin") or "").strip() or None,
@@ -1467,7 +1477,7 @@ def _parse_soil_sensor_payload(payload: object) -> list[dict]:
 def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Client) -> None:
     tent_id = int(tent.get("id"))
     hosts = _normalise_soil_sensor_hosts(tent.get("soil_sensors"))
-    if not hosts:
+    if not any(hosts):
         return
 
     now = time.monotonic()
@@ -1489,7 +1499,9 @@ def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Cl
             "last_poll_at": last_poll_at,
             "hosts_key": hosts_key,
         }
-        for host in hosts:
+        for pot_index, host in enumerate(hosts, start=1):
+            if not host:
+                continue
             url = _soil_sensor_url(host)
             if not url:
                 errors[host] = "invalid soil sensor host"
@@ -1500,6 +1512,7 @@ def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Cl
                 sensors = _parse_soil_sensor_payload(r.json())
                 if sensors:
                     sensor = sensors[0]
+                    sensor["pot_index"] = pot_index
                     sensor["host"] = host
                     sensor["poll_url"] = url
                     sensor["poll_ok"] = True
@@ -1515,7 +1528,7 @@ def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Cl
                         "poll_ok": False,
                         "last_error": str(exc),
                     }
-        sensors = [sensors_by_host[host] for host in hosts if host in sensors_by_host][:3]
+        sensors = [sensors_by_host[host] for host in hosts if host and host in sensors_by_host][:3]
         cache.update({"ok": not errors, "sensors_by_host": sensors_by_host, "sensors": sensors, "last_errors": errors})
         SOIL_SENSOR_CACHE[tent_id] = cache
 
@@ -5243,10 +5256,11 @@ def setup_page(request: Request):
             });
           }
           function readSoilSensorsFromForm(){
-            return soilSensorInputs()
+            const slots = soilSensorInputs()
               .map(input => (input.value || '').trim())
-              .filter(Boolean)
               .slice(0, 3);
+            while (slots.length < 3) slots.push('');
+            return slots;
           }
           function clearSoilSensorForm(){ fillSoilSensorInputs([]); }
           function formatSoilSensors(values = []){
@@ -5923,6 +5937,7 @@ def setup_page(request: Request):
             const shelly_main_password = (document.getElementById('tentMainPass')?.value || '').trim();
             const pot_strains = readPotStrainsFromForm();
             const soil_sensors = readSoilSensorsFromForm();
+            const hasSoilSensors = soil_sensors.some(Boolean);
             let effectiveEditId = editId;
             let effectiveName = name;
             let effectiveSourceUrl = source_url;
@@ -5930,7 +5945,7 @@ def setup_page(request: Request):
             let effectiveShellyMainUser = shelly_main_user;
             let effectivePotStrains = pot_strains;
 
-            if ((!effectiveName || !effectiveSourceUrl) && soil_sensors.length) {
+            if ((!effectiveName || !effectiveSourceUrl) && hasSoilSensors) {
               const fallbackTent = effectiveEditId > 0
                 ? setupTentsCache.find(t => Number(t.id) === effectiveEditId)
                 : (setupTentsCache.length === 1 ? setupTentsCache[0] : null);
@@ -5948,7 +5963,7 @@ def setup_page(request: Request):
             }
 
             if (!effectiveName || !effectiveSourceUrl) {
-              tentMsg.textContent = soil_sensors.length
+              tentMsg.textContent = hasSoilSensors
                 ? (setupTentsCache.length > 1
                   ? (langSel?.value === 'de' ? 'Bitte zuerst ein Zelt über Bearbeiten auswählen.' : 'Please edit a tent first.')
                   : (langSel?.value === 'de' ? 'Bitte Zeltname und Source URL angeben.' : 'Please provide name and source URL.'))
@@ -6230,6 +6245,7 @@ def changelog_page():
                   <li><strong>v0.304:</strong> Lets setup save soil sensor IPs without retyping tent name and source URL when the target tent is known.</li>
                   <li><strong>v0.305:</strong> Shows soil moisture live cards as Topf 1/2/3 and moves the ESP sensor name into the detail line while hiding firmware metadata.</li>
                   <li><strong>v0.306:</strong> Places the soil sensor name on its own line below the raw ADC value in the live moisture tile.</li>
+                  <li><strong>v0.307:</strong> Preserves fixed Topf/Pot 1-3 soil sensor slots so moving a configured sensor IP does not collapse it back to Topf/Pot 1.</li>
                 </ul>
               </section>
             </div>
@@ -9645,10 +9661,13 @@ def dashboard_page(request: Request):
               const name = String(item?.sensor || item?.device || item?.id || `SoilSensor-${index + 1}`).trim() || `SoilSensor-${index + 1}`;
               const moisture = Number(item?.moisture_percent);
               const rawAdc = Number(item?.raw_adc);
+              const parsedPotIndex = Number(item?.pot_index);
+              const potIndex = Number.isInteger(parsedPotIndex) && parsedPotIndex >= 1 && parsedPotIndex <= 3 ? parsedPotIndex : index + 1;
               return {
                 id: String(item?.id || name).trim() || name,
                 name,
-                potLabel: tr(`pot${index + 1}`),
+                potIndex,
+                potLabel: tr(`pot${potIndex}`),
                 moisture: Number.isFinite(moisture) ? moisture : null,
                 rawAdc: Number.isFinite(rawAdc) ? rawAdc : null,
                 calibrated: item?.calibrated,
@@ -9674,10 +9693,11 @@ def dashboard_page(request: Request):
             list.innerHTML = sensors.map((sensor, index) => {
               const moisture = Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %';
               const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
+              const potColorIndex = Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1));
               return `<div class="soil-row">
-                <div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(index)}">${escHtml(sensor.potLabel || sensor.name)}</div>
+                <div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(potColorIndex)}">${escHtml(sensor.potLabel || sensor.name)}</div>
                 <div style="text-align:right; min-width:0;">
-                  <div class="soil-value" style="color:${soilSensorColor(index)}">${escHtml(moisture)}</div>
+                  <div class="soil-value" style="color:${soilSensorColor(potColorIndex)}">${escHtml(moisture)}</div>
                   <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
                 </div>
               </div>`;
@@ -9700,7 +9720,7 @@ def dashboard_page(request: Request):
                 datasets: series.map((sensor, index) => ({
                   label: sensor.name,
                   data: sensor.values,
-                  borderColor: soilSensorColor(index),
+                  borderColor: soilSensorColor(Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1))),
                   tension: 0.2,
                   pointRadius: 0,
                   pointHoverRadius: 5,
@@ -10544,8 +10564,12 @@ def dashboard_page(request: Request):
             const soilByPoint = points.map((p) => {
               const mapped = {};
               normaliseSoilSensors(p?.soilSensors).forEach((sensor) => {
-                if (!soilOrder.some((item) => item.id === sensor.id) && soilOrder.length < 3) {
-                  soilOrder.push({ id: sensor.id, name: sensor.name });
+                const existing = soilOrder.find((item) => item.id === sensor.id);
+                if (!existing && soilOrder.length < 3) {
+                  soilOrder.push({ id: sensor.id, name: sensor.name, potIndex: sensor.potIndex });
+                } else if (existing) {
+                  existing.name = sensor.name;
+                  existing.potIndex = sensor.potIndex;
                 }
                 mapped[sensor.id] = sensor.moisture;
               });
@@ -10554,6 +10578,7 @@ def dashboard_page(request: Request):
             const soilSeries = soilOrder.map((sensor) => ({
               id: sensor.id,
               name: sensor.name,
+              potIndex: sensor.potIndex,
               values: soilByPoint.map((mapped) => {
                 const n = Number(mapped[sensor.id]);
                 return Number.isFinite(n) ? Number(n.toFixed(1)) : null;

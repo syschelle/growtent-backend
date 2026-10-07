@@ -41,12 +41,13 @@ class TentPayload(StrictModel):
     @classmethod
     def normalize_soil_sensors(cls, value):
         if value is None:
-            return []
+            return ["", "", ""]
         if isinstance(value, str):
             value = [item.strip() for item in value.splitlines()]
         if not isinstance(value, list):
-            return []
-        return [str(item or "").strip() for item in value[:3] if str(item or "").strip()]
+            return ["", "", ""]
+        slots = [str(item or "").strip() for item in value[:3]]
+        return (slots + ["", "", ""])[:3]
 
 
 class StrainPayload(StrictModel):

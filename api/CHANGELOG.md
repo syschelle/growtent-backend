@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.307
+
+### Stable soil sensor pot assignment
+- Preserves all three configured soil sensor slots, including empty slots, so a sensor assigned to Pot 2 or Pot 3 no longer collapses to Pot 1.
+- Adds the configured `pot_index` to polled soil sensor values and carries it into history data.
+- Uses the configured pot slot for the live tile label and sensor color.
+- Keeps backward compatibility with existing compact sensor lists; re-saving the setup once establishes the intended fixed slot mapping.
+- Bumped the application version to `v0.307`.
+
 ## v0.306
 
 ### Soil sensor detail line layout
