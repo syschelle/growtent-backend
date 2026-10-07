@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.310
+
+### Soil moisture live tile title cleanup
+- Uses the pot label as the live soil moisture tile title when exactly one soil sensor is shown.
+- Removes the duplicate inline pot label for single-sensor soil moisture tiles.
+- Removes the lower ESP sensor-name detail string from the live soil moisture tile while keeping the raw value line.
+- Bumped the application version to `v0.310`.
+
 ## v0.309
 
 ### Soil moisture tile alignment

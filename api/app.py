@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.309"
+APP_VERSION = "v0.310"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9687,18 +9687,21 @@ def dashboard_page(request: Request):
             if (!sensors.length) {
               card.style.display = 'none';
               list.innerHTML = '';
+              txt('lblSoilSensors', tr('soilMoisture'));
               txt('soilSensorsLastChange', `${tr('lastChange')}: -`);
               return;
             }
+            const singleSensor = sensors.length === 1;
+            txt('lblSoilSensors', singleSensor ? (sensors[0].potLabel || tr('soilMoisture')) : tr('soilMoisture'));
             card.style.display = 'block';
             list.innerHTML = sensors.map((sensor, index) => {
               const moisture = Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %';
               const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
               const potColorIndex = Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1));
               return `<div class="soil-row">
-                <div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(potColorIndex)}">${escHtml(sensor.potLabel || sensor.name)}</div>
+                ${singleSensor ? '' : `<div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(potColorIndex)}">${escHtml(sensor.potLabel || sensor.name)}</div>`}
                 <div class="soil-value" style="color:${soilSensorColor(potColorIndex)}">${escHtml(moisture)}</div>
-                <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
+                <div class="small soil-meta"><span>${escHtml(raw)}</span></div>
               </div>`;
             }).join('');
             const latest = sensors.map((sensor) => sensor.lastMeasurementAt).filter(Boolean).sort().pop();
