@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.307"
+APP_VERSION = "v0.308"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6246,6 +6246,7 @@ def changelog_page():
                   <li><strong>v0.305:</strong> Shows soil moisture live cards as Topf 1/2/3 and moves the ESP sensor name into the detail line while hiding firmware metadata.</li>
                   <li><strong>v0.306:</strong> Places the soil sensor name on its own line below the raw ADC value in the live moisture tile.</li>
                   <li><strong>v0.307:</strong> Preserves fixed Topf/Pot 1-3 soil sensor slots so moving a configured sensor IP does not collapse it back to Topf/Pot 1.</li>
+                  <li><strong>v0.308:</strong> Uses Pot 1/2/3 labels instead of ESP sensor names in the soil moisture history chart.</li>
                 </ul>
               </section>
             </div>
@@ -9718,7 +9719,7 @@ def dashboard_page(request: Request):
               data: {
                 labels,
                 datasets: series.map((sensor, index) => ({
-                  label: sensor.name,
+                  label: sensor.potLabel || sensor.name,
                   data: sensor.values,
                   borderColor: soilSensorColor(Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1))),
                   tension: 0.2,
@@ -10579,6 +10580,7 @@ def dashboard_page(request: Request):
               id: sensor.id,
               name: sensor.name,
               potIndex: sensor.potIndex,
+              potLabel: tr(`pot${Math.max(1, Math.min(3, Number(sensor.potIndex || 1)))}`),
               values: soilByPoint.map((mapped) => {
                 const n = Number(mapped[sensor.id]);
                 return Number.isFinite(n) ? Number(n.toFixed(1)) : null;

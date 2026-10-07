@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.308
+
+### Soil moisture history labels
+- Shows `Pot 1`, `Pot 2` and `Pot 3` in the soil moisture history chart legend/tooltips instead of the raw ESP sensor names.
+- Keeps the stable configured pot-slot assignment introduced in v0.307 for both live cards and history rendering.
+- Bumped the application version to `v0.308`.
+
 ## v0.307
 
 ### Stable soil sensor pot assignment
