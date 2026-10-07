@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.311"
+APP_VERSION = "v0.312"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6247,6 +6247,10 @@ def changelog_page():
                   <li><strong>v0.306:</strong> Places the soil sensor name on its own line below the raw ADC value in the live moisture tile.</li>
                   <li><strong>v0.307:</strong> Preserves fixed Topf/Pot 1-3 soil sensor slots so moving a configured sensor IP does not collapse it back to Topf/Pot 1.</li>
                   <li><strong>v0.308:</strong> Uses Pot 1/2/3 labels instead of ESP sensor names in the soil moisture history chart.</li>
+                  <li><strong>v0.309:</strong> Aligns the live soil moisture tile with the other dashboard tiles by moving the moisture value to the left.</li>
+                  <li><strong>v0.310:</strong> Uses the pot label as the live soil moisture tile title for single-sensor tents.</li>
+                  <li><strong>v0.311:</strong> Restores the ESP soil sensor name below the raw value in the live soil moisture tile.</li>
+                  <li><strong>v0.312:</strong> Adds an admin-only Open button for each live soil moisture sensor that opens its configured HTTP address in a new browser tab.</li>
                 </ul>
               </section>
             </div>
@@ -7277,6 +7281,8 @@ def dashboard_page(request: Request):
           .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; text-align:left; }
           .soil-meta { display:block; text-align:left; }
           .soil-meta > span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+          .soil-actions { display:flex; justify-content:flex-end; margin-top:4px; }
+          .soil-actions button { padding:5px 10px; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
           .history-card { position:relative; }
@@ -7706,6 +7712,7 @@ def dashboard_page(request: Request):
               lblEnergy: 'Energy',
               lblCost: 'Cost',
               openShelly: 'Open Shelly',
+              openDevice: 'Open',
               lastChange: 'Update',
               agoMinute: 'min',
               agoHour: 'h',
@@ -7868,6 +7875,7 @@ def dashboard_page(request: Request):
               lblEnergy: 'Energie',
               lblCost: 'Kosten',
               openShelly: 'Shelly öffnen',
+              openDevice: 'Öffnen',
               lastChange: 'Update',
               agoMinute: 'Min',
               agoHour: 'Std',
@@ -9673,6 +9681,7 @@ def dashboard_page(request: Request):
                 rawAdc: Number.isFinite(rawAdc) ? rawAdc : null,
                 calibrated: item?.calibrated,
                 lastMeasurementAt: item?.last_measurement_at || null,
+                host: String(item?.host || '').trim(),
                 signalPin: item?.signal_pin || null,
                 firmwareVersion: item?.firmware_version || null
               };
@@ -9698,12 +9707,25 @@ def dashboard_page(request: Request):
               const moisture = Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %';
               const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
               const potColorIndex = Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1));
+              const sensorUrl = sensor.host ? `http://${sensor.host}` : '';
+              const openButton = sensorUrl
+                ? `<button type="button" data-open-soil="${escHtml(sensorUrl)}"${isGuestMode ? ' disabled aria-disabled="true"' : ''}>${escHtml(tr('openDevice'))}</button>`
+                : '';
               return `<div class="soil-row">
                 ${singleSensor ? '' : `<div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(potColorIndex)}">${escHtml(sensor.potLabel || sensor.name)}</div>`}
                 <div class="soil-value" style="color:${soilSensorColor(potColorIndex)}">${escHtml(moisture)}</div>
                 <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
+                ${openButton ? `<div class="soil-actions">${openButton}</div>` : ''}
               </div>`;
             }).join('');
+            list.querySelectorAll('button[data-open-soil]').forEach(btn => {
+              btn.addEventListener('click', () => {
+                if (isGuestMode || btn.disabled) return;
+                const url = String(btn.getAttribute('data-open-soil') || '');
+                if (!url.startsWith('http://')) return;
+                window.open(url, '_blank', 'noopener,noreferrer');
+              });
+            });
             const latest = sensors.map((sensor) => sensor.lastMeasurementAt).filter(Boolean).sort().pop();
             txt('soilSensorsLastChange', `${tr('lastChange')}: ${latest ? formatShellyChangeTime(new Date(latest).getTime()) : '-'}`);
           }

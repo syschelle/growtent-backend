@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.312
+
+### Admin-only soil sensor links
+- Adds a short `Open` / `Öffnen` button at the bottom-right of each live soil moisture sensor area.
+- Opens the configured sensor address as `http://<sensor-ip>` in a new browser tab.
+- Keeps the button disabled for guest sessions; only administrators can open the sensor UI from the dashboard.
+- Bumped the application version to `v0.312`.
+
 ## v0.311
 
 ### Soil moisture sensor detail restore
