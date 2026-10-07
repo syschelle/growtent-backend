@@ -2,6 +2,13 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.309
+
+### Soil moisture tile alignment
+- Aligns the live soil moisture tile layout with the other dashboard tiles by placing the moisture value on the left.
+- Keeps the raw value and sensor name stacked below the value in left-aligned lines.
+- Bumped the application version to `v0.309`.
+
 ## v0.308
 
 ### Soil moisture history labels

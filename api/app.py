@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.308"
+APP_VERSION = "v0.309"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7271,11 +7271,11 @@ def dashboard_page(request: Request):
           #vpd { color:#f59e0b; }
           #extTemp { color:#10b981; }
           #soilSensorsList { display:grid; gap:6px; }
-          .soil-row { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; border-top:1px solid var(--grid); padding-top:6px; }
+          .soil-row { display:grid; gap:2px; border-top:1px solid var(--grid); padding-top:6px; }
           .soil-row:first-child { border-top:0; padding-top:0; }
           .soil-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
-          .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; }
-          .soil-meta { display:block; text-align:right; }
+          .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; text-align:left; }
+          .soil-meta { display:block; text-align:left; }
           .soil-meta > span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
@@ -9697,10 +9697,8 @@ def dashboard_page(request: Request):
               const potColorIndex = Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1));
               return `<div class="soil-row">
                 <div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(potColorIndex)}">${escHtml(sensor.potLabel || sensor.name)}</div>
-                <div style="text-align:right; min-width:0;">
-                  <div class="soil-value" style="color:${soilSensorColor(potColorIndex)}">${escHtml(moisture)}</div>
-                  <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
-                </div>
+                <div class="soil-value" style="color:${soilSensorColor(potColorIndex)}">${escHtml(moisture)}</div>
+                <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
               </div>`;
             }).join('');
             const latest = sensors.map((sensor) => sensor.lastMeasurementAt).filter(Boolean).sort().pop();
