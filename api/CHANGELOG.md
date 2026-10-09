@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.318
+
+### Disconnected soil sensor display
+- Shows `nak` for ESP8266 soil moisture sensors that report `sensor_status: not_connected` or `sensor_plausible: false`.
+- Preserves the raw ADC value and sensor name so disconnected sensors remain diagnosable from the dashboard.
+- Fixes JavaScript `null` moisture values being converted to `0.0 %`.
+- Keeps missing/disconnected moisture samples out of the soil moisture history instead of recording them as zero.
+- Bumped the application version to `v0.318`.
+
 ## v0.317
 
 ### Mobile soil moisture header overflow

@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.317"
+APP_VERSION = "v0.318"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1437,6 +1437,8 @@ def _clean_soil_sensor(item: object, index: int) -> dict | None:
         "raw_adc": int(raw_adc) if raw_adc is not None else None,
         "moisture_percent": round(max(0.0, min(100.0, moisture)), 2) if moisture is not None else None,
         "calibrated": calibrated,
+        "sensor_plausible": item.get("sensor_plausible") if isinstance(item.get("sensor_plausible"), bool) else None,
+        "sensor_status": str(item.get("sensor_status") or "").strip() or None,
         "last_measurement_at": str(item.get("last_measurement_at") or "").strip() or None,
         "wifi_rssi": int(_to_float(item.get("wifi_rssi"))) if _to_float(item.get("wifi_rssi")) is not None else None,
         "uptime_seconds": int(_to_float(item.get("uptime_seconds"))) if _to_float(item.get("uptime_seconds")) is not None else None,
@@ -9678,8 +9680,10 @@ def dashboard_page(request: Request):
             const items = Array.isArray(raw) ? raw : [];
             return items.slice(0, 3).map((item, index) => {
               const name = String(item?.sensor || item?.device || item?.id || `SoilSensor-${index + 1}`).trim() || `SoilSensor-${index + 1}`;
-              const moisture = Number(item?.moisture_percent);
-              const rawAdc = Number(item?.raw_adc);
+              const moistureRaw = item?.moisture_percent;
+              const moisture = moistureRaw === null || moistureRaw === undefined || moistureRaw === '' ? null : Number(moistureRaw);
+              const rawAdcRaw = item?.raw_adc;
+              const rawAdc = rawAdcRaw === null || rawAdcRaw === undefined || rawAdcRaw === '' ? null : Number(rawAdcRaw);
               const parsedPotIndex = Number(item?.pot_index);
               const potIndex = Number.isInteger(parsedPotIndex) && parsedPotIndex >= 1 && parsedPotIndex <= 3 ? parsedPotIndex : index + 1;
               return {
@@ -9690,6 +9694,8 @@ def dashboard_page(request: Request):
                 moisture: Number.isFinite(moisture) ? moisture : null,
                 rawAdc: Number.isFinite(rawAdc) ? rawAdc : null,
                 calibrated: item?.calibrated,
+                sensorPlausible: typeof item?.sensor_plausible === 'boolean' ? item.sensor_plausible : null,
+                sensorStatus: String(item?.sensor_status || '').trim().toLowerCase(),
                 lastMeasurementAt: item?.last_measurement_at || null,
                 host: String(item?.host || '').trim(),
                 signalPin: item?.signal_pin || null,
@@ -9707,7 +9713,8 @@ def dashboard_page(request: Request):
               return;
             }
             container.innerHTML = sensors.map((sensor, index) => {
-              const moisture = Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %';
+              const sensorNotConnected = sensor.sensorStatus === 'not_connected' || sensor.sensorPlausible === false;
+              const moisture = sensorNotConnected ? 'nak' : (Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %');
               const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
               const potColorIndex = Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1));
               const sensorUrl = sensor.host ? `http://${sensor.host}` : '';
@@ -10612,7 +10619,9 @@ def dashboard_page(request: Request):
               potIndex: sensor.potIndex,
               potLabel: tr(`pot${Math.max(1, Math.min(3, Number(sensor.potIndex || 1)))}`),
               values: soilByPoint.map((mapped) => {
-                const n = Number(mapped[sensor.id]);
+                const rawValue = mapped[sensor.id];
+                if (rawValue === null || rawValue === undefined || rawValue === '') return null;
+                const n = Number(rawValue);
                 return Number.isFinite(n) ? Number(n.toFixed(1)) : null;
               })
             }));
