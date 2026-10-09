@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.314"
+APP_VERSION = "v0.315"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7190,6 +7190,9 @@ def dashboard_page(request: Request):
             .value { font-size:1.15rem; }
             .grid { grid-template-columns: 1fr; }
             .soil-sensors-grid { grid-template-columns: 1fr; }
+            .soil-card .card-head { align-items:flex-start; }
+            .soil-card .card-head .label,
+            .soil-card .card-head .small { white-space:nowrap; }
             #shellyDevices { grid-template-columns: 1fr; }
             .row { gap:6px; }
             button, .stream-open-btn { width:100%; text-align:center; }
@@ -7204,6 +7207,9 @@ def dashboard_page(request: Request):
           body.force-mobile .top-cards { grid-template-columns: 1fr; }
           body.force-mobile .grid { grid-template-columns: 1fr; }
           body.force-mobile .soil-sensors-grid { grid-template-columns: 1fr; }
+          body.force-mobile .soil-card .card-head { align-items:flex-start; }
+          body.force-mobile .soil-card .card-head .label,
+          body.force-mobile .soil-card .card-head .small { white-space:nowrap; }
           body.force-mobile #shellyDevices { grid-template-columns: 1fr; }
 
           button {
@@ -7279,12 +7285,14 @@ def dashboard_page(request: Request):
           #vpd { color:#f59e0b; }
           #extTemp { color:#10b981; }
           #soilSensorsCards:empty { display:none; }
-          .soil-sensors-grid { grid-template-columns:repeat(3, minmax(0,1fr)); }
-          .soil-card { display:flex; flex-direction:column; }
+          .soil-sensors-grid { grid-template-columns:repeat(3, minmax(0,1fr)); align-items:start; }
+          .soil-card { display:flex; flex-direction:column; align-self:start; height:auto; min-height:0; }
+          .soil-card .card-head .label,
+          .soil-card .card-head .small { white-space:nowrap; }
           .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; text-align:left; }
           .soil-meta { display:block; text-align:left; margin-top:2px; }
           .soil-meta > span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-          .soil-actions { display:flex; justify-content:flex-end; margin-top:auto; padding-top:10px; }
+          .soil-actions { display:flex; justify-content:flex-end; margin-top:6px; padding-top:0; }
           .soil-actions button { padding:5px 10px; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }

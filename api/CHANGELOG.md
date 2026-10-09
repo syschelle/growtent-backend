@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.315
+
+### Soil moisture card spacing and mobile headers
+- Reduces unused vertical space in desktop soil moisture cards by letting each card size to its content instead of stretching.
+- Keeps the admin-only `Open` action close to the sensor details while remaining bottom-right aligned within the content.
+- Prevents the pot name and update text in soil moisture card headers from breaking across lines on mobile layouts.
+- Bumped the application version to `v0.315`.
+
 ## v0.314
 
 ### Dedicated soil moisture sensor row
