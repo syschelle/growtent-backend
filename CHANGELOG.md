@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.317
+
+### Mobile soil moisture header overflow
+- Prevents the soil moisture card update text from overflowing past the card on narrow mobile screens.
+- Stacks the soil moisture card header rows vertically on mobile so the pot label and update text stay inside the card.
+- Keeps the desktop layout improvements from v0.316 unchanged.
+- Bumped the application version to `v0.317`.
+
 ## v0.316
 
 ### Soil moisture desktop button spacing
