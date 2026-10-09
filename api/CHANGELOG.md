@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.316
+
+### Soil moisture desktop button spacing
+- Removes the extra dedicated desktop button row in live soil moisture cards.
+- Pins the admin-only `Open` button directly into the bottom-right corner on desktop to reduce the empty highlighted area next to it.
+- Keeps the compact mobile soil moisture card layout introduced in v0.315.
+- Bumped the application version to `v0.316`.
+
 ## v0.315
 
 ### Soil moisture card spacing and mobile headers

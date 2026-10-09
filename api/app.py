@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.315"
+APP_VERSION = "v0.316"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7286,7 +7286,7 @@ def dashboard_page(request: Request):
           #extTemp { color:#10b981; }
           #soilSensorsCards:empty { display:none; }
           .soil-sensors-grid { grid-template-columns:repeat(3, minmax(0,1fr)); align-items:start; }
-          .soil-card { display:flex; flex-direction:column; align-self:start; height:auto; min-height:0; }
+          .soil-card { display:flex; flex-direction:column; align-self:start; height:auto; min-height:0; position:relative; }
           .soil-card .card-head .label,
           .soil-card .card-head .small { white-space:nowrap; }
           .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; text-align:left; }
@@ -7294,6 +7294,10 @@ def dashboard_page(request: Request):
           .soil-meta > span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
           .soil-actions { display:flex; justify-content:flex-end; margin-top:6px; padding-top:0; }
           .soil-actions button { padding:5px 10px; }
+          @media (min-width: 1025px){
+            .soil-card { padding-bottom:12px; }
+            .soil-actions { position:absolute; right:12px; bottom:12px; margin-top:0; }
+          }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
           .history-card { position:relative; }
