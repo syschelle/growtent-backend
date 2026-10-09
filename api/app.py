@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.318"
+APP_VERSION = "v0.319"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6254,6 +6254,7 @@ def changelog_page():
                   <li><strong>v0.311:</strong> Restores the ESP soil sensor name below the raw value in the live soil moisture tile.</li>
                   <li><strong>v0.312:</strong> Adds an admin-only Open button for each live soil moisture sensor that opens its configured HTTP address in a new browser tab.</li>
                   <li><strong>v0.313:</strong> Shows each soil moisture sensor in its own dashboard card instead of stacking multiple sensors inside one card.</li>
+                  <li><strong>v0.319:</strong> Shows bad when a soil moisture sensor measurement is older than five minutes.</li>
                 </ul>
               </section>
             </div>
@@ -9704,6 +9705,23 @@ def dashboard_page(request: Request):
             }).filter((item) => item.moisture !== null || item.rawAdc !== null);
           }
 
+          function soilMeasurementTimeMs(value){
+            const raw = String(value || '').trim();
+            if (!raw) return NaN;
+            // ESP8266 currently reports local timestamps as "YYYY-MM-DD HH:mm:ss".
+            // Converting the separator to "T" makes the local-time parsing explicit in browsers.
+            const normalized = /^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}(?::\\d{2})?$/.test(raw)
+              ? raw.replace(' ', 'T')
+              : raw;
+            const timestamp = new Date(normalized).getTime();
+            return Number.isFinite(timestamp) ? timestamp : NaN;
+          }
+
+          function soilSensorIsStale(sensor, nowMs = Date.now()){
+            const measurementMs = soilMeasurementTimeMs(sensor?.lastMeasurementAt);
+            return Number.isFinite(measurementMs) && (nowMs - measurementMs) > (5 * 60 * 1000);
+          }
+
           function renderSoilSensors(payload){
             const container = document.getElementById('soilSensorsCards');
             if (!container) return;
@@ -9713,16 +9731,20 @@ def dashboard_page(request: Request):
               return;
             }
             container.innerHTML = sensors.map((sensor, index) => {
+              const sensorStale = soilSensorIsStale(sensor);
               const sensorNotConnected = sensor.sensorStatus === 'not_connected' || sensor.sensorPlausible === false;
-              const moisture = sensorNotConnected ? 'nak' : (Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %');
+              const moisture = sensorStale
+                ? 'bad'
+                : (sensorNotConnected ? 'nak' : (Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %'));
               const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
               const potColorIndex = Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1));
               const sensorUrl = sensor.host ? `http://${sensor.host}` : '';
               const openButton = sensorUrl
                 ? `<button type="button" data-open-soil="${escHtml(sensorUrl)}"${isGuestMode ? ' disabled aria-disabled="true"' : ''}>${escHtml(tr('openDevice'))}</button>`
                 : '';
-              const updatedText = sensor.lastMeasurementAt
-                ? formatShellyChangeTime(new Date(sensor.lastMeasurementAt).getTime())
+              const measurementMs = soilMeasurementTimeMs(sensor.lastMeasurementAt);
+              const updatedText = Number.isFinite(measurementMs)
+                ? formatShellyChangeTime(measurementMs)
                 : '-';
               return `<div class="card soil-card">
                 <div class="card-head">

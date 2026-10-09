@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.319
+
+### Stale soil sensor indication
+- Shows `bad` when a soil moisture sensor's `last_measurement_at` value is more than five minutes old.
+- Gives the stale `bad` state precedence over the disconnected `nak` state so an outdated sensor is clearly identified as stale.
+- Keeps the raw ADC value, sensor name and update age visible for diagnostics.
+- Normalizes the ESP8266 `YYYY-MM-DD HH:mm:ss` timestamp format before calculating its age in the browser.
+- Bumped the application version to `v0.319`.
+
 ## v0.318
 
 ### Disconnected soil sensor display
