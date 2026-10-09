@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.313
+
+### Soil moisture cards per sensor
+- Shows each live soil moisture sensor in its own dashboard card instead of stacking multiple sensors inside one shared card.
+- Keeps the per-card pot label, moisture value, raw value, sensor name and admin-only `Open` button.
+- Opens each configured soil sensor in a new browser tab and keeps the button disabled for guests.
+- Bumped the application version to `v0.313`.
+
 ## v0.312
 
 ### Admin-only soil sensor links

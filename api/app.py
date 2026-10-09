@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.312"
+APP_VERSION = "v0.313"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6251,6 +6251,7 @@ def changelog_page():
                   <li><strong>v0.310:</strong> Uses the pot label as the live soil moisture tile title for single-sensor tents.</li>
                   <li><strong>v0.311:</strong> Restores the ESP soil sensor name below the raw value in the live soil moisture tile.</li>
                   <li><strong>v0.312:</strong> Adds an admin-only Open button for each live soil moisture sensor that opens its configured HTTP address in a new browser tab.</li>
+                  <li><strong>v0.313:</strong> Shows each soil moisture sensor in its own dashboard card instead of stacking multiple sensors inside one card.</li>
                 </ul>
               </section>
             </div>
@@ -7274,14 +7275,12 @@ def dashboard_page(request: Request):
           #hum { color:#a78bfa; }
           #vpd { color:#f59e0b; }
           #extTemp { color:#10b981; }
-          #soilSensorsList { display:grid; gap:6px; }
-          .soil-row { display:grid; gap:2px; border-top:1px solid var(--grid); padding-top:6px; }
-          .soil-row:first-child { border-top:0; padding-top:0; }
-          .soil-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+          #soilSensorsCards { display:contents; }
+          .soil-card { display:flex; flex-direction:column; }
           .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; text-align:left; }
-          .soil-meta { display:block; text-align:left; }
+          .soil-meta { display:block; text-align:left; margin-top:2px; }
           .soil-meta > span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-          .soil-actions { display:flex; justify-content:flex-end; margin-top:4px; }
+          .soil-actions { display:flex; justify-content:flex-end; margin-top:auto; padding-top:10px; }
           .soil-actions button { padding:5px 10px; }
           /* gauges removed */
           canvas { width:100%; max-height:320px; }
@@ -7414,13 +7413,7 @@ def dashboard_page(request: Request):
             </div>
             <div class=\"value\" id=\"extTemp\">-</div>
           </div>
-          <div class=\"card\" id=\"soilSensorsCard\" style=\"display:none;\">
-            <div class=\"card-head\">
-              <div class=\"label\"><span>🌱</span> <span id=\"lblSoilSensors\">Soil moisture</span></div>
-              <div class=\"small\" id=\"soilSensorsLastChange\">Update: -</div>
-            </div>
-            <div id=\"soilSensorsList\"></div>
-          </div>
+          <div id=\"soilSensorsCards\"></div>
           <div class=\"card\" id=\"tankCurrentCard\" style=\"display:none;\">
             <div class=\"card-head\">
               <div class=\"label\"><span>🛢️</span> <span id=\"lblTankLevel\">Tank level</span></div>
@@ -9689,21 +9682,14 @@ def dashboard_page(request: Request):
           }
 
           function renderSoilSensors(payload){
-            const card = document.getElementById('soilSensorsCard');
-            const list = document.getElementById('soilSensorsList');
-            if (!card || !list) return;
+            const container = document.getElementById('soilSensorsCards');
+            if (!container) return;
             const sensors = normaliseSoilSensors(payload?.['soil.sensors']);
             if (!sensors.length) {
-              card.style.display = 'none';
-              list.innerHTML = '';
-              txt('lblSoilSensors', tr('soilMoisture'));
-              txt('soilSensorsLastChange', `${tr('lastChange')}: -`);
+              container.innerHTML = '';
               return;
             }
-            const singleSensor = sensors.length === 1;
-            txt('lblSoilSensors', singleSensor ? (sensors[0].potLabel || tr('soilMoisture')) : tr('soilMoisture'));
-            card.style.display = 'block';
-            list.innerHTML = sensors.map((sensor, index) => {
+            container.innerHTML = sensors.map((sensor, index) => {
               const moisture = Number.isFinite(sensor.moisture) ? `${sensor.moisture.toFixed(1)} %` : '- %';
               const raw = Number.isFinite(sensor.rawAdc) ? `${tr('rawValue')}: ${Math.round(sensor.rawAdc)}` : `${tr('rawValue')}: -`;
               const potColorIndex = Math.max(0, Math.min(2, Number(sensor.potIndex || (index + 1)) - 1));
@@ -9711,14 +9697,20 @@ def dashboard_page(request: Request):
               const openButton = sensorUrl
                 ? `<button type="button" data-open-soil="${escHtml(sensorUrl)}"${isGuestMode ? ' disabled aria-disabled="true"' : ''}>${escHtml(tr('openDevice'))}</button>`
                 : '';
-              return `<div class="soil-row">
-                ${singleSensor ? '' : `<div class="soil-name" title="${escHtml(sensor.name)}" style="color:${soilSensorColor(potColorIndex)}">${escHtml(sensor.potLabel || sensor.name)}</div>`}
+              const updatedText = sensor.lastMeasurementAt
+                ? formatShellyChangeTime(new Date(sensor.lastMeasurementAt).getTime())
+                : '-';
+              return `<div class="card soil-card">
+                <div class="card-head">
+                  <div class="label"><span>🌱</span> <span>${escHtml(sensor.potLabel || tr('soilMoisture'))}</span></div>
+                  <div class="small">${escHtml(tr('lastChange'))}: ${escHtml(updatedText)}</div>
+                </div>
                 <div class="soil-value" style="color:${soilSensorColor(potColorIndex)}">${escHtml(moisture)}</div>
                 <div class="small soil-meta"><span>${escHtml(raw)}</span><span title="${escHtml(sensor.name)}">${escHtml(sensor.name)}</span></div>
                 ${openButton ? `<div class="soil-actions">${openButton}</div>` : ''}
               </div>`;
             }).join('');
-            list.querySelectorAll('button[data-open-soil]').forEach(btn => {
+            container.querySelectorAll('button[data-open-soil]').forEach(btn => {
               btn.addEventListener('click', () => {
                 if (isGuestMode || btn.disabled) return;
                 const url = String(btn.getAttribute('data-open-soil') || '');
@@ -9726,8 +9718,6 @@ def dashboard_page(request: Request):
                 window.open(url, '_blank', 'noopener,noreferrer');
               });
             });
-            const latest = sensors.map((sensor) => sensor.lastMeasurementAt).filter(Boolean).sort().pop();
-            txt('soilSensorsLastChange', `${tr('lastChange')}: ${latest ? formatShellyChangeTime(new Date(latest).getTime()) : '-'}`);
           }
 
           function buildSoilMoistureChart(labels, soilSeries){
