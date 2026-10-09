@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.313"
+APP_VERSION = "v0.314"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7177,6 +7177,7 @@ def dashboard_page(request: Request):
             .content { padding:0.8rem; }
             .top-cards { grid-template-columns: 1fr; }
             .grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+            .soil-sensors-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
             #shellyDevices { grid-template-columns: repeat(2, minmax(0,1fr)); }
             #exportCsvBtn, #espOpenBtn, #espStatsBtn, #pollErrorsBtn { display:none !important; }
           }
@@ -7188,6 +7189,7 @@ def dashboard_page(request: Request):
             .phase-chip { font-size:.95rem; padding:8px 10px; }
             .value { font-size:1.15rem; }
             .grid { grid-template-columns: 1fr; }
+            .soil-sensors-grid { grid-template-columns: 1fr; }
             #shellyDevices { grid-template-columns: 1fr; }
             .row { gap:6px; }
             button, .stream-open-btn { width:100%; text-align:center; }
@@ -7201,6 +7203,7 @@ def dashboard_page(request: Request):
           body.force-mobile .content { padding:0.8rem; }
           body.force-mobile .top-cards { grid-template-columns: 1fr; }
           body.force-mobile .grid { grid-template-columns: 1fr; }
+          body.force-mobile .soil-sensors-grid { grid-template-columns: 1fr; }
           body.force-mobile #shellyDevices { grid-template-columns: 1fr; }
 
           button {
@@ -7275,7 +7278,8 @@ def dashboard_page(request: Request):
           #hum { color:#a78bfa; }
           #vpd { color:#f59e0b; }
           #extTemp { color:#10b981; }
-          #soilSensorsCards { display:contents; }
+          #soilSensorsCards:empty { display:none; }
+          .soil-sensors-grid { grid-template-columns:repeat(3, minmax(0,1fr)); }
           .soil-card { display:flex; flex-direction:column; }
           .soil-value { font-size:1.1rem; font-weight:800; white-space:nowrap; text-align:left; }
           .soil-meta { display:block; text-align:left; margin-top:2px; }
@@ -7413,7 +7417,6 @@ def dashboard_page(request: Request):
             </div>
             <div class=\"value\" id=\"extTemp\">-</div>
           </div>
-          <div id=\"soilSensorsCards\"></div>
           <div class=\"card\" id=\"tankCurrentCard\" style=\"display:none;\">
             <div class=\"card-head\">
               <div class=\"label\"><span>🛢️</span> <span id=\"lblTankLevel\">Tank level</span></div>
@@ -7425,6 +7428,8 @@ def dashboard_page(request: Request):
           </div>
           <!-- main power tile removed (covered by Main Switch tile) -->
         </div>
+
+        <div class=\"grid soil-sensors-grid\" id=\"soilSensorsCards\"></div>
 
         <div class=\"card\">
           <div class=\"label\" id=\"lblRelays\">Relays</div>

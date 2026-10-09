@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.314
+
+### Dedicated soil moisture sensor row
+- Moves the live soil moisture sensor cards into their own dashboard row below the primary measurement cards.
+- Keeps up to three soil moisture cards side by side on desktop without shrinking the temperature, humidity, VPD, tank temperature and tank level cards.
+- Uses two columns on tablet-sized screens and one column on mobile/forced-mobile layouts.
+- Bumped the application version to `v0.314`.
+
 ## v0.313
 
 ### Soil moisture cards per sensor
