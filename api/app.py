@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.320"
+APP_VERSION = "v0.321"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -662,10 +662,10 @@ def _soil_sensors_json(value, *, validate_hosts: bool = False) -> str:
 def load_auth_config():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host FROM app_auth_config WHERE id=1")
+            cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host, soil_moisture_alert_enabled FROM app_auth_config WHERE id=1")
             row = cur.fetchone()
             if not row:
-                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True, "air_sensor_enabled": False, "air_sensor_host": None}
+                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True, "air_sensor_enabled": False, "air_sensor_host": None, "soil_moisture_alert_enabled": True}
             return {
                 "enabled": bool(row[0]),
                 "username": row[1],
@@ -684,6 +684,7 @@ def load_auth_config():
                 "history_api_enabled": bool(row[14]) if row[14] is not None else True,
                 "air_sensor_enabled": bool(row[15]) if row[15] is not None else False,
                 "air_sensor_host": row[16],
+                "soil_moisture_alert_enabled": bool(row[17]) if row[17] is not None else True,
             }
 
 
@@ -1091,6 +1092,7 @@ def init_db():
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_device TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_app_token TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_user_key TEXT;")
+            cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS soil_moisture_alert_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS history_api_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS air_sensor_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
@@ -2456,14 +2458,13 @@ def _send_grouped_soil_moisture_alerts(alerts: list[dict], notified_date: date) 
     lines: list[str] = []
     for (_tent_id, label), items in grouped.items():
         ordered = sorted(items, key=lambda item: int(item["pot_index"]))
-        details = ", ".join(
-            f"Pot {int(item['pot_index'])}: {float(item['moisture_percent']):.1f}%"
-            for item in ordered
-        )
-        lines.append(f"{label}: {details}")
+        for item in ordered:
+            lines.append(
+                f"{label} – Topf {int(item['pot_index'])}: {float(item['moisture_percent']):.1f} %"
+            )
 
-    message = f"Below {SOIL_MOISTURE_ALERT_THRESHOLD_PCT:g}%: " + "\n".join(lines)
-    if not _send_pushover("CanopyOps: low soil moisture", message, priority=0):
+    message = f"Bodenfeuchte unter {SOIL_MOISTURE_ALERT_THRESHOLD_PCT:g} %:\n" + "\n".join(lines)
+    if not _send_pushover("CanopyOps: Bodenfeuchte niedrig", message, priority=0):
         return False
     _mark_soil_alerts_notified(alerts, notified_date)
     return True
@@ -2479,6 +2480,7 @@ def poll_loop():
 
             soil_alerts_to_send: list[dict] = []
             soil_alert_date = datetime.now().date()
+            soil_moisture_alert_enabled = bool(load_auth_config().get("soil_moisture_alert_enabled", True))
             with httpx.Client(timeout=5.0) as client:
                 for tent in tents:
                     try:
@@ -2500,15 +2502,16 @@ def poll_loop():
 
                         # Low soil-moisture Pushover: one notification per sensor and calendar day.
                         # Drying phase, disconnected/stale sensors and recovery messages are intentionally ignored.
-                        low_soil = _low_soil_moisture_candidates(payload)
-                        if low_soil:
-                            last_notified = _soil_alert_last_notified_dates(int(tent["id"]))
-                            for item in _soil_alerts_not_notified_today(low_soil, last_notified, soil_alert_date):
-                                soil_alerts_to_send.append({
-                                    **item,
-                                    "tent_id": int(tent["id"]),
-                                    "tent_label": label,
-                                })
+                        if soil_moisture_alert_enabled:
+                            low_soil = _low_soil_moisture_candidates(payload)
+                            if low_soil:
+                                last_notified = _soil_alert_last_notified_dates(int(tent["id"]))
+                                for item in _soil_alerts_not_notified_today(low_soil, last_notified, soil_alert_date):
+                                    soil_alerts_to_send.append({
+                                        **item,
+                                        "tent_id": int(tent["id"]),
+                                        "tent_label": label,
+                                    })
 
                         # status reset on successful fetch
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
@@ -2690,6 +2693,7 @@ def get_auth_config():
         "pushover_device": cfg.get("pushover_device") or "",
         "pushover_app_token": cfg.get("pushover_app_token") or "",
         "pushover_user_key": cfg.get("pushover_user_key") or "",
+        "soil_moisture_alert_enabled": bool(cfg.get("soil_moisture_alert_enabled", True)),
         "gromate_api_password": cfg.get("gromate_api_password") or "",
         "history_api_enabled": bool(cfg.get("history_api_enabled", True)),
         "otpauth_url": otpauth_url,
@@ -2761,6 +2765,7 @@ class AuthConfigPayload(BaseModel):
     pushover_device: str | None = None
     pushover_app_token: str | None = None
     pushover_user_key: str | None = None
+    soil_moisture_alert_enabled: bool | None = None
     gromate_api_password: str | None = None
     history_api_enabled: bool | None = None
 
@@ -2790,8 +2795,8 @@ def set_auth_config(payload: AuthConfigPayload):
     password = payload.password
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled FROM app_auth_config WHERE id=1")
-            row = cur.fetchone() or (None, None, False, False, None, None, None, "", "", "", "", True)
+            cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, soil_moisture_alert_enabled FROM app_auth_config WHERE id=1")
+            row = cur.fetchone() or (None, None, False, False, None, None, None, "", "", "", "", True, True)
             current_hash = row[1]
             is_twofa_enabled = bool(row[2])
             current_guest_enabled = bool(row[3])
@@ -2801,6 +2806,7 @@ def set_auth_config(payload: AuthConfigPayload):
             current_pushover_user_key = (row[9] or "")
             current_gromate_api_password = (row[10] or "")
             current_history_api_enabled = bool(row[11]) if row[11] is not None else True
+            current_soil_moisture_alert_enabled = bool(row[12]) if row[12] is not None else True
             want_twofa = is_twofa_enabled if payload.twofa_enabled is None else as_bool(payload.twofa_enabled)
 
             if enabled and not username:
@@ -2830,6 +2836,7 @@ def set_auth_config(payload: AuthConfigPayload):
             pushover_user_key = current_pushover_user_key if payload.pushover_user_key is None else str(payload.pushover_user_key or "").strip()
             gromate_api_password = current_gromate_api_password if payload.gromate_api_password is None else str(payload.gromate_api_password or "").strip()
             history_api_enabled = current_history_api_enabled if payload.history_api_enabled is None else as_bool(payload.history_api_enabled)
+            soil_moisture_alert_enabled = current_soil_moisture_alert_enabled if payload.soil_moisture_alert_enabled is None else as_bool(payload.soil_moisture_alert_enabled)
             if guest_enabled:
                 if not guest_username:
                     raise HTTPException(status_code=400, detail="guest username required when guest mode is enabled")
@@ -2847,8 +2854,8 @@ def set_auth_config(payload: AuthConfigPayload):
             # Persist base auth settings first.
             cur.execute(
                 """
-                INSERT INTO app_auth_config(id, enabled, username, password_hash, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, updated_at)
-                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                INSERT INTO app_auth_config(id, enabled, username, password_hash, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, soil_moisture_alert_enabled, updated_at)
+                VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (id)
                 DO UPDATE SET enabled=EXCLUDED.enabled, username=EXCLUDED.username, password_hash=EXCLUDED.password_hash,
                               guest_enabled=EXCLUDED.guest_enabled, guest_username=EXCLUDED.guest_username,
@@ -2858,9 +2865,10 @@ def set_auth_config(payload: AuthConfigPayload):
                               pushover_user_key=EXCLUDED.pushover_user_key,
                               gromate_api_password=EXCLUDED.gromate_api_password,
                               history_api_enabled=EXCLUDED.history_api_enabled,
+                              soil_moisture_alert_enabled=EXCLUDED.soil_moisture_alert_enabled,
                               updated_at=NOW()
                 """,
-                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None, gromate_api_password or None, history_api_enabled),
+                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None, gromate_api_password or None, history_api_enabled, soil_moisture_alert_enabled),
             )
 
             # Explicit 2FA disable request
@@ -2899,6 +2907,7 @@ def set_auth_config(payload: AuthConfigPayload):
             "qr_png_url": f"/auth/qr.png?u={quote_plus(otpauth_url)}",
             "recovery_codes": recovery_codes,
             "pushover_device": cfg_after_auth_save.get("pushover_device") or "",
+            "soil_moisture_alert_enabled": bool(cfg_after_auth_save.get("soil_moisture_alert_enabled", True)),
         }
 
     cfg = load_auth_config()
@@ -2915,6 +2924,7 @@ def set_auth_config(payload: AuthConfigPayload):
         "pushover_device": cfg.get("pushover_device") or "",
         "pushover_app_token": cfg.get("pushover_app_token") or "",
         "pushover_user_key": cfg.get("pushover_user_key") or "",
+        "soil_moisture_alert_enabled": bool(cfg.get("soil_moisture_alert_enabled", True)),
         "gromate_api_password": cfg.get("gromate_api_password") or "",
         "history_api_enabled": bool(cfg.get("history_api_enabled", True)),
         "otpauth_url": None,
@@ -3452,7 +3462,7 @@ def export_config_backup():
 
             cur.execute(
                 """
-                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host, updated_at
+                SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host, soil_moisture_alert_enabled, updated_at
                 FROM app_auth_config
                 WHERE id=1
                 """
@@ -3494,14 +3504,15 @@ def export_config_backup():
             "history_api_enabled": bool(auth_row[10]) if auth_row[10] is not None else True,
             "air_sensor_enabled": bool(auth_row[11]) if auth_row[11] is not None else False,
             "air_sensor_host": auth_row[12] or None,
-            "updated_at": auth_row[13].isoformat() if auth_row[13] else None,
+            "soil_moisture_alert_enabled": bool(auth_row[13]) if auth_row[13] is not None else True,
+            "updated_at": auth_row[14].isoformat() if auth_row[14] else None,
         }
 
     strains = _read_strains_db()
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 6,
+        "schema_version": 7,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -3580,6 +3591,7 @@ def import_config_backup(payload: dict):
                         history_api_enabled=%s,
                         air_sensor_enabled=%s,
                         air_sensor_host=%s,
+                        soil_moisture_alert_enabled=%s,
                         updated_at=NOW()
                     WHERE id=1
                     """,
@@ -3597,6 +3609,7 @@ def import_config_backup(payload: dict):
                         bool(auth.get("history_api_enabled", True)),
                         bool(auth.get("air_sensor_enabled", False)),
                         normalize_air_sensor_host(auth.get("air_sensor_host")),
+                        bool(auth.get("soil_moisture_alert_enabled", True)),
                     ),
                 )
 
@@ -4970,11 +4983,16 @@ def setup_page(request: Request):
               <input id=\"pushoverUserKey\" placeholder=\"uSeRkEy\" style=\"padding:8px 10px; border-radius:8px; width:300px; margin-bottom:10px;\" />
               <div id=\"pushoverDeviceLabel\" style=\"margin-bottom:6px;\">Pushover device (optional)</div>
               <input id=\"pushoverDevice\" placeholder=\"e.g. iphone\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
+              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:6px;\">
+                <input type=\"checkbox\" id=\"soilMoistureAlertEnabled\" checked />
+                <span id=\"soilMoistureAlertEnabledLabel\">Low soil moisture warning (&lt;25%)</span>
+              </label>
+              <div id=\"soilMoistureAlertHint\" class=\"muted\" style=\"margin-bottom:10px;\">At most once per pot and day; disabled during drying.</div>
               <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;\">
                 <button type=\"button\" id=\"savePushoverBtn\">Save Pushover</button>
               </div>
               <div id=\"pushoverMsg\" style=\"margin-top:8px;\"></div>
-              <div class=\"muted\">Status messages for online/offline transitions from poller.</div>
+              <div class=\"muted\">Status messages for online/offline transitions and optional low soil moisture warnings.</div>
             </div>
 
             <div class=\"card\" id=\"airSensorCard\" style=\"margin-bottom:12px; max-width:540px;\">
@@ -5112,6 +5130,7 @@ def setup_page(request: Request):
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
+          const soilMoistureAlertEnabledEl = document.getElementById('soilMoistureAlertEnabled');
           const airSensorEnabledEl = document.getElementById('airSensorEnabled');
           const airSensorHostEl = document.getElementById('airSensorHost');
           const airSensorMsgEl = document.getElementById('airSensorMsg');
@@ -5143,6 +5162,8 @@ def setup_page(request: Request):
               pushoverAppToken: 'Pushover app token',
               pushoverUserKey: 'Pushover user key',
               pushoverDevice: 'Pushover device (optional)',
+              soilMoistureAlertEnabled: 'Low soil moisture warning (<25%)',
+              soilMoistureAlertHint: 'At most once per pot and day; disabled during drying.',
               gromateApiPassword: 'API-History-Password',
               twofa: 'Enable 2FA (TOTP)',
               regenRecovery: 'Regenerate recovery codes',
@@ -5221,6 +5242,8 @@ def setup_page(request: Request):
               pushoverAppToken: 'Pushover App-Token',
               pushoverUserKey: 'Pushover User-Key',
               pushoverDevice: 'Pushover-Gerät (optional)',
+              soilMoistureAlertEnabled: 'Bodenfeuchtewarnung (<25 %)',
+              soilMoistureAlertHint: 'Maximal einmal pro Topf und Tag; während Trocknung deaktiviert.',
               gromateApiPassword: 'Passwort für Device-History-API',
               twofa: '2FA (TOTP) aktivieren',
               regenRecovery: 'Recovery-Codes neu erzeugen',
@@ -5317,6 +5340,8 @@ def setup_page(request: Request):
             set('pushoverAppTokenLabel', tSetup('pushoverAppToken'));
             set('pushoverUserKeyLabel', tSetup('pushoverUserKey'));
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
+            set('soilMoistureAlertEnabledLabel', tSetup('soilMoistureAlertEnabled'));
+            set('soilMoistureAlertHint', tSetup('soilMoistureAlertHint'));
             set('airSensorTitle', tSetup('airSensorTitle'));
             set('airSensorEnabledLabel', tSetup('airSensorEnabled'));
             set('airSensorHostLabel', tSetup('airSensorHost'));
@@ -5729,6 +5754,7 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = cfg.pushover_app_token || '';
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = cfg.pushover_user_key || '';
               if (pushoverDeviceEl) pushoverDeviceEl.value = cfg.pushover_device || '';
+              if (soilMoistureAlertEnabledEl) soilMoistureAlertEnabledEl.checked = cfg.soil_moisture_alert_enabled !== false;
               authUsernameEl.classList.remove('input-missing');
               authPasswordEl?.classList.remove('input-missing');
               authPasswordConfirmEl?.classList.remove('input-missing');
@@ -6014,6 +6040,7 @@ def setup_page(request: Request):
                   pushover_app_token: (pushoverAppTokenEl?.value || '').trim(),
                   pushover_user_key: (pushoverUserKeyEl?.value || '').trim(),
                   pushover_device: (pushoverDeviceEl?.value || '').trim(),
+                  soil_moisture_alert_enabled: !!soilMoistureAlertEnabledEl?.checked,
                 })
               });
               const body = await res.json().catch(() => ({}));
@@ -6040,6 +6067,7 @@ def setup_page(request: Request):
               if (pushoverAppTokenEl) pushoverAppTokenEl.value = body?.pushover_app_token || pushoverAppTokenEl.value;
               if (pushoverUserKeyEl) pushoverUserKeyEl.value = body?.pushover_user_key || pushoverUserKeyEl.value;
               if (pushoverDeviceEl) pushoverDeviceEl.value = body?.pushover_device || pushoverDeviceEl.value;
+              if (soilMoistureAlertEnabledEl && body?.soil_moisture_alert_enabled !== undefined) soilMoistureAlertEnabledEl.checked = !!body.soil_moisture_alert_enabled;
               if (regenRecoveryCodesEl) regenRecoveryCodesEl.checked = false;
 
               if (auth2faInfoEl) {
@@ -6415,6 +6443,7 @@ def changelog_page():
                   <li><strong>v0.313:</strong> Shows each soil moisture sensor in its own dashboard card instead of stacking multiple sensors inside one card.</li>
                   <li><strong>v0.319:</strong> Shows bad when a soil moisture sensor measurement is older than five minutes.</li>
                   <li><strong>v0.320:</strong> Adds grouped daily Pushover warnings for valid soil moisture readings below 25% outside the drying phase.</li>
+                  <li><strong>v0.321:</strong> Adds a Setup toggle for low soil-moisture Pushover warnings and includes tent name, pot number and moisture value in each grouped alert entry.</li>
                 </ul>
               </section>
             </div>

@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.321
+
+### Configurable low soil moisture alerts
+- Adds a Setup checkbox to enable or disable the daily low-soil-moisture Pushover warning.
+- Keeps the option enabled by default for existing installations and persists it in PostgreSQL and configuration backups.
+- Each alert entry now explicitly includes the tent name, pot number and measured moisture value.
+- Keeps grouping newly-triggered sensors into as few Pushover messages as possible, with one alert per pot and calendar day and no recovery notification.
+- Keeps low-soil-moisture alerts suppressed during the drying phase and for stale/disconnected sensors.
+- Bumped the application version to `v0.321`.
+
 ## v0.320
 
 ### Low soil moisture Pushover alerts

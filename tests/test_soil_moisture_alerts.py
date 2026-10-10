@@ -97,6 +97,7 @@ def test_grouped_push_contains_multiple_sensors_and_marks_after_success():
     ]
     assert ns["_send_grouped_soil_moisture_alerts"](alerts, today) is True
     assert len(sent) == 1
-    assert "Tent A: Pot 1: 20.0%, Pot 2: 22.5%" in sent[0][1]
-    assert "Tent B: Pot 3: 19.0%" in sent[0][1]
+    assert "Tent A – Topf 1: 20.0 %" in sent[0][1]
+    assert "Tent A – Topf 2: 22.5 %" in sent[0][1]
+    assert "Tent B – Topf 3: 19.0 %" in sent[0][1]
     assert marked == [(alerts, today)]
