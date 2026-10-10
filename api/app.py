@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.319"
+APP_VERSION = "v0.320"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -108,6 +108,8 @@ PUSHOVER_APP_TOKEN = (os.getenv("PUSHOVER_APP_TOKEN") or "").strip()
 PUSHOVER_USER_KEY = (os.getenv("PUSHOVER_USER_KEY") or "").strip()
 PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_DEVICE = (os.getenv("PUSHOVER_DEVICE") or "").strip()
+SOIL_MOISTURE_ALERT_THRESHOLD_PCT = float(os.getenv("SOIL_MOISTURE_ALERT_THRESHOLD_PCT", "25"))
+SOIL_MOISTURE_ALERT_MAX_AGE_SECONDS = int(os.getenv("SOIL_MOISTURE_ALERT_MAX_AGE_SECONDS", "300"))
 POLL_NOTIFY_STATE: dict[int, dict] = {}
 WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
 SHELLY_SCHEDULE_CACHE_SECONDS = int(os.getenv("SHELLY_SCHEDULE_CACHE_SECONDS", "1800"))
@@ -1053,6 +1055,18 @@ def init_db():
                     tent_id INTEGER NOT NULL REFERENCES tents(id) ON DELETE CASCADE,
                     captured_at TIMESTAMPTZ NOT NULL,
                     payload JSONB NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS soil_moisture_alert_state (
+                    tent_id INTEGER NOT NULL REFERENCES tents(id) ON DELETE CASCADE,
+                    pot_index SMALLINT NOT NULL,
+                    last_notified_date DATE,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (tent_id, pot_index),
+                    CHECK (pot_index BETWEEN 1 AND 3)
                 );
                 """
             )
@@ -2328,6 +2342,132 @@ def _heap_warning_reason(payload: dict):
         return False, "", {"free": None, "min": None, "largest": None, "ratio": None}
 
 
+
+def _grow_phase_is_drying(payload: dict | None) -> bool:
+    data = payload or {}
+    for key in ("settings.grow.currentPhase", "settings.currentPhase", "grow.currentPhase", "curPhase"):
+        raw = data.get(key)
+        if raw is None:
+            continue
+        try:
+            if int(float(raw)) == 3:
+                return True
+        except Exception:
+            pass
+        value = str(raw).strip().casefold()
+        if value in {"dry", "drying", "trocknung", "trocken", "3"}:
+            return True
+    return False
+
+
+def _soil_measurement_is_fresh(sensor: dict, max_age_seconds: int | None = None, now: datetime | None = None) -> bool:
+    raw = str((sensor or {}).get("last_measurement_at") or "").strip()
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return False
+    limit = max(0, int(SOIL_MOISTURE_ALERT_MAX_AGE_SECONDS if max_age_seconds is None else max_age_seconds))
+    try:
+        if dt.tzinfo is None:
+            ref = now if now is not None and now.tzinfo is None else datetime.now()
+        else:
+            ref = now.astimezone(dt.tzinfo) if now is not None and now.tzinfo is not None else datetime.now(dt.tzinfo)
+        age = (ref - dt).total_seconds()
+        return age <= limit
+    except Exception:
+        return False
+
+
+def _low_soil_moisture_candidates(payload: dict | None) -> list[dict]:
+    if _grow_phase_is_drying(payload):
+        return []
+    data = payload or {}
+    raw_sensors = data.get("soil.sensors")
+    if not isinstance(raw_sensors, list):
+        return []
+    result: list[dict] = []
+    for index, sensor in enumerate(raw_sensors[:3], start=1):
+        if not isinstance(sensor, dict):
+            continue
+        moisture = _to_float(sensor.get("moisture_percent"))
+        if moisture is None or moisture >= SOIL_MOISTURE_ALERT_THRESHOLD_PCT:
+            continue
+        if sensor.get("sensor_plausible") is False:
+            continue
+        status = str(sensor.get("sensor_status") or "").strip().casefold()
+        if status in {"not_connected", "not connected", "disconnected", "nak", "bad"}:
+            continue
+        if not _soil_measurement_is_fresh(sensor):
+            continue
+        pot_raw = _to_float(sensor.get("pot_index"))
+        pot_index = int(pot_raw) if pot_raw is not None and 1 <= int(pot_raw) <= 3 else index
+        result.append({
+            "pot_index": pot_index,
+            "moisture_percent": round(float(moisture), 1),
+            "sensor": str(sensor.get("sensor") or sensor.get("device") or f"SoilSensor-{pot_index}").strip(),
+        })
+    return result
+
+
+def _soil_alerts_not_notified_today(candidates: list[dict], last_notified: dict[int, date | None], today: date) -> list[dict]:
+    return [
+        item for item in candidates
+        if last_notified.get(int(item.get("pot_index") or 0)) != today
+    ]
+
+
+def _soil_alert_last_notified_dates(tent_id: int) -> dict[int, date | None]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pot_index, last_notified_date FROM soil_moisture_alert_state WHERE tent_id=%s",
+                (tent_id,),
+            )
+            return {int(row[0]): row[1] for row in cur.fetchall()}
+
+
+def _mark_soil_alerts_notified(alerts: list[dict], notified_date: date) -> None:
+    if not alerts:
+        return
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for alert in alerts:
+                cur.execute(
+                    """
+                    INSERT INTO soil_moisture_alert_state(tent_id, pot_index, last_notified_date, updated_at)
+                    VALUES(%s, %s, %s, NOW())
+                    ON CONFLICT (tent_id, pot_index)
+                    DO UPDATE SET last_notified_date=EXCLUDED.last_notified_date, updated_at=NOW()
+                    """,
+                    (int(alert["tent_id"]), int(alert["pot_index"]), notified_date),
+                )
+
+
+def _send_grouped_soil_moisture_alerts(alerts: list[dict], notified_date: date) -> bool:
+    if not alerts:
+        return False
+    grouped: dict[tuple[int, str], list[dict]] = {}
+    for alert in alerts:
+        key = (int(alert["tent_id"]), str(alert.get("tent_label") or f"Tent #{alert['tent_id']}"))
+        grouped.setdefault(key, []).append(alert)
+
+    lines: list[str] = []
+    for (_tent_id, label), items in grouped.items():
+        ordered = sorted(items, key=lambda item: int(item["pot_index"]))
+        details = ", ".join(
+            f"Pot {int(item['pot_index'])}: {float(item['moisture_percent']):.1f}%"
+            for item in ordered
+        )
+        lines.append(f"{label}: {details}")
+
+    message = f"Below {SOIL_MOISTURE_ALERT_THRESHOLD_PCT:g}%: " + "\n".join(lines)
+    if not _send_pushover("CanopyOps: low soil moisture", message, priority=0):
+        return False
+    _mark_soil_alerts_notified(alerts, notified_date)
+    return True
+
 def poll_loop():
     loops = 0
     while True:
@@ -2337,6 +2477,8 @@ def poll_loop():
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            soil_alerts_to_send: list[dict] = []
+            soil_alert_date = datetime.now().date()
             with httpx.Client(timeout=5.0) as client:
                 for tent in tents:
                     try:
@@ -2355,6 +2497,18 @@ def poll_loop():
                         _track_watering_run_from_payload(tent["id"], payload)
 
                         label = _tent_label_for_notify(tent, payload)
+
+                        # Low soil-moisture Pushover: one notification per sensor and calendar day.
+                        # Drying phase, disconnected/stale sensors and recovery messages are intentionally ignored.
+                        low_soil = _low_soil_moisture_candidates(payload)
+                        if low_soil:
+                            last_notified = _soil_alert_last_notified_dates(int(tent["id"]))
+                            for item in _soil_alerts_not_notified_today(low_soil, last_notified, soil_alert_date):
+                                soil_alerts_to_send.append({
+                                    **item,
+                                    "tent_id": int(tent["id"]),
+                                    "tent_label": label,
+                                })
 
                         # status reset on successful fetch
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
@@ -2484,6 +2638,11 @@ def poll_loop():
                         st["last_error"] = str(tent_err)
                         st["last_err_at"] = now.isoformat()
                         POLL_NOTIFY_STATE[tent["id"]] = st
+
+            # Combine all newly-low sensors from this poll cycle into one message.
+            # Sensors are marked only after Pushover accepted the notification.
+            if soil_alerts_to_send:
+                _send_grouped_soil_moisture_alerts(soil_alerts_to_send, soil_alert_date)
 
             loops += 1
             # Run retention cleanup regularly (roughly every 10 minutes at 10s poll interval).
@@ -6255,6 +6414,7 @@ def changelog_page():
                   <li><strong>v0.312:</strong> Adds an admin-only Open button for each live soil moisture sensor that opens its configured HTTP address in a new browser tab.</li>
                   <li><strong>v0.313:</strong> Shows each soil moisture sensor in its own dashboard card instead of stacking multiple sensors inside one card.</li>
                   <li><strong>v0.319:</strong> Shows bad when a soil moisture sensor measurement is older than five minutes.</li>
+                  <li><strong>v0.320:</strong> Adds grouped daily Pushover warnings for valid soil moisture readings below 25% outside the drying phase.</li>
                 </ul>
               </section>
             </div>

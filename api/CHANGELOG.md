@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.320
+
+### Low soil moisture Pushover alerts
+- Sends a Pushover warning for valid soil moisture readings below 25% when the grow phase is not drying.
+- Suppresses disconnected (`nak`) and stale (`bad`) soil sensor values from low-moisture notifications.
+- Groups all newly-triggered low soil moisture sensors from the same polling cycle into one Pushover message.
+- Limits each sensor to one low-moisture notification per calendar day and persists the daily cooldown in PostgreSQL so restarts do not reset it.
+- Does not send recovery notifications when soil moisture returns above the threshold.
+- Bumped the application version to `v0.320`.
+
 ## v0.319
 
 ### Stale soil sensor indication
