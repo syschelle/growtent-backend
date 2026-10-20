@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.324
+
+### Administrator overview and modular route fix
+- Fixes `404 Not Found` when loading the administrator list in the production modular API server.
+- Registers all `/config/admins` CRUD and per-admin 2FA routes in `routes/system.py`.
+- Adds a compact overview of active administrators and their individual 2FA state in Setup.
+- Keeps the detailed per-admin edit cards below the overview.
+- Bumped the application version to `v0.324`.
+
 ## v0.323
 
 ### Clear per-administrator access and 2FA management

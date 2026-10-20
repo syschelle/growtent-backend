@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.323"
+APP_VERSION = "v0.324"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5360,6 +5360,9 @@ def setup_page(request: Request):
           #backupCard { grid-column:4; grid-row:3; }
           #rubricDevices { grid-column:1 / -1; grid-row:6; }
           #setupTentsCard { grid-column:1 / -1; grid-row:7; }
+          .admin-overview { border:1px solid var(--grid); border-radius:10px; padding:9px 10px; background:rgba(34,197,94,.06); }
+          .admin-overview-title { font-weight:700; margin-bottom:5px; }
+          .admin-overview-row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
           .admin-account { border:1px solid var(--grid); border-radius:10px; padding:10px; margin-bottom:10px; background:rgba(148,163,184,.055); }
           .admin-account-head { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
           .admin-account-title { font-weight:700; font-size:1rem; }
@@ -5461,6 +5464,7 @@ def setup_page(request: Request):
             <div class=\"card\" id=\"adminsCard\" style=\"margin-bottom:12px; max-width:760px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"adminsTitle\">Administrators</strong></div>
               <div id=\"adminsHint\" class=\"muted\" style=\"margin-bottom:10px;\">Each administrator has an independent password and independent optional 2FA.</div>
+              <div id=\"adminsOverview\" class=\"admin-overview\" style=\"margin-bottom:10px;\"></div>
               <div id=\"adminsList\" style=\"font-size:.92rem; margin-bottom:10px;\"></div>
               <div style=\"border-top:1px solid var(--grid); padding-top:10px;\">
                 <div id=\"adminAddTitle\" style=\"font-weight:700; margin-bottom:7px;\">Add administrator</div>
@@ -5614,6 +5618,7 @@ def setup_page(request: Request):
           const guestNewPasswordEl = document.getElementById('guestNewPassword');
           const guestNewExpiresAtEl = document.getElementById('guestNewExpiresAt');
           const guestNewEnabledEl = document.getElementById('guestNewEnabled');
+          const adminsOverviewEl = document.getElementById('adminsOverview');
           const adminsListEl = document.getElementById('adminsList');
           const adminsMsgEl = document.getElementById('adminsMsg');
           const adminNewUsernameEl = document.getElementById('adminNewUsername');
@@ -5711,6 +5716,8 @@ def setup_page(request: Request):
               addGuestUser: 'Add guest',
               guestUsersNone: 'No guest users configured.',
               adminsTitle: 'Administrators',
+              adminOverviewTitle: 'Active administrators',
+              adminOverviewNone: 'No active administrators.',
               adminUsername: 'Username',
               adminPassword: 'New password',
               adminAdd: 'Add administrator',
@@ -5810,6 +5817,8 @@ def setup_page(request: Request):
               addGuestUser: 'Gast hinzufügen',
               guestUsersNone: 'Keine Gastbenutzer vorhanden.',
               adminsTitle: 'Administratoren',
+              adminOverviewTitle: 'Aktive Administratoren',
+              adminOverviewNone: 'Keine aktiven Administratoren.',
               adminUsername: 'Benutzername',
               adminPassword: 'Neues Passwort',
               adminAdd: 'Administrator hinzufügen',
@@ -6296,11 +6305,17 @@ def setup_page(request: Request):
               const res = await fetch('/config/admins', {cache:'no-store'});
               const body = await res.json().catch(() => ({}));
               if (!res.ok) {
-                adminsListEl.textContent = body?.detail || 'Failed to load administrators.';
+                if (adminsOverviewEl) adminsOverviewEl.innerHTML = '';
+                adminsListEl.textContent = `${tSetup('adminsTitle')}: ${body?.detail || `HTTP ${res.status}`}`;
                 return;
               }
               const items = Array.isArray(body?.items) ? body.items : [];
               const currentAdminId = Number(body?.current_admin_id || 0);
+              const activeItems = items.filter(a => !!a.enabled);
+              if (adminsOverviewEl) {
+                adminsOverviewEl.innerHTML = `<div class="admin-overview-title">${escapeSetupHtml(tSetup('adminOverviewTitle'))} (${activeItems.length})</div>` +
+                  (activeItems.length ? activeItems.map(a => `<div class="admin-overview-row"><span>${escapeSetupHtml(a.username || '')}</span><span class="admin-status">${escapeSetupHtml(a.twofa_enabled ? tSetup('admin2faOn') : tSetup('admin2faOff'))}</span></div>`).join('') : `<div class="muted">${escapeSetupHtml(tSetup('adminOverviewNone'))}</div>`);
+              }
               if (!items.length) {
                 adminsListEl.innerHTML = `<div>${escapeSetupHtml(tSetup('adminNone'))}</div>`;
                 return;
@@ -6398,6 +6413,7 @@ def setup_page(request: Request):
                 });
               });
             } catch {
+              if (adminsOverviewEl) adminsOverviewEl.innerHTML = '';
               adminsListEl.textContent = 'Failed to load administrators.';
             }
           }
@@ -7171,6 +7187,7 @@ def changelog_page():
                   <li><strong>v0.321:</strong> Adds a Setup toggle for low soil-moisture Pushover warnings and includes tent name, pot number and moisture value in each grouped alert entry.</li>
                   <li><strong>v0.322:</strong> Adds multiple administrator accounts with per-user optional 2FA and automatic migration of the legacy single-admin configuration.</li>
                   <li><strong>v0.323:</strong> Simplifies access setup so password and 2FA are managed only inside each administrator card and self-heals legacy admin migration when the admin list is opened.</li>
+                  <li><strong>v0.324:</strong> Fixes missing modular admin API routes and adds an active-administrator overview in Setup.</li>
                 </ul>
               </section>
             </div>

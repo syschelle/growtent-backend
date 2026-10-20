@@ -136,6 +136,32 @@ def config_backup_import(payload: dict):
     return legacy.import_config_backup(payload)
 
 
+
+@router.get('/config/admins')
+def config_admins(request: Request):
+    return legacy.get_admin_users_config(request)
+
+
+@router.post('/config/admins')
+def config_admins_create(payload: legacy.AdminUserCreatePayload):
+    return legacy.create_admin_user(payload)
+
+
+@router.put('/config/admins/{admin_id}')
+def config_admins_update(admin_id: int, payload: legacy.AdminUserUpdatePayload):
+    return legacy.update_admin_user(admin_id, payload)
+
+
+@router.delete('/config/admins/{admin_id}')
+def config_admins_delete(admin_id: int, request: Request):
+    return legacy.delete_admin_user(admin_id, request)
+
+
+@router.post('/config/admins/{admin_id}/2fa')
+def config_admins_2fa(admin_id: int, payload: legacy.AdminTwoFAConfigPayload):
+    return legacy.set_admin_2fa_config(admin_id, payload)
+
+
 @router.get('/config/guests')
 def config_guests():
     return legacy.get_guest_users_config()
