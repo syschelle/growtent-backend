@@ -191,7 +191,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.324
+ghcr.io/syschelle/growtent-backend-api:v0.325
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -283,8 +283,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.324 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.324 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.325 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.325 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -591,7 +591,7 @@ The CSV header is:
 Name,Genetics,THC,CBD,Effects,Aroma
 ```
 
-Admins can edit these records in the Strains tab. Guest users can view the strain library but cannot edit it. The Strains page localizes UI labels according to the selected UI language, while strain values are displayed unchanged. `GET /strains.csv` downloads a live CSV export generated from the database. Existing CSV data is imported into PostgreSQL on startup only when the database strain table is empty.
+Admins can edit these records in the Strains tab. Guest users can view the strain library but cannot edit it. The Strains page localizes UI labels according to the selected UI language, while strain values are displayed unchanged. `GET /strains.csv` downloads a live CSV export generated from the database. Admins can import the same CSV format again from the Strains page, for example to transfer the library to another instance. The import merges by strain name: missing records are created, matching records are updated, unchanged records stay untouched, and records not present in the CSV are not deleted. Existing bundled CSV data is imported into PostgreSQL on startup only when the database strain table is empty.
 
 Setup stores optional per-tent assignments for three pots as `pot_strains_json` in PostgreSQL. These assignments reference strain names from the database-backed strain library and are included in configuration backup/restore.
 
@@ -862,7 +862,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.324 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.325 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

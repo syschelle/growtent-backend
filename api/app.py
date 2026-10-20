@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.324"
+APP_VERSION = "v0.325"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -65,6 +65,7 @@ SENSOR_INIT: dict[int, bool] = {}
 SOIL_SENSOR_CACHE: dict[int, dict] = {}
 LOGGER = logging.getLogger("growtent.api")
 STRAINS_CSV_LOCK = threading.RLock()
+STRAINS_CSV_IMPORT_MAX_BYTES = int(os.getenv("STRAINS_CSV_IMPORT_MAX_BYTES", str(2 * 1024 * 1024)))
 STRAINS_CSV_COLUMNS = (
     "Name",
     "Genetics",
@@ -1408,26 +1409,134 @@ def _normalise_genetics(value: str, strain_name: str = "") -> str:
     return ""
 
 
+def _parse_strains_csv_text(csv_text: str) -> list[dict]:
+    try:
+        reader = csv.DictReader(io.StringIO(str(csv_text or ""), newline=""))
+        fieldnames = [str(name or "").strip() for name in (reader.fieldnames or [])]
+        if not fieldnames:
+            raise ValueError("strain CSV has no header row")
+        if not any(column in fieldnames for column in STRAIN_CSV_ALIASES["name"]):
+            raise ValueError("strain CSV is missing column: Name")
+        rows: list[dict] = []
+        seen_names: set[str] = set()
+        for row_number, row in enumerate(reader, start=2):
+            item = {
+                field: _first_str(row, STRAIN_CSV_ALIASES.get(field, (csv_column,)))
+                for field, csv_column in STRAIN_FIELD_TO_CSV.items()
+            }
+            item["genetics"] = _normalise_genetics(item["genetics"], item["name"])
+            if not item["name"]:
+                # Ignore completely empty CSV lines, but reject populated rows without a name.
+                if any(str(value or "").strip() for value in row.values()):
+                    raise ValueError(f"strain CSV row {row_number} has no Name")
+                continue
+            key = item["name"].casefold()
+            if key in seen_names:
+                raise ValueError(f'duplicate strain name in CSV: {item["name"]}')
+            seen_names.add(key)
+            rows.append(item)
+        if not rows:
+            raise ValueError("strain CSV contains no strain rows")
+        return rows
+    except csv.Error as exc:
+        raise ValueError(f"invalid strain CSV: {exc}") from exc
+
+
+def _parse_strains_csv_bytes(data: bytes) -> list[dict]:
+    if not data:
+        raise ValueError("strain CSV is empty")
+    if len(data) > STRAINS_CSV_IMPORT_MAX_BYTES:
+        raise ValueError(f"strain CSV is too large (max {STRAINS_CSV_IMPORT_MAX_BYTES} bytes)")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("strain CSV must be UTF-8 encoded") from exc
+    return _parse_strains_csv_text(text)
+
+
+def _upsert_strains_db(strains: list[dict]) -> dict:
+    created = 0
+    updated = 0
+    unchanged = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for raw in strains:
+                item = _normalise_strain(raw)
+                cur.execute(
+                    """
+                    SELECT id, name, genetics, thc, cbd, effects, aroma
+                    FROM strains
+                    WHERE LOWER(name)=LOWER(%s)
+                    LIMIT 1
+                    """,
+                    (item["name"],),
+                )
+                row = cur.fetchone()
+                if not row:
+                    cur.execute(
+                        """
+                        INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, effect)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            item["name"],
+                            item["genetics"],
+                            item["thc"],
+                            item["cbd"],
+                            item["effects"],
+                            item["aroma"],
+                            item["effects"],
+                        ),
+                    )
+                    created += 1
+                    continue
+
+                current = _db_strain_row(row)
+                comparable_fields = ("name", "genetics", "thc", "cbd", "effects", "aroma")
+                if all(str(current.get(field) or "") == str(item.get(field) or "") for field in comparable_fields):
+                    unchanged += 1
+                    continue
+
+                cur.execute(
+                    """
+                    UPDATE strains
+                    SET name=%s,
+                        genetics=%s,
+                        thc=%s,
+                        cbd=%s,
+                        effects=%s,
+                        aroma=%s,
+                        effect=%s,
+                        updated_at=NOW()
+                    WHERE id=%s
+                    """,
+                    (
+                        item["name"],
+                        item["genetics"],
+                        item["thc"],
+                        item["cbd"],
+                        item["effects"],
+                        item["aroma"],
+                        item["effects"],
+                        int(row[0]),
+                    ),
+                )
+                updated += 1
+    return {
+        "rows": len(strains),
+        "created": created,
+        "updated": updated,
+        "unchanged": unchanged,
+    }
+
+
 def _read_strains_csv_unlocked() -> list[dict]:
     if not STRAINS_CSV_PATH.exists():
         return []
     try:
-        with STRAINS_CSV_PATH.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
-            fieldnames = reader.fieldnames or []
-            if not any(column in fieldnames for column in STRAIN_CSV_ALIASES["name"]):
-                raise RuntimeError("strain CSV is missing column: Name")
-            rows = []
-            for row in reader:
-                item = {
-                    field: _first_str(row, STRAIN_CSV_ALIASES.get(field, (csv_column,)))
-                    for field, csv_column in STRAIN_FIELD_TO_CSV.items()
-                }
-                item["genetics"] = _normalise_genetics(item["genetics"], item["name"])
-                if item["name"]:
-                    rows.append(item)
-            return rows
-    except (OSError, csv.Error) as exc:
+        data = STRAINS_CSV_PATH.read_bytes()
+        return _parse_strains_csv_bytes(data)
+    except (OSError, ValueError) as exc:
         raise RuntimeError(f"could not read strain CSV: {exc}") from exc
 
 
@@ -3586,6 +3695,18 @@ def download_strains_csv():
         })
     headers = {"Content-Disposition": "attachment; filename=strains.csv"}
     return Response(buffer.getvalue(), media_type="text/csv; charset=utf-8", headers=headers)
+
+
+@app.post("/strains/import.csv")
+async def import_strains_csv(request: Request):
+    require_admin(request)
+    raw = await request.body()
+    try:
+        strains = _parse_strains_csv_bytes(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = _upsert_strains_db(strains)
+    return {"ok": True, **result}
 
 
 @app.post("/strains")
@@ -7188,6 +7309,7 @@ def changelog_page():
                   <li><strong>v0.322:</strong> Adds multiple administrator accounts with per-user optional 2FA and automatic migration of the legacy single-admin configuration.</li>
                   <li><strong>v0.323:</strong> Simplifies access setup so password and 2FA are managed only inside each administrator card and self-heals legacy admin migration when the admin list is opened.</li>
                   <li><strong>v0.324:</strong> Fixes missing modular admin API routes and adds an active-administrator overview in Setup.</li>
+                  <li><strong>v0.325:</strong> Adds admin-only CSV import for the strain library with safe name-based merge/update behavior.</li>
                 </ul>
               </section>
             </div>
@@ -7322,7 +7444,7 @@ def strain_library_page(request: Request):
           .guest-note { display:none; margin-bottom:12px; color:var(--muted); }
           body.guest .editor { display:none; }
           body.guest .guest-note { display:block; }
-          body.guest .strain-actions { display:none; }
+          body.guest .strain-actions, body.guest .admin-only { display:none !important; }
           @media (max-width:780px) { .layout { grid-template-columns:1fr; } }
           @media (max-width:480px) { .form-grid, .details { grid-template-columns:1fr; } .form-grid .wide, .detail.wide { grid-column:auto; } }
         </style>
@@ -7383,6 +7505,8 @@ def strain_library_page(request: Request):
               <div class="list-head">
                 <h2 id="listTitle"></h2>
                 <div class="actions">
+                  <input type="file" id="importCsvFile" accept=".csv,text/csv" style="display:none;" />
+                  <button type="button" id="importCsvBtn" class="admin-only"></button>
                   <a class="button" href="/strains.csv" id="downloadCsv"></a>
                   <span class="count" id="strainCount"></span>
                 </div>
@@ -7406,7 +7530,11 @@ def strain_library_page(request: Request):
               effects: 'Effects',
               aroma: 'Aroma',
               list: 'Strain library',
+              importCsv: 'Import CSV',
               downloadCsv: 'Download CSV',
+              importSuccess: 'CSV imported: {created} added, {updated} updated, {unchanged} unchanged.',
+              importError: 'Could not import the CSV file.',
+              importInvalid: 'Invalid CSV: {detail}',
               save: 'Save',
               update: 'Update',
               cancel: 'Cancel',
@@ -7438,7 +7566,11 @@ def strain_library_page(request: Request):
               effects: 'Effekte',
               aroma: 'Aroma',
               list: 'Sortenbibliothek',
+              importCsv: 'CSV importieren',
               downloadCsv: 'CSV herunterladen',
+              importSuccess: 'CSV importiert: {created} neu, {updated} aktualisiert, {unchanged} unverändert.',
+              importError: 'Die CSV-Datei konnte nicht importiert werden.',
+              importInvalid: 'Ungültige CSV: {detail}',
               save: 'Speichern',
               update: 'Aktualisieren',
               cancel: 'Abbrechen',
@@ -7474,6 +7606,8 @@ def strain_library_page(request: Request):
           const statusEl = document.getElementById('formStatus');
           const cancelBtn = document.getElementById('cancelBtn');
           const saveBtn = document.getElementById('saveBtn');
+          const importCsvBtn = document.getElementById('importCsvBtn');
+          const importCsvFile = document.getElementById('importCsvFile');
           let items = [];
           let editingId = null;
           let isGuest = false;
@@ -7491,6 +7625,7 @@ def strain_library_page(request: Request):
             text('effectsLabel', tr('effects'));
             text('aromaLabel', tr('aroma'));
             text('listTitle', tr('list'));
+            text('importCsvBtn', tr('importCsv'));
             text('downloadCsv', tr('downloadCsv'));
             text('cancelBtn', tr('cancel'));
             text('formTitle', editingId ? tr('editTitle') : tr('addTitle'));
@@ -7600,6 +7735,48 @@ def strain_library_page(request: Request):
               setStatus(tr('deleteError'), 'error');
             }
           }
+          if (importCsvBtn && importCsvFile) {
+            importCsvBtn.addEventListener('click', () => {
+              if (isGuest) return;
+              importCsvFile.value = '';
+              importCsvFile.click();
+            });
+            importCsvFile.addEventListener('change', async () => {
+              if (isGuest) return;
+              const file = importCsvFile.files && importCsvFile.files[0];
+              if (!file) return;
+              importCsvBtn.disabled = true;
+              setStatus('');
+              try {
+                const payload = await file.arrayBuffer();
+                const res = await fetch('/strains/import.csv', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+                  body: payload
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  const detail = String(data?.detail || `HTTP ${res.status}`);
+                  setStatus(tr('importInvalid').replace('{detail}', detail), 'error');
+                  return;
+                }
+                await load();
+                setStatus(
+                  tr('importSuccess')
+                    .replace('{created}', String(data.created ?? 0))
+                    .replace('{updated}', String(data.updated ?? 0))
+                    .replace('{unchanged}', String(data.unchanged ?? 0)),
+                  'ok'
+                );
+              } catch {
+                setStatus(tr('importError'), 'error');
+              } finally {
+                importCsvBtn.disabled = false;
+                importCsvFile.value = '';
+              }
+            });
+          }
+
           form.addEventListener('submit', async (event) => {
             event.preventDefault();
             if (isGuest) return;

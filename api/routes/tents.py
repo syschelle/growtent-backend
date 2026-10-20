@@ -38,6 +38,11 @@ def download_strains_csv():
     return legacy.download_strains_csv()
 
 
+@router.post('/strains/import.csv')
+async def import_strains_csv(request: Request):
+    return await legacy.import_strains_csv(request)
+
+
 @router.post('/strains')
 def create_strain(payload: StrainPayload, request: Request):
     return legacy.create_strain(payload, request)

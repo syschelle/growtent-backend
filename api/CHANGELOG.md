@@ -2,6 +2,17 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.325
+
+### Strain library CSV import
+- Adds an admin-only CSV import action to the strain library.
+- Accepts the same `Name, Genetics, THC, CBD, Effects, Aroma` format produced by the existing CSV export, including quoted multiline fields.
+- Imports by strain name: missing strains are created, existing strains are updated and unchanged strains are left untouched.
+- Existing strains that are not present in the imported CSV are not deleted.
+- Rejects invalid UTF-8 CSV files, missing `Name` headers and duplicate strain names within the same import.
+- Registers the CSV import endpoint in the production modular API router.
+- Bumped the application version to `v0.325`.
+
 ## v0.324
 
 ### Administrator overview and modular route fix
