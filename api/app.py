@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.321"
+APP_VERSION = "v0.322"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -390,7 +390,7 @@ def auth_login(payload: LoginPayload):
             return resp
 
         token = secrets.token_urlsafe(32)
-        SESSIONS[token] = {"authenticated": True, "role": "admin", "expires_at": time.time() + SESSION_TTL_SECONDS}
+        SESSIONS[token] = {"authenticated": True, "role": "admin", "username": payload.username or None, "admin_id": None, "expires_at": time.time() + SESSION_TTL_SECONDS}
         resp = JSONResponse({"ok": True})
         resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
         return resp
@@ -402,7 +402,12 @@ def auth_login(payload: LoginPayload):
     guest_enabled = bool(cfg.get("guest_enabled"))
     guest_expires_at = cfg.get("guest_expires_at")
 
-    is_admin_login = payload.username == admin_user and _verify_secret(admin_hash, payload.password)
+    known_admin = _get_admin_user_by_username(payload.username, include_disabled=True)
+    admin_account = known_admin if known_admin and known_admin.get("enabled") and _verify_secret(known_admin.get("password_hash"), payload.password) else None
+    # Legacy fallback is only for an installation that has not been migrated yet.
+    # A disabled multi-admin account must never authenticate through the mirror.
+    legacy_admin_login = bool(known_admin is None and payload.username == admin_user and _verify_secret(admin_hash, payload.password))
+    is_admin_login = bool(admin_account or legacy_admin_login)
     legacy_guest_login = bool(payload.username == guest_user and guest_enabled and _verify_secret(guest_hash, payload.password))
     db_guest = _find_active_guest_user(payload.username, payload.password)
     db_guest_login = bool(db_guest and not db_guest.get("expired"))
@@ -428,13 +433,21 @@ def auth_login(payload: LoginPayload):
         resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
         return resp
 
-    if cfg.get("twofa_enabled"):
+    admin_twofa_enabled = bool(admin_account.get("twofa_enabled")) if admin_account else bool(cfg.get("twofa_enabled"))
+    admin_id = int(admin_account["id"]) if admin_account else None
+    if admin_twofa_enabled:
         pre = secrets.token_urlsafe(24)
-        SESSIONS[pre] = {"preauth": True, "role": "admin", "username": payload.username, "expires_at": time.time() + 300}
+        SESSIONS[pre] = {
+            "preauth": True,
+            "role": "admin",
+            "username": payload.username,
+            "admin_id": admin_id,
+            "expires_at": time.time() + 300,
+        }
         return {"ok": True, "requires2fa": True, "preauth_token": pre}
 
     token = secrets.token_urlsafe(32)
-    SESSIONS[token] = {"authenticated": True, "role": "admin", "expires_at": time.time() + SESSION_TTL_SECONDS}
+    SESSIONS[token] = {"authenticated": True, "role": "admin", "username": payload.username, "admin_id": admin_id, "expires_at": time.time() + SESSION_TTL_SECONDS}
     resp = JSONResponse({"ok": True})
     resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
     return resp
@@ -446,12 +459,16 @@ def auth_login_2fa(payload: Login2FAPayload):
     if not s or not s.get("preauth") or s.get("expires_at", 0) < time.time():
         raise HTTPException(status_code=401, detail="2FA session expired")
 
+    admin_id = s.get("admin_id")
+    admin = _get_admin_user_by_id(int(admin_id), include_disabled=False) if admin_id is not None else None
     cfg = load_auth_config()
-    if not cfg.get("twofa_enabled"):
+    twofa_enabled = bool(admin.get("twofa_enabled")) if admin else bool(cfg.get("twofa_enabled"))
+    secret = (admin.get("totp_secret") if admin else cfg.get("totp_secret")) or ""
+    recovery_json = (admin.get("recovery_codes_json") if admin else cfg.get("recovery_codes_json")) or "[]"
+    if not twofa_enabled:
         raise HTTPException(status_code=400, detail="2FA not enabled")
 
     code_ok = False
-    secret = cfg.get("totp_secret") or ""
     if payload.code:
         try:
             code_ok = pyotp.TOTP(secret).verify(payload.code, valid_window=1)
@@ -460,13 +477,14 @@ def auth_login_2fa(payload: Login2FAPayload):
 
     if not code_ok and payload.recoveryCode:
         try:
-            rc_list = json.loads(cfg.get("recovery_codes_json") or "[]")
+            rc_list = json.loads(recovery_json)
         except Exception:
             rc_list = []
         recovery_code = payload.recoveryCode.strip()
         matched = False
         new_list = []
         for item in rc_list:
+            item = dict(item or {})
             if not matched and not item.get("used") and _verify_secret(item.get("hash"), recovery_code):
                 item["used"] = True
                 matched = True
@@ -475,14 +493,30 @@ def auth_login_2fa(payload: Login2FAPayload):
             code_ok = True
             with get_conn() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("UPDATE app_auth_config SET recovery_codes_json=%s, updated_at=NOW() WHERE id=1", (json.dumps(new_list),))
+                    if admin:
+                        cur.execute(
+                            "UPDATE app_admin_users SET recovery_codes_json=%s, updated_at=NOW() WHERE id=%s",
+                            (json.dumps(new_list), int(admin["id"])),
+                        )
+                        _sync_legacy_admin_mirror(cur, int(admin["id"]))
+                    else:
+                        cur.execute(
+                            "UPDATE app_auth_config SET recovery_codes_json=%s, updated_at=NOW() WHERE id=1",
+                            (json.dumps(new_list),),
+                        )
 
     if not code_ok:
         raise HTTPException(status_code=401, detail="2FA code or recovery code required")
 
     SESSIONS.pop(payload.preauth_token, None)
     token = secrets.token_urlsafe(32)
-    SESSIONS[token] = {"authenticated": True, "role": "admin", "expires_at": time.time() + SESSION_TTL_SECONDS}
+    SESSIONS[token] = {
+        "authenticated": True,
+        "role": "admin",
+        "username": s.get("username"),
+        "admin_id": int(admin["id"]) if admin else None,
+        "expires_at": time.time() + SESSION_TTL_SECONDS,
+    }
     resp = JSONResponse({"ok": True})
     resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
     return resp
@@ -504,6 +538,7 @@ def auth_whoami(request: Request):
         "authenticated": True,
         "role": s.get("role") or "admin",
         "username": s.get("username") or None,
+        "admin_id": s.get("admin_id"),
         "expires_at": s.get("expires_at"),
     }
 
@@ -689,6 +724,128 @@ def load_auth_config():
 
 
 
+def _admin_row_dict(row) -> dict | None:
+    if not row:
+        return None
+    return {
+        "id": int(row[0]),
+        "username": row[1],
+        "password_hash": row[2],
+        "enabled": bool(row[3]),
+        "twofa_enabled": bool(row[4]),
+        "totp_secret": row[5],
+        "recovery_codes_json": row[6] or "[]",
+        "created_at": row[7].isoformat() if row[7] else None,
+        "updated_at": row[8].isoformat() if row[8] else None,
+    }
+
+
+def _get_admin_user_by_username(username: str, *, include_disabled: bool = False) -> dict | None:
+    username = str(username or "").strip()
+    if not username:
+        return None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, username, password_hash, enabled, twofa_enabled, totp_secret,
+                       recovery_codes_json, created_at, updated_at
+                FROM app_admin_users
+                WHERE LOWER(username)=LOWER(%s)
+            """
+            if not include_disabled:
+                sql += " AND enabled=TRUE"
+            sql += " LIMIT 1"
+            cur.execute(sql, (username,))
+            return _admin_row_dict(cur.fetchone())
+
+
+def _get_admin_user_by_id(admin_id: int, *, include_disabled: bool = True) -> dict | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, username, password_hash, enabled, twofa_enabled, totp_secret,
+                       recovery_codes_json, created_at, updated_at
+                FROM app_admin_users
+                WHERE id=%s
+            """
+            if not include_disabled:
+                sql += " AND enabled=TRUE"
+            cur.execute(sql, (int(admin_id),))
+            return _admin_row_dict(cur.fetchone())
+
+
+def _list_admin_users(*, include_disabled: bool = True) -> list[dict]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, username, password_hash, enabled, twofa_enabled, totp_secret,
+                       recovery_codes_json, created_at, updated_at
+                FROM app_admin_users
+            """
+            if not include_disabled:
+                sql += " WHERE enabled=TRUE"
+            sql += " ORDER BY id"
+            cur.execute(sql)
+            return [_admin_row_dict(row) for row in cur.fetchall()]
+
+
+def _find_admin_user(username: str, password: str) -> dict | None:
+    admin = _get_admin_user_by_username(username, include_disabled=False)
+    if not admin or not _verify_secret(admin.get("password_hash"), password):
+        return None
+    return admin
+
+
+def _sync_legacy_admin_mirror(cur, preferred_admin_id: int | None = None) -> None:
+    """Keep the oldest active admin mirrored for rollback to pre-v0.322 releases."""
+    cur.execute(
+        """
+        SELECT username, password_hash, twofa_enabled, totp_secret, recovery_codes_json
+        FROM app_admin_users
+        ORDER BY CASE WHEN enabled THEN 0 ELSE 1 END, id
+        LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    if row:
+        cur.execute(
+            """
+            UPDATE app_auth_config
+            SET username=%s, password_hash=%s, twofa_enabled=%s, totp_secret=%s,
+                recovery_codes_json=%s, updated_at=NOW()
+            WHERE id=1
+            """,
+            (row[0], row[1], bool(row[2]), row[3], row[4] or "[]"),
+        )
+
+
+def _migrate_legacy_admin_if_needed(cur) -> None:
+    """Idempotently migrate the pre-v0.322 single admin into app_admin_users."""
+    cur.execute("SELECT COUNT(*) FROM app_admin_users")
+    if int(cur.fetchone()[0] or 0) > 0:
+        return
+    cur.execute(
+        """
+        SELECT username, password_hash, twofa_enabled, totp_secret, recovery_codes_json
+        FROM app_auth_config WHERE id=1
+        """
+    )
+    legacy = cur.fetchone()
+    if not legacy or not legacy[0] or not legacy[1]:
+        return
+    cur.execute(
+        """
+        INSERT INTO app_admin_users(
+            username, password_hash, enabled, twofa_enabled, totp_secret,
+            recovery_codes_json, created_at, updated_at
+        ) VALUES (%s, %s, TRUE, %s, %s, %s, NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING
+        """,
+        (legacy[0], legacy[1], bool(legacy[2]), legacy[3], legacy[4] or "[]"),
+    )
+
+
+
 def is_initial_install_available() -> bool:
     """Return True only before the first admin password has been configured."""
     if not INSTALL_API_ENABLED:
@@ -702,12 +859,19 @@ def is_initial_install_available() -> bool:
             return not bool(row[0])
 
 
-def _create_admin_session_response(username: str):
+def _create_admin_session_response(username: str, admin_id: int | None = None):
     token = secrets.token_urlsafe(32)
+    if admin_id is None:
+        try:
+            admin = _get_admin_user_by_username(username, include_disabled=True)
+            admin_id = int(admin["id"]) if admin else None
+        except Exception:
+            admin_id = None
     SESSIONS[token] = {
         "authenticated": True,
         "role": "admin",
         "username": username,
+        "admin_id": admin_id,
         "expires_at": time.time() + SESSION_TTL_SECONDS,
     }
     resp = JSONResponse({"ok": True, "installed": True, "username": username})
@@ -793,8 +957,20 @@ def install_create_admin(payload: InstallPayload, request: Request):
                     """,
                     (username, password_hash),
                 )
+            cur.execute(
+                """
+                INSERT INTO app_admin_users(username, password_hash, enabled, twofa_enabled, totp_secret, recovery_codes_json, created_at, updated_at)
+                VALUES (%s, %s, TRUE, FALSE, NULL, '[]', NOW(), NOW())
+                ON CONFLICT (username)
+                DO UPDATE SET password_hash=EXCLUDED.password_hash, enabled=TRUE, updated_at=NOW()
+                RETURNING id
+                """,
+                (username, password_hash),
+            )
+            admin_id = int(cur.fetchone()[0])
+            _sync_legacy_admin_mirror(cur, admin_id)
 
-    return _create_admin_session_response(username)
+    return _create_admin_session_response(username, admin_id)
 
 
 @app.get("/install", response_class=HTMLResponse)
@@ -1099,6 +1275,22 @@ def init_db():
             cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS air_sensor_host TEXT;")
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS app_admin_users (
+                    id BIGSERIAL PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    twofa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    totp_secret TEXT,
+                    recovery_codes_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_admin_users_username_lower ON app_admin_users(LOWER(username));")
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS app_guest_users (
                     id SERIAL PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE,
@@ -1166,6 +1358,7 @@ def init_db():
                 ON CONFLICT (id) DO NOTHING;
                 """
             )
+            _migrate_legacy_admin_if_needed(cur)
             # No default tent auto-insert on fresh installs.
 
 
@@ -2797,6 +2990,7 @@ def set_auth_config(payload: AuthConfigPayload):
         with conn.cursor() as cur:
             cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, soil_moisture_alert_enabled FROM app_auth_config WHERE id=1")
             row = cur.fetchone() or (None, None, False, False, None, None, None, "", "", "", "", True, True)
+            current_username = (row[0] or "").strip()
             current_hash = row[1]
             is_twofa_enabled = bool(row[2])
             current_guest_enabled = bool(row[3])
@@ -2871,9 +3065,47 @@ def set_auth_config(payload: AuthConfigPayload):
                 (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None, gromate_api_password or None, history_api_enabled, soil_moisture_alert_enabled),
             )
 
+            # Keep the primary legacy admin editable through the existing Access card.
+            primary_admin_id = None
+            if new_hash and username:
+                if current_username:
+                    cur.execute("SELECT id FROM app_admin_users WHERE LOWER(username)=LOWER(%s) LIMIT 1", (current_username,))
+                    primary_row = cur.fetchone()
+                else:
+                    cur.execute("SELECT id FROM app_admin_users ORDER BY id LIMIT 1")
+                    primary_row = cur.fetchone()
+                if primary_row:
+                    primary_admin_id = int(primary_row[0])
+                    try:
+                        cur.execute(
+                            "UPDATE app_admin_users SET username=%s, password_hash=%s, enabled=TRUE, updated_at=NOW() WHERE id=%s",
+                            (username, new_hash, primary_admin_id),
+                        )
+                    except psycopg2.Error as exc:
+                        if getattr(exc, "pgcode", None) == "23505":
+                            raise HTTPException(status_code=409, detail="username already exists")
+                        raise
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO app_admin_users(username, password_hash, enabled, twofa_enabled, totp_secret, recovery_codes_json, created_at, updated_at)
+                        VALUES (%s, %s, TRUE, FALSE, NULL, '[]', NOW(), NOW())
+                        RETURNING id
+                        """,
+                        (username, new_hash),
+                    )
+                    primary_admin_id = int(cur.fetchone()[0])
+
             # Explicit 2FA disable request
             if not want_twofa and is_twofa_enabled:
                 cur.execute("UPDATE app_auth_config SET twofa_enabled=FALSE, totp_secret=NULL, recovery_codes_json='[]', updated_at=NOW() WHERE id=1")
+                if primary_admin_id is not None:
+                    cur.execute(
+                        "UPDATE app_admin_users SET twofa_enabled=FALSE, totp_secret=NULL, recovery_codes_json='[]', updated_at=NOW() WHERE id=%s",
+                        (primary_admin_id,),
+                    )
+            if primary_admin_id is not None:
+                _sync_legacy_admin_mirror(cur, primary_admin_id)
 
     # Start 2FA enrollment flow (QR + verify code), do NOT enable immediately.
     if enabled and want_twofa and not load_auth_config().get("twofa_enabled"):
@@ -2888,11 +3120,13 @@ def set_auth_config(payload: AuthConfigPayload):
             for c in recovery_codes
         ]
         token = secrets.token_urlsafe(24)
+        primary_admin = _get_admin_user_by_username(username, include_disabled=True)
         TWOFA_ENROLL[token] = {
             "secret": secret,
             "recovery_json": json.dumps(recovery_payload),
             "expires_at": time.time() + 600,
             "username": username,
+            "admin_id": int(primary_admin["id"]) if primary_admin else None,
         }
         cfg_after_auth_save = load_auth_config()
         return {
@@ -2930,6 +3164,190 @@ def set_auth_config(payload: AuthConfigPayload):
         "otpauth_url": None,
         "qr_png_url": None,
         "recovery_codes": [],
+    }
+
+
+class AdminUserCreatePayload(BaseModel):
+    username: str
+    password: str
+    enabled: bool = True
+
+
+class AdminUserUpdatePayload(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    enabled: bool | None = None
+
+
+class AdminTwoFAConfigPayload(BaseModel):
+    enabled: bool = False
+    regenerate_recovery_codes: bool = False
+
+
+def _public_admin_item(admin: dict) -> dict:
+    return {
+        "id": int(admin["id"]),
+        "username": admin.get("username") or "",
+        "enabled": bool(admin.get("enabled")),
+        "twofa_enabled": bool(admin.get("twofa_enabled")),
+        "totp_configured": bool(admin.get("totp_secret")),
+        "created_at": admin.get("created_at"),
+        "updated_at": admin.get("updated_at"),
+    }
+
+
+@app.get("/config/admins")
+def get_admin_users_config():
+    return {"items": [_public_admin_item(a) for a in _list_admin_users(include_disabled=True)]}
+
+
+@app.post("/config/admins")
+def create_admin_user(payload: AdminUserCreatePayload):
+    username = str(payload.username or "").strip()
+    password = str(payload.password or "")
+    if not username:
+        raise HTTPException(status_code=400, detail="username required")
+    if len(username) > 150:
+        raise HTTPException(status_code=400, detail="username is too long")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO app_admin_users(username, password_hash, enabled, twofa_enabled, totp_secret, recovery_codes_json, created_at, updated_at)
+                    VALUES (%s, %s, %s, FALSE, NULL, '[]', NOW(), NOW())
+                    RETURNING id
+                    """,
+                    (username, _hash_secret(password), bool(payload.enabled)),
+                )
+                admin_id = int(cur.fetchone()[0])
+                cur.execute("UPDATE app_auth_config SET enabled=TRUE, updated_at=NOW() WHERE id=1")
+                _sync_legacy_admin_mirror(cur)
+    except psycopg2.Error as exc:
+        if getattr(exc, "pgcode", None) == "23505":
+            raise HTTPException(status_code=409, detail="username already exists")
+        raise
+    admin = _get_admin_user_by_id(admin_id)
+    return {"ok": True, "item": _public_admin_item(admin)}
+
+
+@app.put("/config/admins/{admin_id}")
+def update_admin_user(admin_id: int, payload: AdminUserUpdatePayload):
+    current = _get_admin_user_by_id(admin_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="admin user not found")
+    username = str(payload.username if payload.username is not None else current["username"]).strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="username required")
+    if len(username) > 150:
+        raise HTTPException(status_code=400, detail="username is too long")
+    enabled = bool(current["enabled"]) if payload.enabled is None else bool(payload.enabled)
+    if not enabled and current["enabled"]:
+        active = _list_admin_users(include_disabled=False)
+        if len(active) <= 1:
+            raise HTTPException(status_code=400, detail="at least one active admin is required")
+    password_hash = current["password_hash"]
+    if payload.password is not None and str(payload.password) != "":
+        if len(str(payload.password)) < 8:
+            raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+        password_hash = _hash_secret(str(payload.password))
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE app_admin_users
+                    SET username=%s, password_hash=%s, enabled=%s, updated_at=NOW()
+                    WHERE id=%s
+                    """,
+                    (username, password_hash, enabled, int(admin_id)),
+                )
+                _sync_legacy_admin_mirror(cur, int(admin_id) if enabled else None)
+    except psycopg2.Error as exc:
+        if getattr(exc, "pgcode", None) == "23505":
+            raise HTTPException(status_code=409, detail="username already exists")
+        raise
+    return {"ok": True, "item": _public_admin_item(_get_admin_user_by_id(admin_id))}
+
+
+@app.delete("/config/admins/{admin_id}")
+def delete_admin_user(admin_id: int, request: Request):
+    current = _get_admin_user_by_id(admin_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="admin user not found")
+    active = _list_admin_users(include_disabled=False)
+    if current["enabled"] and len(active) <= 1:
+        raise HTTPException(status_code=400, detail="at least one active admin is required")
+    session = get_session(request.cookies.get("caop_session"))
+    if session and session.get("admin_id") is not None and int(session.get("admin_id")) == int(admin_id):
+        raise HTTPException(status_code=400, detail="you cannot delete your own active admin account")
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM app_admin_users WHERE id=%s", (int(admin_id),))
+            _sync_legacy_admin_mirror(cur)
+    return {"ok": True}
+
+
+@app.post("/config/admins/{admin_id}/2fa")
+def set_admin_2fa_config(admin_id: int, payload: AdminTwoFAConfigPayload):
+    admin = _get_admin_user_by_id(admin_id)
+    if not admin:
+        raise HTTPException(status_code=404, detail="admin user not found")
+    want_twofa = bool(payload.enabled)
+    regen_codes = bool(payload.regenerate_recovery_codes)
+    if not want_twofa:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE app_admin_users SET twofa_enabled=FALSE, totp_secret=NULL, recovery_codes_json='[]', updated_at=NOW() WHERE id=%s",
+                    (int(admin_id),),
+                )
+                _sync_legacy_admin_mirror(cur, int(admin_id))
+        return {"ok": True, "twofa_enabled": False, "recovery_codes": []}
+
+    if admin.get("twofa_enabled") and admin.get("totp_secret") and regen_codes:
+        recovery_codes = [
+            "-".join([secrets.token_hex(2), secrets.token_hex(2), secrets.token_hex(2)]).upper()
+            for _ in range(10)
+        ]
+        recovery_payload = [{"hash": _hash_secret(code), "used": False} for code in recovery_codes]
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE app_admin_users SET recovery_codes_json=%s, updated_at=NOW() WHERE id=%s",
+                    (json.dumps(recovery_payload), int(admin_id)),
+                )
+                _sync_legacy_admin_mirror(cur, int(admin_id))
+        return {"ok": True, "twofa_enabled": True, "recovery_codes": recovery_codes}
+
+    if admin.get("twofa_enabled") and admin.get("totp_secret"):
+        return {"ok": True, "twofa_enabled": True, "recovery_codes": []}
+
+    secret = pyotp.random_base32()
+    otpauth_url = pyotp.TOTP(secret).provisioning_uri(name=admin["username"], issuer_name="CanopyOps")
+    recovery_codes = [
+        "-".join([secrets.token_hex(2), secrets.token_hex(2), secrets.token_hex(2)]).upper()
+        for _ in range(10)
+    ]
+    recovery_payload = [{"hash": _hash_secret(code), "used": False} for code in recovery_codes]
+    token = secrets.token_urlsafe(24)
+    TWOFA_ENROLL[token] = {
+        "secret": secret,
+        "recovery_json": json.dumps(recovery_payload),
+        "expires_at": time.time() + 600,
+        "username": admin["username"],
+        "admin_id": int(admin_id),
+    }
+    return {
+        "ok": True,
+        "pending_2fa": True,
+        "verify_token": token,
+        "twofa_enabled": False,
+        "otpauth_url": otpauth_url,
+        "qr_png_url": f"/auth/qr.png?u={quote_plus(otpauth_url)}",
+        "recovery_codes": recovery_codes,
     }
 
 
@@ -3083,75 +3501,30 @@ def delete_guest_user(guest_id: int):
 
 @app.post("/config/auth/2fa")
 def set_2fa_config(payload: TwoFAConfigPayload):
-    def as_bool(v):
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, (int, float)):
-            return int(v) != 0
-        return str(v).strip().lower() in {"1", "true", "yes", "on"}
-
-    want_twofa = as_bool(payload.enabled)
-    regen_codes = as_bool(payload.regenerate_recovery_codes)
+    """Backward-compatible primary-admin 2FA endpoint used by older setup UIs."""
     cfg = load_auth_config()
-
     if not cfg.get("enabled"):
         raise HTTPException(status_code=400, detail="Enable authentication first")
-    if not cfg.get("username") or not cfg.get("password_hash"):
-        raise HTTPException(status_code=400, detail="Set username/password first")
-
-    if not want_twofa:
+    admins = _list_admin_users(include_disabled=True)
+    primary = admins[0] if admins else None
+    if not primary:
+        if not cfg.get("username") or not cfg.get("password_hash"):
+            raise HTTPException(status_code=400, detail="Set username/password first")
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("UPDATE app_auth_config SET twofa_enabled=FALSE, totp_secret=NULL, recovery_codes_json='[]', updated_at=NOW() WHERE id=1")
-        cfg2 = load_auth_config()
-        return {"ok": True, "twofa_enabled": bool(cfg2.get("twofa_enabled")), "recovery_codes": []}
-
-    # Already enabled + regenerate recovery codes only
-    if cfg.get("twofa_enabled") and cfg.get("totp_secret") and regen_codes:
-        recovery_codes = [
-            "-".join([secrets.token_hex(2), secrets.token_hex(2), secrets.token_hex(2)]).upper()
-            for _ in range(10)
-        ]
-        recovery_payload = [
-            {"hash": _hash_secret(c), "used": False}
-            for c in recovery_codes
-        ]
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE app_auth_config SET recovery_codes_json=%s, updated_at=NOW() WHERE id=1",
-                    (json.dumps(recovery_payload),),
-                )
-        return {"ok": True, "twofa_enabled": True, "recovery_codes": recovery_codes}
-
-    # Start enrollment flow (enable request or re-enroll)
-    secret = pyotp.random_base32()
-    username = str(cfg.get("username") or "admin")
-    otpauth_url = pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name="CanopyOps")
-    recovery_codes = [
-        "-".join([secrets.token_hex(2), secrets.token_hex(2), secrets.token_hex(2)]).upper()
-        for _ in range(10)
-    ]
-    recovery_payload = [
-        {"hash": _hash_secret(c), "used": False}
-        for c in recovery_codes
-    ]
-    token = secrets.token_urlsafe(24)
-    TWOFA_ENROLL[token] = {
-        "secret": secret,
-        "recovery_json": json.dumps(recovery_payload),
-        "expires_at": time.time() + 600,
-        "username": username,
-    }
-    return {
-        "ok": True,
-        "pending_2fa": True,
-        "verify_token": token,
-        "twofa_enabled": False,
-        "otpauth_url": otpauth_url,
-        "qr_png_url": f"/auth/qr.png?u={quote_plus(otpauth_url)}",
-        "recovery_codes": recovery_codes,
-    }
+                _migrate_legacy_admin_if_needed(cur)
+        admins = _list_admin_users(include_disabled=True)
+        primary = admins[0] if admins else None
+    if not primary:
+        raise HTTPException(status_code=400, detail="No admin account configured")
+    result = set_admin_2fa_config(
+        int(primary["id"]),
+        AdminTwoFAConfigPayload(
+            enabled=bool(payload.enabled),
+            regenerate_recovery_codes=bool(payload.regenerate_recovery_codes),
+        ),
+    )
+    return result
 
 
 @app.get("/tents")
@@ -3434,14 +3807,41 @@ def verify_2fa_setup(payload: TwoFAVerifyPayload):
     if not code or not pyotp.TOTP(secret).verify(code, valid_window=1):
         raise HTTPException(status_code=400, detail="invalid 2FA code")
 
+    admin_id = pending.get("admin_id")
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE app_auth_config SET twofa_enabled=TRUE, totp_secret=%s, recovery_codes_json=%s, updated_at=NOW() WHERE id=1",
-                (secret, pending.get("recovery_json") or "[]"),
-            )
+            if admin_id is not None:
+                cur.execute(
+                    """
+                    UPDATE app_admin_users
+                    SET twofa_enabled=TRUE, totp_secret=%s, recovery_codes_json=%s, updated_at=NOW()
+                    WHERE id=%s
+                    """,
+                    (secret, pending.get("recovery_json") or "[]", int(admin_id)),
+                )
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=404, detail="admin user not found")
+                _sync_legacy_admin_mirror(cur, int(admin_id))
+            else:
+                cur.execute(
+                    "UPDATE app_auth_config SET twofa_enabled=TRUE, totp_secret=%s, recovery_codes_json=%s, updated_at=NOW() WHERE id=1",
+                    (secret, pending.get("recovery_json") or "[]"),
+                )
+                legacy_username = str(pending.get("username") or "").strip()
+                if legacy_username:
+                    cur.execute(
+                        """
+                        UPDATE app_admin_users
+                        SET twofa_enabled=TRUE, totp_secret=%s, recovery_codes_json=%s, updated_at=NOW()
+                        WHERE LOWER(username)=LOWER(%s)
+                        """,
+                        (secret, pending.get("recovery_json") or "[]", legacy_username),
+                    )
 
     TWOFA_ENROLL.pop(payload.token, None)
+    if admin_id is not None:
+        admin = _get_admin_user_by_id(int(admin_id))
+        return {"ok": True, "twofa_enabled": bool(admin and admin.get("twofa_enabled")), "admin_id": int(admin_id)}
     cfg = load_auth_config()
     return {"ok": True, "twofa_enabled": bool(cfg.get("twofa_enabled"))}
 
@@ -3468,6 +3868,16 @@ def export_config_backup():
                 """
             )
             auth_row = cur.fetchone()
+
+            cur.execute(
+                """
+                SELECT id, username, password_hash, enabled, twofa_enabled, totp_secret,
+                       recovery_codes_json, created_at, updated_at
+                FROM app_admin_users
+                ORDER BY id
+                """
+            )
+            admin_rows = cur.fetchall()
 
     tents = []
     for r in tent_rows:
@@ -3508,16 +3918,32 @@ def export_config_backup():
             "updated_at": auth_row[14].isoformat() if auth_row[14] else None,
         }
 
+    admins = [
+        {
+            "id": int(r[0]),
+            "username": r[1],
+            "password_hash": r[2],
+            "enabled": bool(r[3]),
+            "twofa_enabled": bool(r[4]),
+            "totp_secret": r[5],
+            "recovery_codes_json": r[6] or "[]",
+            "created_at": r[7].isoformat() if r[7] else None,
+            "updated_at": r[8].isoformat() if r[8] else None,
+        }
+        for r in admin_rows
+    ]
+
     strains = _read_strains_db()
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 7,
+        "schema_version": 8,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
             "tents": tents,
             "auth": auth,
+            "admins": admins,
             "strains": strains,
         },
     }
@@ -3538,9 +3964,12 @@ def import_config_backup(payload: dict):
     data = payload.get("data") or {}
     tents = data.get("tents")
     auth = data.get("auth")
+    admins = data.get("admins", None)
     strains = data.get("strains", [])
     if not isinstance(tents, list):
         raise HTTPException(status_code=400, detail="invalid tents section")
+    if admins is not None and not isinstance(admins, list):
+        raise HTTPException(status_code=400, detail="invalid admins section")
     if not isinstance(strains, list):
         raise HTTPException(status_code=400, detail="invalid strains section")
 
@@ -3613,13 +4042,62 @@ def import_config_backup(payload: dict):
                     ),
                 )
 
+            # v0.322+: restore multiple administrators. Older backups without an
+            # admins section are migrated from their legacy auth record below.
+            if admins is not None:
+                cur.execute("DELETE FROM app_admin_users")
+                restored_admins = 0
+                for a in admins:
+                    if not isinstance(a, dict):
+                        continue
+                    admin_username = str(a.get("username") or "").strip()
+                    admin_hash = _clean_imported_secret_hash(a.get("password_hash"))
+                    if not admin_username or not admin_hash:
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO app_admin_users(
+                            id, username, password_hash, enabled, twofa_enabled, totp_secret,
+                            recovery_codes_json, created_at, updated_at
+                        ) VALUES (%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz,NOW()),COALESCE(%s::timestamptz,NOW()))
+                        """,
+                        (
+                            int(a.get("id") or (restored_admins + 1)),
+                            admin_username,
+                            admin_hash,
+                            bool(a.get("enabled", True)),
+                            bool(a.get("twofa_enabled", False)),
+                            str(a.get("totp_secret")) if a.get("totp_secret") else None,
+                            _clean_imported_recovery_codes_json(a.get("recovery_codes_json")),
+                            a.get("created_at"),
+                            a.get("updated_at"),
+                        ),
+                    )
+                    restored_admins += 1
+                if bool((auth or {}).get("enabled", False)) and restored_admins == 0:
+                    raise HTTPException(status_code=400, detail="backup contains no usable administrator")
+                if restored_admins:
+                    cur.execute("SELECT COALESCE(MAX(id),1) FROM app_admin_users")
+                    max_admin_id = int(cur.fetchone()[0] or 1)
+                    cur.execute("SELECT setval(pg_get_serial_sequence('app_admin_users','id'), %s, true)", (max_admin_id,))
+                    _sync_legacy_admin_mirror(cur)
+            elif auth and isinstance(auth, dict):
+                # Old backup format: restore exactly one legacy admin, then migrate it.
+                cur.execute("DELETE FROM app_admin_users")
+                _migrate_legacy_admin_if_needed(cur)
+
             cur.execute("SELECT COALESCE(MAX(id), 1) FROM tents")
             max_id = int(cur.fetchone()[0] or 1)
             cur.execute("SELECT setval(pg_get_serial_sequence('tents','id'), %s, true)", (max_id,))
 
     imported_strains = _insert_strains_db(strains, replace=True)
 
-    return {"ok": True, "imported_tents": len(tents), "imported_strains": imported_strains}
+    return {
+        "ok": True,
+        "imported_tents": len(tents),
+        "imported_admins": len(_list_admin_users(include_disabled=True)),
+        "imported_strains": imported_strains,
+    }
 
 
 @app.post("/tents")
@@ -4859,17 +5337,18 @@ def setup_page(request: Request):
           #rubricBackup { grid-column:4; grid-row:2; }
           #appearanceCard { grid-column:1; grid-row:3; }
           #accessCard { grid-column:2; grid-row:3; }
-          #twofaCard { grid-column:2; grid-row:4; }
-          #recoveryCard { grid-column:2; grid-row:5; }
-          #guestCard { grid-column:2; grid-row:6; }
+          #adminsCard { grid-column:2; grid-row:4; }
+          #twofaCard { grid-column:2; grid-row:5; }
+          #recoveryCard { grid-column:2; grid-row:6; }
+          #guestUsersCard { grid-column:2; grid-row:7; }
           #pushoverCard { grid-column:3; grid-row:3; }
           #airSensorCard { grid-column:3; grid-row:4; }
           #backupCard { grid-column:4; grid-row:3; }
-          #rubricDevices { grid-column:1 / -1; grid-row:7; }
-          #setupTentsCard { grid-column:1 / -1; grid-row:8; }
+          #rubricDevices { grid-column:1 / -1; grid-row:8; }
+          #setupTentsCard { grid-column:1 / -1; grid-row:9; }
           @media (max-width: 1200px) {
             .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
-            .section-title, #appearanceCard, #accessCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestCard, #twofaCard, #recoveryCard, #rubricDevices { grid-column:auto; grid-row:auto; }
+            .section-title, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #twofaCard, #recoveryCard, #rubricDevices { grid-column:auto; grid-row:auto; }
           }
           @media (max-width: 780px) { .setup-content { grid-template-columns:1fr; } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
@@ -4961,6 +5440,19 @@ def setup_page(request: Request):
               </form>
               <div id=\"authMsg\" style=\"margin-top:10px;\"></div>
               <div id=\"auth2faInfo\" style=\"margin-top:10px; font-size:.9rem;\"></div>
+            </div>
+
+            <div class=\"card\" id=\"adminsCard\" style=\"margin-bottom:12px; max-width:760px;\">
+              <div style=\"margin-bottom:8px;\"><strong id=\"adminsTitle\">Administrators</strong></div>
+              <div id=\"adminsList\" style=\"font-size:.92rem; margin-bottom:10px;\"></div>
+              <div style=\"display:flex; gap:6px; flex-wrap:wrap; align-items:center;\">
+                <input id=\"adminNewUsername\" placeholder=\"admin username\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                <input id=\"adminNewPassword\" type=\"password\" placeholder=\"password\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                <button type=\"button\" id=\"addAdminUserBtn\">Add administrator</button>
+              </div>
+              <div id=\"adminsMsg\" style=\"margin-top:8px;\"></div>
+              <div id=\"admin2faInfo\" style=\"margin-top:10px; font-size:.9rem;\"></div>
+              <div class=\"muted\" style=\"margin-top:8px;\">Each administrator has an independent password and optional 2FA.</div>
             </div>
 
             <div class=\"card\" id=\"guestUsersCard\" style=\"margin-bottom:12px; max-width:760px;\">
@@ -5127,6 +5619,11 @@ def setup_page(request: Request):
           const guestNewPasswordEl = document.getElementById('guestNewPassword');
           const guestNewExpiresAtEl = document.getElementById('guestNewExpiresAt');
           const guestNewEnabledEl = document.getElementById('guestNewEnabled');
+          const adminsListEl = document.getElementById('adminsList');
+          const adminsMsgEl = document.getElementById('adminsMsg');
+          const admin2faInfoEl = document.getElementById('admin2faInfo');
+          const adminNewUsernameEl = document.getElementById('adminNewUsername');
+          const adminNewPasswordEl = document.getElementById('adminNewPassword');
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
@@ -5218,7 +5715,18 @@ def setup_page(request: Request):
               deleteTent: 'Delete',
               guestUsersTitle: 'Guest users',
               addGuestUser: 'Add guest',
-              guestUsersNone: 'No guest users configured.'
+              guestUsersNone: 'No guest users configured.',
+              adminsTitle: 'Administrators',
+              adminUsername: 'Username',
+              adminPassword: 'New password',
+              adminAdd: 'Add administrator',
+              adminSave: 'Save',
+              adminDelete: 'Delete',
+              adminActive: 'Active',
+              admin2faEnable: 'Enable 2FA',
+              admin2faDisable: 'Disable 2FA',
+              adminRecovery: 'New recovery codes',
+              adminNone: 'No administrators configured.'
             },
             de: {
               nav: 'Navigation',
@@ -5298,7 +5806,18 @@ def setup_page(request: Request):
               deleteTent: 'Löschen',
               guestUsersTitle: 'Gastbenutzer',
               addGuestUser: 'Gast hinzufügen',
-              guestUsersNone: 'Keine Gastbenutzer vorhanden.'
+              guestUsersNone: 'Keine Gastbenutzer vorhanden.',
+              adminsTitle: 'Administratoren',
+              adminUsername: 'Benutzername',
+              adminPassword: 'Neues Passwort',
+              adminAdd: 'Administrator hinzufügen',
+              adminSave: 'Speichern',
+              adminDelete: 'Löschen',
+              adminActive: 'Aktiv',
+              admin2faEnable: '2FA einrichten',
+              admin2faDisable: '2FA deaktivieren',
+              adminRecovery: 'Neue Recovery-Codes',
+              adminNone: 'Keine Administratoren vorhanden.'
             }
           };
 
@@ -5365,6 +5884,8 @@ def setup_page(request: Request):
             set('guestPassLabel', tSetup('guestPassword'));
             set('guestExpLabel', tSetup('guestExpiresAt'));
             set('saveGuestBtn', tSetup('saveGuest'));
+            set('adminsTitle', tSetup('adminsTitle'));
+            set('addAdminUserBtn', tSetup('adminAdd'));
             set('guestUsersTitle', tSetup('guestUsersTitle'));
             set('guestCreateTitle', tSetup('guestCreateTitle'));
             set('guestNewEnabledLabel', tSetup('guestNewEnabled'));
@@ -5493,6 +6014,7 @@ def setup_page(request: Request):
 
           langSel.addEventListener('change', () => {
             applySetupI18n();
+            loadAdminUsers();
           });
 
           function closeIrrigationPlanModal(){
@@ -5696,10 +6218,161 @@ def setup_page(request: Request):
               if (msgEl) msgEl.textContent = `Import ok. Tents: ${j?.imported_tents ?? 0}`;
               await loadTents();
               await loadAuthConfigUi();
+              await loadAdminUsers();
             } catch (e) {
               if (msgEl) msgEl.textContent = 'Import failed.';
             }
           });
+
+          function escapeSetupHtml(value){
+            return String(value ?? '')
+              .replaceAll('&','&amp;')
+              .replaceAll('<','&lt;')
+              .replaceAll('>','&gt;')
+              .replaceAll('"','&quot;')
+              .replaceAll("'",'&#39;');
+          }
+
+          async function startAdmin2faEnrollment(adminId){
+            if (!admin2faInfoEl) return;
+            admin2faInfoEl.innerHTML = '';
+            const res = await fetch(`/config/admins/${adminId}/2fa`, {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({enabled:true, regenerate_recovery_codes:false})
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || '2FA setup failed.';
+              return;
+            }
+            if (!body?.pending_2fa) {
+              if (adminsMsgEl) adminsMsgEl.textContent = body?.twofa_enabled ? '2FA already active.' : '2FA setup failed.';
+              await loadAdminUsers();
+              return;
+            }
+            const token = body.verify_token || '';
+            const qr = body.qr_png_url || `/auth/qr.png?u=${encodeURIComponent(body.otpauth_url || '')}`;
+            const recovery = Array.isArray(body.recovery_codes) ? body.recovery_codes : [];
+            admin2faInfoEl.innerHTML = `
+              <div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${escapeSetupHtml(qr)}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>
+              ${recovery.length ? `<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(recovery.join('\\n'))}</code></div>` : ''}
+              <div style="margin-top:8px;"><input id="adminVerify2faCode" placeholder="2FA Code" style="padding:8px 10px;border-radius:8px;width:180px;" /> <button id="adminVerify2faBtn">Verify</button></div>`;
+            document.getElementById('adminVerify2faBtn')?.addEventListener('click', async () => {
+              const code = (document.getElementById('adminVerify2faCode')?.value || '').trim();
+              const vr = await fetch('/config/auth/2fa/verify', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({token, code})
+              });
+              const vb = await vr.json().catch(() => ({}));
+              if (!vr.ok) {
+                if (adminsMsgEl) adminsMsgEl.textContent = vb?.detail || '2FA verification failed.';
+                return;
+              }
+              if (adminsMsgEl) adminsMsgEl.textContent = '2FA verified and enabled.';
+              admin2faInfoEl.innerHTML = '';
+              await loadAdminUsers();
+              await loadAuthConfigUi();
+            });
+          }
+
+          async function loadAdminUsers(){
+            if (!adminsListEl) return;
+            try {
+              const res = await fetch('/config/admins', {cache:'no-store'});
+              const body = await res.json().catch(() => ({}));
+              const items = Array.isArray(body?.items) ? body.items : [];
+              if (!items.length) {
+                adminsListEl.innerHTML = `<div>${escapeSetupHtml(tSetup('adminNone'))}</div>`;
+                return;
+              }
+              adminsListEl.innerHTML = items.map(a => `
+                <div style="padding:8px 0;border-bottom:1px solid var(--grid);" data-admin-row="${a.id}">
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                    <input data-admin-username="${a.id}" value="${escapeSetupHtml(a.username || '')}" style="padding:7px 9px;border-radius:8px;width:170px;" />
+                    <input data-admin-password="${a.id}" type="password" placeholder="${escapeSetupHtml(tSetup('adminPassword'))}" style="padding:7px 9px;border-radius:8px;width:160px;" />
+                    <label style="display:flex;align-items:center;gap:5px;"><input type="checkbox" data-admin-enabled="${a.id}" ${a.enabled ? 'checked' : ''}/> ${escapeSetupHtml(tSetup('adminActive'))}</label>
+                    <span style="opacity:.85">2FA: ${a.twofa_enabled ? 'ON' : 'OFF'}</span>
+                  </div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                    <button data-admin-save="${a.id}">${escapeSetupHtml(tSetup('adminSave'))}</button>
+                    <button data-admin-2fa="${a.id}" data-admin-2fa-enabled="${a.twofa_enabled ? '1' : '0'}">${escapeSetupHtml(a.twofa_enabled ? tSetup('admin2faDisable') : tSetup('admin2faEnable'))}</button>
+                    ${a.twofa_enabled ? `<button data-admin-recovery="${a.id}">${escapeSetupHtml(tSetup('adminRecovery'))}</button>` : ''}
+                    <button data-admin-delete="${a.id}" style="background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28));border-color:rgba(239,68,68,.45);">${escapeSetupHtml(tSetup('adminDelete'))}</button>
+                  </div>
+                </div>`).join('');
+
+              adminsListEl.querySelectorAll('button[data-admin-save]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                  const id = Number(btn.getAttribute('data-admin-save'));
+                  const username = (adminsListEl.querySelector(`[data-admin-username="${id}"]`)?.value || '').trim();
+                  const password = adminsListEl.querySelector(`[data-admin-password="${id}"]`)?.value || '';
+                  const enabled = !!adminsListEl.querySelector(`[data-admin-enabled="${id}"]`)?.checked;
+                  const res = await fetch(`/config/admins/${id}`, {
+                    method:'PUT', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({username, password: password || null, enabled})
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) { if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || 'Save failed.'; return; }
+                  if (adminsMsgEl) adminsMsgEl.textContent = 'Administrator saved.';
+                  await loadAdminUsers();
+                  await loadAuthConfigUi();
+                });
+              });
+
+              adminsListEl.querySelectorAll('button[data-admin-delete]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                  const id = Number(btn.getAttribute('data-admin-delete'));
+                  if (!confirm('Delete administrator?')) return;
+                  const res = await fetch(`/config/admins/${id}`, {method:'DELETE'});
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) { if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || 'Delete failed.'; return; }
+                  if (adminsMsgEl) adminsMsgEl.textContent = 'Administrator deleted.';
+                  await loadAdminUsers();
+                  await loadAuthConfigUi();
+                });
+              });
+
+              adminsListEl.querySelectorAll('button[data-admin-2fa]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                  const id = Number(btn.getAttribute('data-admin-2fa'));
+                  const active = btn.getAttribute('data-admin-2fa-enabled') === '1';
+                  if (!active) {
+                    await startAdmin2faEnrollment(id);
+                    return;
+                  }
+                  if (!confirm('Disable 2FA for this administrator?')) return;
+                  const res = await fetch(`/config/admins/${id}/2fa`, {
+                    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:false})
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) { if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || '2FA update failed.'; return; }
+                  if (adminsMsgEl) adminsMsgEl.textContent = '2FA disabled.';
+                  if (admin2faInfoEl) admin2faInfoEl.innerHTML = '';
+                  await loadAdminUsers();
+                  await loadAuthConfigUi();
+                });
+              });
+
+              adminsListEl.querySelectorAll('button[data-admin-recovery]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                  const id = Number(btn.getAttribute('data-admin-recovery'));
+                  const res = await fetch(`/config/admins/${id}/2fa`, {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({enabled:true, regenerate_recovery_codes:true})
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok) { if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || 'Recovery code update failed.'; return; }
+                  const codes = Array.isArray(body?.recovery_codes) ? body.recovery_codes : [];
+                  if (admin2faInfoEl) admin2faInfoEl.innerHTML = codes.length
+                    ? `<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(codes.join('\\n'))}</code></div>`
+                    : '';
+                  if (adminsMsgEl) adminsMsgEl.textContent = 'Recovery codes regenerated.';
+                });
+              });
+            } catch {
+              adminsListEl.textContent = 'Failed to load administrators.';
+            }
+          }
 
           async function loadGuestUsers(){
             if (!guestUsersListEl) return;
@@ -5920,6 +6593,29 @@ def setup_page(request: Request):
 
           document.getElementById('saveGuestBtn')?.addEventListener('click', async () => {
             document.getElementById('saveAuthBtn')?.click();
+          });
+
+          document.getElementById('addAdminUserBtn')?.addEventListener('click', async () => {
+            const username = (adminNewUsernameEl?.value || '').trim();
+            const password = adminNewPasswordEl?.value || '';
+            if (!username || !password) {
+              if (adminsMsgEl) adminsMsgEl.textContent = 'Username and password are required.';
+              return;
+            }
+            const res = await fetch('/config/admins', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({username, password, enabled:true})
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || 'Failed to add administrator.';
+              return;
+            }
+            if (adminNewUsernameEl) adminNewUsernameEl.value = '';
+            if (adminNewPasswordEl) adminNewPasswordEl.value = '';
+            if (adminsMsgEl) adminsMsgEl.textContent = 'Administrator added.';
+            await loadAdminUsers();
+            await loadAuthConfigUi();
           });
 
           document.getElementById('addGuestUserBtn')?.addEventListener('click', async () => {
@@ -6250,6 +6946,7 @@ def setup_page(request: Request):
             loadTents();
             loadSetupNavTents();
             loadAuthConfigUi();
+            loadAdminUsers();
             loadAirSensorConfigUi();
             loadGuestUsers();
           })();
@@ -6444,6 +7141,7 @@ def changelog_page():
                   <li><strong>v0.319:</strong> Shows bad when a soil moisture sensor measurement is older than five minutes.</li>
                   <li><strong>v0.320:</strong> Adds grouped daily Pushover warnings for valid soil moisture readings below 25% outside the drying phase.</li>
                   <li><strong>v0.321:</strong> Adds a Setup toggle for low soil-moisture Pushover warnings and includes tent name, pot number and moisture value in each grouped alert entry.</li>
+                  <li><strong>v0.322:</strong> Adds multiple administrator accounts with per-user optional 2FA and automatic migration of the legacy single-admin configuration.</li>
                 </ul>
               </section>
             </div>

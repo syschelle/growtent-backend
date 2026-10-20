@@ -73,6 +73,35 @@ def _ensure_auth_table(cur) -> None:
     cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
     cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS history_api_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
     cur.execute("INSERT INTO app_auth_config(id, enabled) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;")
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_admin_users (
+            id BIGSERIAL PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            twofa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            totp_secret TEXT,
+            recovery_codes_json TEXT NOT NULL DEFAULT '[]',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_admin_users_username_lower ON app_admin_users(LOWER(username));")
+    cur.execute("SELECT COUNT(*) FROM app_admin_users")
+    if int(cur.fetchone()[0] or 0) == 0:
+        cur.execute("SELECT username, password_hash, twofa_enabled, totp_secret, recovery_codes_json FROM app_auth_config WHERE id=1")
+        legacy = cur.fetchone()
+        if legacy and legacy[0] and legacy[1]:
+            cur.execute(
+                """
+                INSERT INTO app_admin_users(username, password_hash, enabled, twofa_enabled, totp_secret, recovery_codes_json)
+                VALUES (%s,%s,TRUE,%s,%s,%s)
+                ON CONFLICT (username) DO NOTHING
+                """,
+                (legacy[0], legacy[1], bool(legacy[2]), legacy[3], legacy[4] or '[]'),
+            )
 
 
 def _read_password(args: argparse.Namespace) -> str | None:
@@ -115,12 +144,29 @@ def cmd_status(_args: argparse.Namespace) -> int:
                 """
             )
             row = cur.fetchone()
+            cur.execute(
+                """
+                SELECT id, username, enabled, twofa_enabled, updated_at
+                FROM app_admin_users ORDER BY id
+                """
+            )
+            admins = [
+                {
+                    "id": int(r[0]),
+                    "username": r[1],
+                    "enabled": bool(r[2]),
+                    "twofa_enabled": bool(r[3]),
+                    "updated_at": r[4].isoformat() if r[4] else None,
+                }
+                for r in cur.fetchall()
+            ]
     payload = {
         "enabled": bool(row[0]) if row else False,
-        "username": row[1] if row else None,
+        "legacy_mirror_username": row[1] if row else None,
         "has_password": bool(row[2]) if row else False,
-        "twofa_enabled": bool(row[3]) if row else False,
+        "legacy_mirror_twofa_enabled": bool(row[3]) if row else False,
         "updated_at": row[4].isoformat() if row and row[4] else None,
+        "admins": admins,
     }
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
@@ -136,20 +182,22 @@ def cmd_set_admin(args: argparse.Namespace) -> int:
 
     if args.enable_auth and args.disable_auth:
         raise SystemExit("Use either --enable-auth or --disable-auth, not both")
-    if args.enable_auth:
-        enabled = True
-    elif args.disable_auth:
-        enabled = False
-    else:
-        enabled = True
+    enabled = False if args.disable_auth else True
 
     with _connect() as conn:
         with conn.cursor() as cur:
             _ensure_auth_table(cur)
-            cur.execute("SELECT username, password_hash FROM app_auth_config WHERE id=1")
+            cur.execute(
+                """
+                SELECT id, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json
+                FROM app_admin_users
+                ORDER BY CASE WHEN enabled THEN 0 ELSE 1 END, id
+                LIMIT 1
+                """
+            )
             row = cur.fetchone()
-            current_username = (row[0] or "").strip() if row else ""
-            current_hash = row[1] if row else None
+            current_username = (row[1] or "").strip() if row else ""
+            current_hash = row[2] if row else None
             username = requested_username or current_username or "admin"
             new_hash = password_hash if password_hash is not None else current_hash
             if enabled and not username:
@@ -157,32 +205,49 @@ def cmd_set_admin(args: argparse.Namespace) -> int:
             if enabled and not new_hash:
                 raise SystemExit("Cannot enable auth without a password. Provide one with --password, --password-stdin, --password-env or --prompt-password.")
 
+            if row:
+                cur.execute(
+                    "UPDATE app_admin_users SET username=%s, password_hash=%s, enabled=TRUE, updated_at=NOW() WHERE id=%s",
+                    (username, new_hash, int(row[0])),
+                )
+                admin_id = int(row[0])
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO app_admin_users(username, password_hash, enabled, twofa_enabled, totp_secret, recovery_codes_json)
+                    VALUES (%s,%s,TRUE,FALSE,NULL,'[]') RETURNING id
+                    """,
+                    (username, new_hash),
+                )
+                admin_id = int(cur.fetchone()[0])
+
+            if args.disable_2fa:
+                cur.execute(
+                    "UPDATE app_admin_users SET twofa_enabled=FALSE, totp_secret=NULL, recovery_codes_json='[]', updated_at=NOW() WHERE id=%s",
+                    (admin_id,),
+                )
+
+            cur.execute(
+                """
+                SELECT username, password_hash, twofa_enabled, totp_secret, recovery_codes_json
+                FROM app_admin_users WHERE id=%s
+                """,
+                (admin_id,),
+            )
+            mirror = cur.fetchone()
             cur.execute(
                 """
                 UPDATE app_auth_config
-                SET enabled=%s,
-                    username=%s,
-                    password_hash=%s,
-                    updated_at=NOW()
+                SET enabled=%s, username=%s, password_hash=%s, twofa_enabled=%s,
+                    totp_secret=%s, recovery_codes_json=%s, updated_at=NOW()
                 WHERE id=1
                 """,
-                (enabled, username, new_hash),
+                (enabled, mirror[0], mirror[1], bool(mirror[2]), mirror[3], mirror[4] or '[]'),
             )
-            if args.disable_2fa:
-                cur.execute(
-                    """
-                    UPDATE app_auth_config
-                    SET twofa_enabled=FALSE,
-                        totp_secret=NULL,
-                        recovery_codes_json='[]',
-                        updated_at=NOW()
-                    WHERE id=1
-                    """
-                )
 
     changed = "changed" if password_hash is not None else "kept"
     twofa = "disabled" if args.disable_2fa else "unchanged"
-    print(f"Admin auth updated: enabled={enabled}, username={username!r}, password={changed}, 2FA={twofa}.")
+    print(f"Primary admin auth updated: enabled={enabled}, username={username!r}, password={changed}, 2FA={twofa}.")
     return 0
 
 

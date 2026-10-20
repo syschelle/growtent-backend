@@ -2,6 +2,21 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.322
+
+### Multiple administrators with per-user 2FA
+- Adds persistent multiple administrator accounts via the new `app_admin_users` table.
+- Each administrator has an independent username, password, active state, TOTP secret and recovery-code set.
+- Adds administrator management to Setup, including create, edit, password change, enable/disable, delete, 2FA enrollment/disable and recovery-code regeneration.
+- Prevents disabling or deleting the last active administrator and prevents deleting the currently logged-in administrator account.
+- Automatically and idempotently migrates the pre-v0.322 single administrator from `app_auth_config` on startup.
+- Preserves the existing password hash, 2FA state, TOTP secret and recovery-code hashes during migration, so existing credentials continue to work without re-enrollment.
+- Keeps the legacy single-admin fields synchronized with the oldest active administrator as a rollback compatibility mirror.
+- Updates login and recovery-code consumption to use the specific administrator account and its own 2FA configuration.
+- Extends configuration backup/restore to schema version 8 with all administrator accounts.
+- Restores old backups without an `admins` section by migrating their legacy single-admin record automatically.
+- Bumped the application version to `v0.322`.
+
 ## v0.321
 
 ### Configurable low soil moisture alerts

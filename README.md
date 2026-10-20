@@ -191,7 +191,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.321
+ghcr.io/syschelle/growtent-backend-api:v0.322
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -283,8 +283,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.321 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.321 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.322 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.322 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -398,15 +398,21 @@ The setup page includes authentication settings, tent configuration, guest confi
 
 The backend supports:
 
-- admin login
-- optional admin 2FA with TOTP
+- multiple independent administrator accounts
+- optional per-administrator 2FA with TOTP and separate recovery codes
+- automatic migration of the legacy single-admin configuration without changing the existing password hash or TOTP secret
 - guest accounts
 - guest-specific UI restrictions
 - per-user UI preferences for selected display options
 
-Important admin-password behavior:
+Important administrator behavior:
 
 - on a fresh database, admin login is blocked until the initial install page creates the first admin account
+- additional administrators can be created and managed in Setup
+- each administrator can independently use password-only login or enable their own TOTP 2FA
+- the last active administrator cannot be disabled or deleted
+- upgrades from pre-v0.322 migrate the existing single admin automatically and preserve its password hash, TOTP secret and recovery-code hashes
+- old configuration backups without an `admins` section are restored as a single administrator and migrated automatically
 - after the first admin password exists, `/install` and `/api/install` return `404`
 - leaving the password field empty keeps the current password unchanged
 - entering a new password changes the admin password
@@ -854,7 +860,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.321 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.322 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
