@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.322"
+APP_VERSION = "v0.323"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -3197,8 +3197,23 @@ def _public_admin_item(admin: dict) -> dict:
 
 
 @app.get("/config/admins")
-def get_admin_users_config():
-    return {"items": [_public_admin_item(a) for a in _list_admin_users(include_disabled=True)]}
+def get_admin_users_config(request: Request):
+    # Self-heal upgrades where the legacy admin exists but the v0.322 migration
+    # did not populate app_admin_users (for example after a partial deployment).
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            _migrate_legacy_admin_if_needed(cur)
+    session = get_session(request.cookies.get("caop_session"))
+    current_admin_id = None
+    if session and session.get("role") == "admin" and session.get("admin_id") is not None:
+        try:
+            current_admin_id = int(session.get("admin_id"))
+        except Exception:
+            current_admin_id = None
+    return {
+        "items": [_public_admin_item(a) for a in _list_admin_users(include_disabled=True)],
+        "current_admin_id": current_admin_id,
+    }
 
 
 @app.post("/config/admins")
@@ -3348,6 +3363,7 @@ def set_admin_2fa_config(admin_id: int, payload: AdminTwoFAConfigPayload):
         "otpauth_url": otpauth_url,
         "qr_png_url": f"/auth/qr.png?u={quote_plus(otpauth_url)}",
         "recovery_codes": recovery_codes,
+        "username": admin["username"],
     }
 
 
@@ -5338,17 +5354,26 @@ def setup_page(request: Request):
           #appearanceCard { grid-column:1; grid-row:3; }
           #accessCard { grid-column:2; grid-row:3; }
           #adminsCard { grid-column:2; grid-row:4; }
-          #twofaCard { grid-column:2; grid-row:5; }
-          #recoveryCard { grid-column:2; grid-row:6; }
-          #guestUsersCard { grid-column:2; grid-row:7; }
+          #guestUsersCard { grid-column:2; grid-row:5; }
           #pushoverCard { grid-column:3; grid-row:3; }
           #airSensorCard { grid-column:3; grid-row:4; }
           #backupCard { grid-column:4; grid-row:3; }
-          #rubricDevices { grid-column:1 / -1; grid-row:8; }
-          #setupTentsCard { grid-column:1 / -1; grid-row:9; }
+          #rubricDevices { grid-column:1 / -1; grid-row:6; }
+          #setupTentsCard { grid-column:1 / -1; grid-row:7; }
+          .admin-account { border:1px solid var(--grid); border-radius:10px; padding:10px; margin-bottom:10px; background:rgba(148,163,184,.055); }
+          .admin-account-head { display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+          .admin-account-title { font-weight:700; font-size:1rem; }
+          .admin-status { font-size:.82rem; color:var(--muted); }
+          .admin-fields { display:grid; grid-template-columns:minmax(150px,1fr) minmax(150px,1fr); gap:8px; align-items:end; }
+          .admin-field-label { display:block; font-size:.78rem; color:var(--muted); margin-bottom:3px; }
+          .admin-account input[type="text"], .admin-account input[type="password"] { box-sizing:border-box; width:100%; padding:7px 9px; border-radius:8px; }
+          .admin-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+          .admin-2fa-panel:empty { display:none; }
+          .admin-2fa-panel { margin-top:10px; padding-top:10px; border-top:1px solid var(--grid); }
+          @media (max-width: 560px) { .admin-fields { grid-template-columns:1fr; } }
           @media (max-width: 1200px) {
             .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
-            .section-title, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #twofaCard, #recoveryCard, #rubricDevices { grid-column:auto; grid-row:auto; }
+            .section-title, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #rubricDevices { grid-column:auto; grid-row:auto; }
           }
           @media (max-width: 780px) { .setup-content { grid-template-columns:1fr; } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
@@ -5419,40 +5444,33 @@ def setup_page(request: Request):
                 <input type=\"checkbox\" id=\"authEnabled\" />
                 <span id=\"authEnabledLabel\">Enable user authentication</span>
               </label>
-              <form id=\"authForm\" onsubmit=\"return false;\" autocomplete=\"off\">
-              <div id=\"authUserLabel\" style=\"margin-bottom:6px;\">Username</div>
-              <input id=\"authUsername\" name=\"admin-username\" autocomplete=\"username\" placeholder=\"admin\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
-              <div id=\"authPassLabel\" style=\"margin-bottom:6px;\">New password (leave empty to keep unchanged)</div>
-              <input id=\"authPassword\" name=\"new-admin-password\" autocomplete=\"new-password\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:10px;\" />
-              <div id=\"authPassConfirmLabel\" style=\"margin-bottom:6px;\">Repeat new password</div>
-              <input id=\"authPasswordConfirm\" name=\"new-admin-password-confirm\" autocomplete=\"new-password\" type=\"password\" placeholder=\"********\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-bottom:8px;\" />
-              <div id=\"authPassNote\" class=\"muted\" style=\"margin-bottom:10px; max-width:420px;\">Saving non-empty password fields changes the admin password. Use both fields to avoid accidental autofill changes.</div>
-              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
-                <input type=\"checkbox\" id=\"showAuthPassword\" />
-                <span id=\"showAuthPasswordLabel\">Show password</span>
-              </label>
-              <!-- pushover fields moved to dedicated card -->
-              <!-- 2FA toggle moved to dedicated card -->
-              <div style=\"display:flex; gap:8px; flex-wrap:wrap;\">
-                <button type=\"button\" id=\"genAuthPassBtn\">Generate password</button>
-                <button type=\"button\" id=\"saveAuthBtn\">Save</button>
-              </div>
-              </form>
+              <div id=\"accessAdminHint\" class=\"muted\" style=\"margin-bottom:10px;\">Administrator usernames, passwords and 2FA are managed per account below.</div>
+              <button type=\"button\" id=\"saveAuthBtn\">Save</button>
               <div id=\"authMsg\" style=\"margin-top:10px;\"></div>
-              <div id=\"auth2faInfo\" style=\"margin-top:10px; font-size:.9rem;\"></div>
+              <!-- Hidden legacy compatibility fields: kept only so older save paths and rollback mirrors remain safe. -->
+              <form id=\"authForm\" onsubmit=\"return false;\" autocomplete=\"off\" style=\"display:none;\">
+                <input id=\"authUsername\" name=\"admin-username\" autocomplete=\"username\" />
+                <input id=\"authPassword\" name=\"new-admin-password\" autocomplete=\"new-password\" type=\"password\" />
+                <input id=\"authPasswordConfirm\" name=\"new-admin-password-confirm\" autocomplete=\"new-password\" type=\"password\" />
+                <input type=\"checkbox\" id=\"auth2faEnabled\" />
+                <input type=\"checkbox\" id=\"regenRecoveryCodes\" />
+                <div id=\"auth2faInfo\"></div>
+              </form>
             </div>
 
             <div class=\"card\" id=\"adminsCard\" style=\"margin-bottom:12px; max-width:760px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"adminsTitle\">Administrators</strong></div>
+              <div id=\"adminsHint\" class=\"muted\" style=\"margin-bottom:10px;\">Each administrator has an independent password and independent optional 2FA.</div>
               <div id=\"adminsList\" style=\"font-size:.92rem; margin-bottom:10px;\"></div>
-              <div style=\"display:flex; gap:6px; flex-wrap:wrap; align-items:center;\">
-                <input id=\"adminNewUsername\" placeholder=\"admin username\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
-                <input id=\"adminNewPassword\" type=\"password\" placeholder=\"password\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
-                <button type=\"button\" id=\"addAdminUserBtn\">Add administrator</button>
+              <div style=\"border-top:1px solid var(--grid); padding-top:10px;\">
+                <div id=\"adminAddTitle\" style=\"font-weight:700; margin-bottom:7px;\">Add administrator</div>
+                <div style=\"display:flex; gap:6px; flex-wrap:wrap; align-items:center;\">
+                  <input id=\"adminNewUsername\" placeholder=\"admin username\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                  <input id=\"adminNewPassword\" type=\"password\" placeholder=\"password\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                  <button type=\"button\" id=\"addAdminUserBtn\">Add administrator</button>
+                </div>
               </div>
               <div id=\"adminsMsg\" style=\"margin-top:8px;\"></div>
-              <div id=\"admin2faInfo\" style=\"margin-top:10px; font-size:.9rem;\"></div>
-              <div class=\"muted\" style=\"margin-top:8px;\">Each administrator has an independent password and optional 2FA.</div>
             </div>
 
             <div class=\"card\" id=\"guestUsersCard\" style=\"margin-bottom:12px; max-width:760px;\">
@@ -5501,30 +5519,7 @@ def setup_page(request: Request):
               <div id=\"airSensorMsg\" style=\"margin-top:8px;\"></div>
             </div>
 
-            <!-- rubricSecurity removed -->
-            <div class=\"card\" id=\"twofaCard\" style=\"margin-bottom:12px; max-width:540px;\">
-              <div style=\"margin-bottom:8px;\"><strong>2FA (TOTP)</strong></div>
-              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
-                <input type=\"checkbox\" id=\"auth2faEnabled\" />
-                <span id=\"auth2faEnabledLabel\">Enable 2FA (TOTP)</span>
-              </label>
-              <button type=\"button\" id=\"save2faBtn\">Save 2FA</button>
-              <div id=\"twofaMsg\" style=\"margin-top:8px;\"></div>
-              <div id=\"twofaInfo\" style=\"margin-top:10px; font-size:.9rem;\"></div>
-              <div class=\"muted\" style=\"margin-top:8px;\">Click Save 2FA, then scan QR code and verify one app code.</div>
-            </div>
-
-            <div class=\"card\" id=\"recoveryCard\" style=\"margin-bottom:12px; max-width:540px;\">
-              <div style=\"margin-bottom:8px;\"><strong id=\"recoveryTitle\">Backup and Restore</strong></div>
-              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:6px;\">
-                <input type=\"checkbox\" id=\"regenRecoveryCodes\" />
-                <span id=\"regenRecoveryCodesLabel\">Regenerate recovery codes</span>
-              </label>
-              <button type=\"button\" id=\"saveRecoveryBtn\">Save backup/restore</button>
-              <div id=\"recoveryMsg\" style=\"margin-top:8px;\"></div>
-              <div class=\"muted\">Generates new one-time recovery codes when enabled and saved.</div>
-            </div>
-
+            <!-- Legacy global 2FA/recovery UI removed in v0.323; 2FA is managed per administrator. -->
             <div class=\"card\" id=\"backupCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"backupTitle\">Backup</strong></div>
               <div style=\"display:flex; gap:8px; flex-wrap:wrap; align-items:center;\">
@@ -5621,7 +5616,6 @@ def setup_page(request: Request):
           const guestNewEnabledEl = document.getElementById('guestNewEnabled');
           const adminsListEl = document.getElementById('adminsList');
           const adminsMsgEl = document.getElementById('adminsMsg');
-          const admin2faInfoEl = document.getElementById('admin2faInfo');
           const adminNewUsernameEl = document.getElementById('adminNewUsername');
           const adminNewPasswordEl = document.getElementById('adminNewPassword');
           const pushoverAppTokenEl = document.getElementById('pushoverAppToken');
@@ -5647,7 +5641,7 @@ def setup_page(request: Request):
               range: 'History range',
               tents: 'Tents',
               save: 'Save',
-              access: 'Admin mode',
+              access: 'Access',
               enableAuth: 'Enable user authentication',
               username: 'Username',
               passwordHint: 'New password (leave empty to keep unchanged)',
@@ -5726,7 +5720,15 @@ def setup_page(request: Request):
               admin2faEnable: 'Enable 2FA',
               admin2faDisable: 'Disable 2FA',
               adminRecovery: 'New recovery codes',
-              adminNone: 'No administrators configured.'
+              adminNone: 'No administrators configured.',
+              adminHint: 'Each administrator has an independent password and independent optional 2FA.',
+              adminAddTitle: 'Add administrator',
+              admin2faOn: '2FA active',
+              admin2faOff: '2FA off',
+              adminCurrent: 'Current account',
+              adminUsernameField: 'Username',
+              adminPasswordField: 'New password (empty = unchanged)',
+              accessAdminHint: 'Administrator usernames, passwords and 2FA are managed per account below.'
             },
             de: {
               nav: 'Navigation',
@@ -5738,7 +5740,7 @@ def setup_page(request: Request):
               range: 'Zeitraum Historie',
               tents: 'Zelte',
               save: 'Speichern',
-              access: 'Adminmodus',
+              access: 'Zugriff',
               enableAuth: 'Benutzerauth aktivieren',
               username: 'Benutzername',
               passwordHint: 'Neues Passwort (beide Felder leer = unverändert)',
@@ -5817,7 +5819,15 @@ def setup_page(request: Request):
               admin2faEnable: '2FA einrichten',
               admin2faDisable: '2FA deaktivieren',
               adminRecovery: 'Neue Recovery-Codes',
-              adminNone: 'Keine Administratoren vorhanden.'
+              adminNone: 'Keine Administratoren vorhanden.',
+              adminHint: 'Jeder Administrator hat ein eigenes Passwort und eine eigene optionale 2FA.',
+              adminAddTitle: 'Administrator hinzufügen',
+              admin2faOn: '2FA aktiv',
+              admin2faOff: '2FA aus',
+              adminCurrent: 'Aktuelles Konto',
+              adminUsernameField: 'Benutzername',
+              adminPasswordField: 'Neues Passwort (leer = unverändert)',
+              accessAdminHint: 'Benutzername, Passwort und 2FA werden unten direkt beim jeweiligen Administrator verwaltet.'
             }
           };
 
@@ -5848,6 +5858,9 @@ def setup_page(request: Request):
             refreshSoilSensorPlaceholders();
             set('accessTitle', tSetup('access'));
             set('authEnabledLabel', tSetup('enableAuth'));
+            set('accessAdminHint', tSetup('accessAdminHint'));
+            set('adminsHint', tSetup('adminHint'));
+            set('adminAddTitle', tSetup('adminAddTitle'));
             set('authUserLabel', tSetup('username'));
             set('authPassLabel', tSetup('passwordHint'));
             set('authPassConfirmLabel', tSetup('passwordConfirm'));
@@ -6234,8 +6247,8 @@ def setup_page(request: Request):
           }
 
           async function startAdmin2faEnrollment(adminId){
-            if (!admin2faInfoEl) return;
-            admin2faInfoEl.innerHTML = '';
+            const infoEl = adminsListEl?.querySelector(`[data-admin-2fa-info="${adminId}"]`);
+            if (infoEl) infoEl.innerHTML = '';
             const res = await fetch(`/config/admins/${adminId}/2fa`, {
               method:'POST', headers:{'Content-Type':'application/json'},
               body: JSON.stringify({enabled:true, regenerate_recovery_codes:false})
@@ -6250,15 +6263,17 @@ def setup_page(request: Request):
               await loadAdminUsers();
               return;
             }
+            if (!infoEl) return;
             const token = body.verify_token || '';
             const qr = body.qr_png_url || `/auth/qr.png?u=${encodeURIComponent(body.otpauth_url || '')}`;
             const recovery = Array.isArray(body.recovery_codes) ? body.recovery_codes : [];
-            admin2faInfoEl.innerHTML = `
-              <div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${escapeSetupHtml(qr)}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>
+            infoEl.innerHTML = `
+              <div style="margin-bottom:8px;"><strong>2FA – ${escapeSetupHtml(body?.username || '')}</strong></div>
+              <div style="margin-bottom:8px;"><img src="${escapeSetupHtml(qr)}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>
               ${recovery.length ? `<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(recovery.join('\\n'))}</code></div>` : ''}
-              <div style="margin-top:8px;"><input id="adminVerify2faCode" placeholder="2FA Code" style="padding:8px 10px;border-radius:8px;width:180px;" /> <button id="adminVerify2faBtn">Verify</button></div>`;
-            document.getElementById('adminVerify2faBtn')?.addEventListener('click', async () => {
-              const code = (document.getElementById('adminVerify2faCode')?.value || '').trim();
+              <div style="margin-top:8px;"><input data-admin-verify-code="${adminId}" placeholder="2FA Code" style="padding:8px 10px;border-radius:8px;width:180px;" /> <button data-admin-verify-btn="${adminId}">Verify</button></div>`;
+            infoEl.querySelector(`[data-admin-verify-btn="${adminId}"]`)?.addEventListener('click', async () => {
+              const code = (infoEl.querySelector(`[data-admin-verify-code="${adminId}"]`)?.value || '').trim();
               const vr = await fetch('/config/auth/2fa/verify', {
                 method:'POST', headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({token, code})
@@ -6269,7 +6284,7 @@ def setup_page(request: Request):
                 return;
               }
               if (adminsMsgEl) adminsMsgEl.textContent = '2FA verified and enabled.';
-              admin2faInfoEl.innerHTML = '';
+              infoEl.innerHTML = '';
               await loadAdminUsers();
               await loadAuthConfigUi();
             });
@@ -6280,26 +6295,39 @@ def setup_page(request: Request):
             try {
               const res = await fetch('/config/admins', {cache:'no-store'});
               const body = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                adminsListEl.textContent = body?.detail || 'Failed to load administrators.';
+                return;
+              }
               const items = Array.isArray(body?.items) ? body.items : [];
+              const currentAdminId = Number(body?.current_admin_id || 0);
               if (!items.length) {
                 adminsListEl.innerHTML = `<div>${escapeSetupHtml(tSetup('adminNone'))}</div>`;
                 return;
               }
-              adminsListEl.innerHTML = items.map(a => `
-                <div style="padding:8px 0;border-bottom:1px solid var(--grid);" data-admin-row="${a.id}">
-                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                    <input data-admin-username="${a.id}" value="${escapeSetupHtml(a.username || '')}" style="padding:7px 9px;border-radius:8px;width:170px;" />
-                    <input data-admin-password="${a.id}" type="password" placeholder="${escapeSetupHtml(tSetup('adminPassword'))}" style="padding:7px 9px;border-radius:8px;width:160px;" />
-                    <label style="display:flex;align-items:center;gap:5px;"><input type="checkbox" data-admin-enabled="${a.id}" ${a.enabled ? 'checked' : ''}/> ${escapeSetupHtml(tSetup('adminActive'))}</label>
-                    <span style="opacity:.85">2FA: ${a.twofa_enabled ? 'ON' : 'OFF'}</span>
+              adminsListEl.innerHTML = items.map(a => {
+                const isCurrent = Number(a.id) === currentAdminId;
+                const twofaState = a.twofa_enabled ? tSetup('admin2faOn') : tSetup('admin2faOff');
+                return `
+                <div class="admin-account" data-admin-row="${a.id}">
+                  <div class="admin-account-head">
+                    <div class="admin-account-title">${escapeSetupHtml(a.username || '')}${isCurrent ? ` <span class="admin-status">· ${escapeSetupHtml(tSetup('adminCurrent'))}</span>` : ''}</div>
+                    <div class="admin-status">${escapeSetupHtml(twofaState)}</div>
                   </div>
-                  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                  <div class="admin-fields">
+                    <label><span class="admin-field-label">${escapeSetupHtml(tSetup('adminUsernameField'))}</span><input type="text" data-admin-username="${a.id}" value="${escapeSetupHtml(a.username || '')}" /></label>
+                    <label><span class="admin-field-label">${escapeSetupHtml(tSetup('adminPasswordField'))}</span><input data-admin-password="${a.id}" type="password" autocomplete="new-password" placeholder="********" /></label>
+                  </div>
+                  <label style="display:flex;align-items:center;gap:5px;margin-top:8px;"><input type="checkbox" data-admin-enabled="${a.id}" ${a.enabled ? 'checked' : ''}/> ${escapeSetupHtml(tSetup('adminActive'))}</label>
+                  <div class="admin-actions">
                     <button data-admin-save="${a.id}">${escapeSetupHtml(tSetup('adminSave'))}</button>
                     <button data-admin-2fa="${a.id}" data-admin-2fa-enabled="${a.twofa_enabled ? '1' : '0'}">${escapeSetupHtml(a.twofa_enabled ? tSetup('admin2faDisable') : tSetup('admin2faEnable'))}</button>
                     ${a.twofa_enabled ? `<button data-admin-recovery="${a.id}">${escapeSetupHtml(tSetup('adminRecovery'))}</button>` : ''}
-                    <button data-admin-delete="${a.id}" style="background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28));border-color:rgba(239,68,68,.45);">${escapeSetupHtml(tSetup('adminDelete'))}</button>
+                    ${isCurrent ? '' : `<button data-admin-delete="${a.id}" style="background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28));border-color:rgba(239,68,68,.45);">${escapeSetupHtml(tSetup('adminDelete'))}</button>`}
                   </div>
-                </div>`).join('');
+                  <div class="admin-2fa-panel" data-admin-2fa-info="${a.id}"></div>
+                </div>`;
+              }).join('');
 
               adminsListEl.querySelectorAll('button[data-admin-save]').forEach(btn => {
                 btn.addEventListener('click', async () => {
@@ -6347,7 +6375,6 @@ def setup_page(request: Request):
                   const body = await res.json().catch(() => ({}));
                   if (!res.ok) { if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || '2FA update failed.'; return; }
                   if (adminsMsgEl) adminsMsgEl.textContent = '2FA disabled.';
-                  if (admin2faInfoEl) admin2faInfoEl.innerHTML = '';
                   await loadAdminUsers();
                   await loadAuthConfigUi();
                 });
@@ -6363,7 +6390,8 @@ def setup_page(request: Request):
                   const body = await res.json().catch(() => ({}));
                   if (!res.ok) { if (adminsMsgEl) adminsMsgEl.textContent = body?.detail || 'Recovery code update failed.'; return; }
                   const codes = Array.isArray(body?.recovery_codes) ? body.recovery_codes : [];
-                  if (admin2faInfoEl) admin2faInfoEl.innerHTML = codes.length
+                  const infoEl = adminsListEl.querySelector(`[data-admin-2fa-info="${id}"]`);
+                  if (infoEl) infoEl.innerHTML = codes.length
                     ? `<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(codes.join('\\n'))}</code></div>`
                     : '';
                   if (adminsMsgEl) adminsMsgEl.textContent = 'Recovery codes regenerated.';
@@ -7142,6 +7170,7 @@ def changelog_page():
                   <li><strong>v0.320:</strong> Adds grouped daily Pushover warnings for valid soil moisture readings below 25% outside the drying phase.</li>
                   <li><strong>v0.321:</strong> Adds a Setup toggle for low soil-moisture Pushover warnings and includes tent name, pot number and moisture value in each grouped alert entry.</li>
                   <li><strong>v0.322:</strong> Adds multiple administrator accounts with per-user optional 2FA and automatic migration of the legacy single-admin configuration.</li>
+                  <li><strong>v0.323:</strong> Simplifies access setup so password and 2FA are managed only inside each administrator card and self-heals legacy admin migration when the admin list is opened.</li>
                 </ul>
               </section>
             </div>

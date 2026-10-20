@@ -2,6 +2,20 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.323
+
+### Clear per-administrator access and 2FA management
+- Removes the visible legacy single-admin username/password editor from Setup.
+- Removes the separate global 2FA and global recovery-code cards from Setup.
+- Keeps only the global authentication enable/disable switch in the Access card.
+- Moves username, password, active state, 2FA setup/disable and recovery-code actions directly into each administrator card.
+- Displays each administrator's 2FA state directly on that administrator card.
+- Displays QR enrollment and newly generated recovery codes inside the matching administrator card so settings cannot be confused between users.
+- Marks the currently signed-in administrator in the administrator list when available.
+- Self-heals the legacy single-admin migration whenever the administrator list is loaded, covering partial v0.322 upgrades where `app_admin_users` remained empty.
+- Keeps the legacy `app_auth_config` admin fields only as an invisible rollback compatibility mirror.
+- Bumped the application version to `v0.323`.
+
 ## v0.322
 
 ### Multiple administrators with per-user 2FA
