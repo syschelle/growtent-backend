@@ -1,5 +1,5 @@
 
-## v0.331 security defaults
+## v0.330 security defaults
 
 - API host binding defaults to `127.0.0.1:8088`; override with `GT_API_BIND_ADDRESS` only when required.
 - Session cookies default to `Secure`; use HTTPS. For deliberate plain-HTTP local testing only, set `SESSION_COOKIE_SECURE=false`.
@@ -57,13 +57,13 @@ Important: if the database password contains special characters, URL-encode it i
 The image-based Compose file defaults to the moving latest API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.331
+ghcr.io/syschelle/growtent-backend-api:v0.332
 ```
 
 For deterministic deployments, pin a specific version with `GT_API_IMAGE`, for example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.331
+ghcr.io/syschelle/growtent-backend-api:v0.332
 ```
 
 go2rtc is pinned in the Compose files as an immutable reference instead of `latest`:
@@ -79,8 +79,8 @@ Override `GO2RTC_IMAGE` only deliberately for controlled upgrades.
 Use the current release image explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.331 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.331 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.332 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.332 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Or use the image configured in `.env` / Compose:
@@ -104,7 +104,7 @@ On a fresh database volume, open the initial install page first:
 
 ```text
 
-> **v0.331:** direct `http://<server-ip>:8088` access requires an explicit non-loopback `GT_API_BIND_ADDRESS`. Plain HTTP sessions also require `SESSION_COOKIE_SECURE=false`; HTTPS via reverse proxy is recommended.
+> **v0.330:** direct `http://<server-ip>:8088` access requires an explicit non-loopback `GT_API_BIND_ADDRESS`. Plain HTTP sessions also require `SESSION_COOKIE_SECURE=false`; HTTPS via reverse proxy is recommended.
 
 http://<server-ip>:8088/install
 ```
@@ -139,7 +139,7 @@ Docker does not remove port mappings from an already-created container. Recreate
 ```bash
 docker compose -f docker-compose.images.yml down --remove-orphans
 docker rm -f gt_go2rtc gt_api gt_db 2>/dev/null || true
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.331 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.332 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Then verify again with `docker port` and `ss`.

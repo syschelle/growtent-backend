@@ -61,7 +61,7 @@ Main features:
 ---
 
 
-### v0.331 security defaults
+### v0.330 security defaults
 
 The API host port is bound to loopback by default:
 
@@ -91,7 +91,7 @@ Normal browser access:
 
 ```text
 
-> **v0.331:** direct `http://<server-ip>:8088` access only works when `GT_API_BIND_ADDRESS=0.0.0.0` (or another non-loopback bind address) and, for plain HTTP login sessions, `SESSION_COOKIE_SECURE=false`. Prefer HTTPS through a reverse proxy.
+> **v0.330:** direct `http://<server-ip>:8088` access only works when `GT_API_BIND_ADDRESS=0.0.0.0` (or another non-loopback bind address) and, for plain HTTP login sessions, `SESSION_COOKIE_SECURE=false`. Prefer HTTPS through a reverse proxy.
 
 http://<server-ip>:8088
 ```
@@ -210,7 +210,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.331
+ghcr.io/syschelle/growtent-backend-api:v0.332
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -302,8 +302,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.331 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.331 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.332 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.332 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -881,7 +881,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.331 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.332 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.331"
+APP_VERSION = "v0.332"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7808,9 +7808,11 @@ def download_project_zip(request: Request):
 
 @app.get("/changelog", response_class=HTMLResponse)
 def changelog_page():
+    # Prefer the changelog bundled with the running image. PROJECT_ROOT may be
+    # a host-mounted checkout that is older than the deployed container image.
     changelog_candidates = [
-        os.path.join(PROJECT_ROOT, "CHANGELOG.md"),
         "/app/CHANGELOG.md",
+        os.path.join(PROJECT_ROOT, "CHANGELOG.md"),
     ]
     content = ""
     for changelog_path in changelog_candidates:
@@ -7903,7 +7905,19 @@ def changelog_page():
     flush_card()
     rendered_cards = "\n".join(cards)
 
-    release_cards = [html for title, html in card_records if str(title).strip().lower().startswith("v")]
+    release_records = [(title, html) for title, html in card_records if str(title).strip().lower().startswith("v")]
+
+    def release_version_key(record):
+        title = str(record[0]).strip()
+        match = re.match(r"^v(\d+)(?:\.(\d+))?(?:\.(\d+))?", title, re.IGNORECASE)
+        if not match:
+            return (-1, -1, -1)
+        return tuple(int(part or 0) for part in match.groups())
+
+    # Sort explicitly so 'Recent releases' is correct even if a changelog file
+    # is manually reordered.
+    release_records.sort(key=release_version_key, reverse=True)
+    release_cards = [html for _, html in release_records]
     recent_cards_html = "\n".join(release_cards[:6])
     older_cards_html = "\n".join(release_cards[6:])
 
@@ -8019,8 +8033,8 @@ def changelog_page():
           .summary-icon {{ font-size:1.2rem; margin-bottom:6px; }}
           .summary-card h3 {{ margin:0 0 6px; font-size:.96rem; color:#93c5fd; }}
           .summary-card p {{ margin:0; color:var(--muted); font-size:.86rem; line-height:1.4; }}
-          .release-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }}
-          .older-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding-top:10px; }}
+          .release-grid {{ display:grid; grid-template-columns:1fr; gap:10px; }}
+          .older-grid {{ display:grid; grid-template-columns:1fr; gap:10px; padding-top:10px; }}
           .entry-card {{ background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:12px; box-shadow:0 2px 10px rgba(0,0,0,.1); }}
           .entry-card h2 {{ font-size:1.02rem; margin:.05rem 0 .45rem; color:#93c5fd; }}
           .entry-card h3 {{ font-size:.92rem; margin:.65rem 0 .2rem; color:#34d399; }}

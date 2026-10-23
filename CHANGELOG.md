@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.332
+
+### About page release ordering and layout fix
+- Makes the About page prefer the changelog bundled with the running container image instead of a potentially older host-mounted project changelog.
+- Sorts version cards numerically in descending order so the newest releases are always shown first.
+- Changes both recent and older release histories to a single full-width column for easier scanning.
+- Keeps the six newest releases directly visible and the complete older history collapsible.
+- Bumped the application version to `v0.332`.
+
 ## v0.331
 
 ### About page redesign
