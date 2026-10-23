@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.325"
+APP_VERSION = "v0.328"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1245,6 +1245,35 @@ def init_db():
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (tent_id, pot_index),
                     CHECK (pot_index BETWEEN 1 AND 3)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS temperature_alert_config (
+                    id INTEGER PRIMARY KEY,
+                    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    threshold_c DOUBLE PRECISION NOT NULL DEFAULT 30.0,
+                    display_unit TEXT NOT NULL DEFAULT 'C',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CHECK (id = 1),
+                    CHECK (threshold_c >= 0 AND threshold_c <= 80)
+                );
+                """
+            )
+            cur.execute("ALTER TABLE temperature_alert_config ADD COLUMN IF NOT EXISTS display_unit TEXT NOT NULL DEFAULT 'C';")
+            cur.execute(
+                "INSERT INTO temperature_alert_config(id, enabled, threshold_c, display_unit) VALUES (1, FALSE, 30.0, 'C') ON CONFLICT (id) DO NOTHING"
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS temperature_alert_state (
+                    tent_id INTEGER NOT NULL REFERENCES tents(id) ON DELETE CASCADE,
+                    sensor_key TEXT NOT NULL,
+                    alert_active BOOLEAN NOT NULL DEFAULT FALSE,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (tent_id, sensor_key),
+                    CHECK (sensor_key IN ('bme280', 'ds18b20'))
                 );
                 """
             )
@@ -2771,6 +2800,127 @@ def _send_grouped_soil_moisture_alerts(alerts: list[dict], notified_date: date) 
     _mark_soil_alerts_notified(alerts, notified_date)
     return True
 
+def _normalize_temperature_unit(value: object) -> str:
+    return "F" if str(value or "").strip().upper() == "F" else "C"
+
+
+def _temperature_display_value(value_c: float, unit: str) -> float:
+    return (float(value_c) * 9.0 / 5.0 + 32.0) if _normalize_temperature_unit(unit) == "F" else float(value_c)
+
+
+def _get_temperature_alert_config() -> dict:
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT enabled, threshold_c, display_unit FROM temperature_alert_config WHERE id=1")
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "enabled": bool(row[0]),
+                        "threshold_c": float(row[1]),
+                        "display_unit": _normalize_temperature_unit(row[2]),
+                    }
+    except Exception as exc:
+        LOGGER.warning("Could not load temperature alert config: %s", exc)
+    return {"enabled": False, "threshold_c": 30.0, "display_unit": "C"}
+
+
+def _temperature_readings(payload: dict | None) -> list[dict]:
+    data = payload or {}
+    readings: list[dict] = []
+    main_temp = _to_float(data.get("sensors.cur.temperatureC"))
+    if main_temp is None:
+        main_temp = _to_float(data.get("sensors.smoothed.temperatureC"))
+    ext_temp = _to_float(data.get("sensors.cur.extTempC"))
+    for sensor_key, sensor_label, value in (
+        ("bme280", "BME280", main_temp),
+        ("ds18b20", "DS18B20", ext_temp),
+    ):
+        if value is None:
+            continue
+        if value < TEMP_MIN_C or value > TEMP_MAX_C:
+            continue
+        readings.append({
+            "sensor_key": sensor_key,
+            "sensor_label": sensor_label,
+            "temperature_c": float(value),
+        })
+    return readings
+
+
+def _temperature_alert_candidates(
+    payload: dict | None,
+    threshold_c: float,
+    active_states: dict[str, bool] | None = None,
+) -> tuple[list[dict], list[str]]:
+    states = active_states or {}
+    alerts: list[dict] = []
+    reset_keys: list[str] = []
+    for reading in _temperature_readings(payload):
+        key = str(reading["sensor_key"])
+        value = float(reading["temperature_c"])
+        was_active = bool(states.get(key, False))
+        if value > float(threshold_c):
+            if not was_active:
+                alerts.append(reading)
+        elif was_active:
+            reset_keys.append(key)
+    return alerts, reset_keys
+
+
+def _temperature_alert_active_states(tent_id: int) -> dict[str, bool]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT sensor_key, alert_active FROM temperature_alert_state WHERE tent_id=%s",
+                (tent_id,),
+            )
+            return {str(row[0]): bool(row[1]) for row in cur.fetchall()}
+
+
+def _set_temperature_alert_states(tent_id: int, sensor_keys: list[str], active: bool) -> None:
+    if not sensor_keys:
+        return
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for sensor_key in sensor_keys:
+                cur.execute(
+                    """
+                    INSERT INTO temperature_alert_state(tent_id, sensor_key, alert_active, updated_at)
+                    VALUES(%s, %s, %s, NOW())
+                    ON CONFLICT (tent_id, sensor_key)
+                    DO UPDATE SET alert_active=EXCLUDED.alert_active, updated_at=NOW()
+                    """,
+                    (int(tent_id), str(sensor_key), bool(active)),
+                )
+
+
+def _mark_temperature_alerts_active(alerts: list[dict]) -> None:
+    grouped: dict[int, list[str]] = {}
+    for alert in alerts:
+        grouped.setdefault(int(alert["tent_id"]), []).append(str(alert["sensor_key"]))
+    for tent_id, sensor_keys in grouped.items():
+        _set_temperature_alert_states(tent_id, sensor_keys, True)
+
+
+def _send_grouped_temperature_alerts(alerts: list[dict], threshold_c: float, display_unit: str = "C") -> bool:
+    if not alerts:
+        return False
+    unit = _normalize_temperature_unit(display_unit)
+    unit_label = "°F" if unit == "F" else "°C"
+    threshold_display = _temperature_display_value(threshold_c, unit)
+    lines: list[str] = []
+    for item in alerts:
+        label = str(item.get("tent_label") or f"Tent #{item['tent_id']}")
+        value_display = _temperature_display_value(float(item["temperature_c"]), unit)
+        lines.append(f"{label} – {item['sensor_label']}: {value_display:.1f} {unit_label}")
+    message = f"Temperatur über {threshold_display:.1f} {unit_label}:\n" + "\n".join(lines)
+    if not _send_pushover("CanopyOps: Temperatur zu hoch", message, priority=0):
+        return False
+    _mark_temperature_alerts_active(alerts)
+    return True
+
+
 def poll_loop():
     loops = 0
     while True:
@@ -2783,6 +2933,11 @@ def poll_loop():
             soil_alerts_to_send: list[dict] = []
             soil_alert_date = datetime.now().date()
             soil_moisture_alert_enabled = bool(load_auth_config().get("soil_moisture_alert_enabled", True))
+            temperature_alerts_to_send: list[dict] = []
+            temperature_alert_config = _get_temperature_alert_config()
+            temperature_alert_enabled = bool(temperature_alert_config.get("enabled", False))
+            temperature_alert_threshold_c = float(temperature_alert_config.get("threshold_c", 30.0))
+            temperature_alert_display_unit = _normalize_temperature_unit(temperature_alert_config.get("display_unit", "C"))
             with httpx.Client(timeout=5.0) as client:
                 for tent in tents:
                     try:
@@ -2814,6 +2969,22 @@ def poll_loop():
                                         "tent_id": int(tent["id"]),
                                         "tent_label": label,
                                     })
+
+                        # Global high-temperature Pushover. Each sensor alerts once per
+                        # continuous over-threshold episode and rearms at/below the threshold.
+                        if temperature_alert_enabled:
+                            temp_states = _temperature_alert_active_states(int(tent["id"]))
+                            temp_candidates, reset_keys = _temperature_alert_candidates(
+                                payload, temperature_alert_threshold_c, temp_states
+                            )
+                            if reset_keys:
+                                _set_temperature_alert_states(int(tent["id"]), reset_keys, False)
+                            for item in temp_candidates:
+                                temperature_alerts_to_send.append({
+                                    **item,
+                                    "tent_id": int(tent["id"]),
+                                    "tent_label": label,
+                                })
 
                         # status reset on successful fetch
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
@@ -2948,6 +3119,8 @@ def poll_loop():
             # Sensors are marked only after Pushover accepted the notification.
             if soil_alerts_to_send:
                 _send_grouped_soil_moisture_alerts(soil_alerts_to_send, soil_alert_date)
+            if temperature_alerts_to_send:
+                _send_grouped_temperature_alerts(temperature_alerts_to_send, temperature_alert_threshold_c, temperature_alert_display_unit)
 
             loops += 1
             # Run retention cleanup regularly (roughly every 10 minutes at 10s poll interval).
@@ -3009,6 +3182,41 @@ def load_air_sensor_settings() -> AirSensorSettings:
         enabled=bool(cfg.get("air_sensor_enabled")),
         host=cfg.get("air_sensor_host"),
     )
+
+
+class TemperatureAlertSettings(BaseModel):
+    enabled: bool = False
+    threshold_c: float = 30.0
+    display_unit: str = "C"
+
+
+@app.get("/config/temperature-alert")
+def get_temperature_alert_config():
+    return _get_temperature_alert_config()
+
+
+@app.post("/config/temperature-alert")
+def set_temperature_alert_config(payload: TemperatureAlertSettings):
+    threshold_c = float(payload.threshold_c)
+    if not math.isfinite(threshold_c) or threshold_c < 0 or threshold_c > 80:
+        raise HTTPException(status_code=400, detail="temperature threshold must be between 0 and 80 °C")
+    display_unit = _normalize_temperature_unit(payload.display_unit)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO temperature_alert_config(id, enabled, threshold_c, display_unit, updated_at)
+                VALUES(1, %s, %s, %s, NOW())
+                ON CONFLICT (id)
+                DO UPDATE SET enabled=EXCLUDED.enabled,
+                              threshold_c=EXCLUDED.threshold_c,
+                              display_unit=EXCLUDED.display_unit,
+                              updated_at=NOW()
+                """,
+                (bool(payload.enabled), threshold_c, display_unit),
+            )
+            cur.execute("UPDATE temperature_alert_state SET alert_active=FALSE, updated_at=NOW()")
+    return {"enabled": bool(payload.enabled), "threshold_c": threshold_c, "display_unit": display_unit}
 
 
 @app.get("/config/air-sensor")
@@ -4016,6 +4224,9 @@ def export_config_backup():
             )
             admin_rows = cur.fetchall()
 
+            cur.execute("SELECT enabled, threshold_c, display_unit FROM temperature_alert_config WHERE id=1")
+            temperature_alert_row = cur.fetchone()
+
     tents = []
     for r in tent_rows:
         tents.append(
@@ -4074,13 +4285,18 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 8,
+        "schema_version": 10,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
             "tents": tents,
             "auth": auth,
             "admins": admins,
+            "temperature_alert": {
+                "enabled": bool(temperature_alert_row[0]) if temperature_alert_row else False,
+                "threshold_c": float(temperature_alert_row[1]) if temperature_alert_row else 30.0,
+                "display_unit": _normalize_temperature_unit(temperature_alert_row[2]) if temperature_alert_row else "C",
+            },
             "strains": strains,
         },
     }
@@ -4102,11 +4318,14 @@ def import_config_backup(payload: dict):
     tents = data.get("tents")
     auth = data.get("auth")
     admins = data.get("admins", None)
+    temperature_alert = data.get("temperature_alert", None)
     strains = data.get("strains", [])
     if not isinstance(tents, list):
         raise HTTPException(status_code=400, detail="invalid tents section")
     if admins is not None and not isinstance(admins, list):
         raise HTTPException(status_code=400, detail="invalid admins section")
+    if temperature_alert is not None and not isinstance(temperature_alert, dict):
+        raise HTTPException(status_code=400, detail="invalid temperature_alert section")
     if not isinstance(strains, list):
         raise HTTPException(status_code=400, detail="invalid strains section")
 
@@ -4178,6 +4397,28 @@ def import_config_backup(payload: dict):
                         bool(auth.get("soil_moisture_alert_enabled", True)),
                     ),
                 )
+
+            if temperature_alert is not None:
+                try:
+                    threshold_c = float(temperature_alert.get("threshold_c", 30.0))
+                except Exception:
+                    threshold_c = 30.0
+                if not math.isfinite(threshold_c) or threshold_c < 0 or threshold_c > 80:
+                    threshold_c = 30.0
+                display_unit = _normalize_temperature_unit(temperature_alert.get("display_unit", "C"))
+                cur.execute(
+                    """
+                    INSERT INTO temperature_alert_config(id, enabled, threshold_c, display_unit, updated_at)
+                    VALUES(1, %s, %s, %s, NOW())
+                    ON CONFLICT (id)
+                    DO UPDATE SET enabled=EXCLUDED.enabled,
+                                  threshold_c=EXCLUDED.threshold_c,
+                                  display_unit=EXCLUDED.display_unit,
+                                  updated_at=NOW()
+                    """,
+                    (bool(temperature_alert.get("enabled", False)), threshold_c, display_unit),
+                )
+                cur.execute("UPDATE temperature_alert_state SET alert_active=FALSE, updated_at=NOW()")
 
             # v0.322+: restore multiple administrators. Older backups without an
             # admins section are migrated from their legacy auth record below.
@@ -5623,6 +5864,13 @@ def setup_page(request: Request):
                 <span id=\"soilMoistureAlertEnabledLabel\">Low soil moisture warning (&lt;25%)</span>
               </label>
               <div id=\"soilMoistureAlertHint\" class=\"muted\" style=\"margin-bottom:10px;\">At most once per pot and day; disabled during drying.</div>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:6px;\">
+                <input type=\"checkbox\" id=\"temperatureAlertEnabled\" />
+                <span id=\"temperatureAlertEnabledLabel\">High temperature warning</span>
+              </label>
+              <div id=\"temperatureAlertThresholdLabel\" style=\"margin-bottom:6px;\">Temperature threshold</div>
+              <input id=\"temperatureAlertThreshold\" type=\"number\" min=\"0\" max=\"80\" step=\"0.1\" value=\"30.0\" style=\"padding:8px 10px; border-radius:8px; width:120px; margin-bottom:6px;\" />
+              <div id=\"temperatureAlertHint\" class=\"muted\" style=\"margin-bottom:10px;\">Monitors BME280 and DS18B20 in all tents; one alert per over-threshold episode.</div>
               <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;\">
                 <button type=\"button\" id=\"savePushoverBtn\">Save Pushover</button>
               </div>
@@ -5748,6 +5996,8 @@ def setup_page(request: Request):
           const pushoverUserKeyEl = document.getElementById('pushoverUserKey');
           const pushoverDeviceEl = document.getElementById('pushoverDevice');
           const soilMoistureAlertEnabledEl = document.getElementById('soilMoistureAlertEnabled');
+          const temperatureAlertEnabledEl = document.getElementById('temperatureAlertEnabled');
+          const temperatureAlertThresholdEl = document.getElementById('temperatureAlertThreshold');
           const airSensorEnabledEl = document.getElementById('airSensorEnabled');
           const airSensorHostEl = document.getElementById('airSensorHost');
           const airSensorMsgEl = document.getElementById('airSensorMsg');
@@ -5755,6 +6005,27 @@ def setup_page(request: Request):
           let currentPlanTentId = 0;
           let authHasPassword = false;
           let setupTentsCache = [];
+          let temperatureAlertUiUnit = (unitSel?.value === 'F') ? 'F' : 'C';
+
+          function setupCToF(value){ return Number(value) * 9 / 5 + 32; }
+          function setupFToC(value){ return (Number(value) - 32) * 5 / 9; }
+          function temperatureAlertUnit(){ return unitSel?.value === 'F' ? 'F' : 'C'; }
+          function updateTemperatureAlertThresholdUi(convertExisting = false){
+            if (!temperatureAlertThresholdEl) return;
+            const nextUnit = temperatureAlertUnit();
+            if (convertExisting) {
+              const current = Number(temperatureAlertThresholdEl.value);
+              if (Number.isFinite(current) && nextUnit !== temperatureAlertUiUnit) {
+                const c = temperatureAlertUiUnit === 'F' ? setupFToC(current) : current;
+                temperatureAlertThresholdEl.value = (nextUnit === 'F' ? setupCToF(c) : c).toFixed(1);
+              }
+            }
+            temperatureAlertUiUnit = nextUnit;
+            temperatureAlertThresholdEl.min = nextUnit === 'F' ? '32' : '0';
+            temperatureAlertThresholdEl.max = nextUnit === 'F' ? '176' : '80';
+            const label = document.getElementById('temperatureAlertThresholdLabel');
+            if (label) label.textContent = `${tSetup('temperatureAlertThreshold')} (°${nextUnit})`;
+          }
 
           const I18N_SETUP = {
             en: {
@@ -5781,6 +6052,9 @@ def setup_page(request: Request):
               pushoverDevice: 'Pushover device (optional)',
               soilMoistureAlertEnabled: 'Low soil moisture warning (<25%)',
               soilMoistureAlertHint: 'At most once per pot and day; disabled during drying.',
+              temperatureAlertEnabled: 'High temperature warning',
+              temperatureAlertThreshold: 'Temperature threshold',
+              temperatureAlertHint: 'Monitors BME280 and DS18B20 in all tents; one alert per over-threshold episode.',
               gromateApiPassword: 'API-History-Password',
               twofa: 'Enable 2FA (TOTP)',
               regenRecovery: 'Regenerate recovery codes',
@@ -5882,6 +6156,9 @@ def setup_page(request: Request):
               pushoverDevice: 'Pushover-Gerät (optional)',
               soilMoistureAlertEnabled: 'Bodenfeuchtewarnung (<25 %)',
               soilMoistureAlertHint: 'Maximal einmal pro Topf und Tag; während Trocknung deaktiviert.',
+              temperatureAlertEnabled: 'Temperaturalarm',
+              temperatureAlertThreshold: 'Temperaturschwelle',
+              temperatureAlertHint: 'Überwacht BME280 und DS18B20 in allen Zelten; eine Meldung pro Überschreitungsphase.',
               gromateApiPassword: 'Passwort für Device-History-API',
               twofa: '2FA (TOTP) aktivieren',
               regenRecovery: 'Recovery-Codes neu erzeugen',
@@ -6004,6 +6281,10 @@ def setup_page(request: Request):
             set('pushoverDeviceLabel', tSetup('pushoverDevice'));
             set('soilMoistureAlertEnabledLabel', tSetup('soilMoistureAlertEnabled'));
             set('soilMoistureAlertHint', tSetup('soilMoistureAlertHint'));
+            set('temperatureAlertEnabledLabel', tSetup('temperatureAlertEnabled'));
+            set('temperatureAlertThresholdLabel', tSetup('temperatureAlertThreshold'));
+            set('temperatureAlertHint', tSetup('temperatureAlertHint'));
+            updateTemperatureAlertThresholdUi(false);
             set('airSensorTitle', tSetup('airSensorTitle'));
             set('airSensorEnabledLabel', tSetup('airSensorEnabled'));
             set('airSensorHostLabel', tSetup('airSensorHost'));
@@ -6139,6 +6420,8 @@ def setup_page(request: Request):
           sel.value = initialTheme;
           langSel.value = (initialLang === 'de') ? 'de' : 'en';
           unitSel.value = (initialUnit === 'F') ? 'F' : 'C';
+          temperatureAlertUiUnit = unitSel.value === 'F' ? 'F' : 'C';
+          unitSel.addEventListener('change', () => updateTemperatureAlertThresholdUi(true));
           applyTheme(initialTheme);
           applySetupI18n();
 
@@ -6806,8 +7089,61 @@ def setup_page(request: Request):
             }
           });
 
+          async function loadTemperatureAlertConfigUi(){
+            if (!temperatureAlertEnabledEl || !temperatureAlertThresholdEl) return;
+            try {
+              const res = await fetch('/config/temperature-alert', { cache: 'no-store' });
+              const cfg = await res.json().catch(() => ({}));
+              if (!res.ok) return;
+              temperatureAlertEnabledEl.checked = !!cfg.enabled;
+              const thresholdC = Number(cfg.threshold_c);
+              const unit = temperatureAlertUnit();
+              const thresholdDisplay = Number.isFinite(thresholdC)
+                ? (unit === 'F' ? setupCToF(thresholdC) : thresholdC)
+                : (unit === 'F' ? 86.0 : 30.0);
+              temperatureAlertThresholdEl.value = thresholdDisplay.toFixed(1);
+              temperatureAlertUiUnit = unit;
+              updateTemperatureAlertThresholdUi(false);
+            } catch {}
+          }
+
+          async function saveTemperatureAlertConfig(){
+            if (!temperatureAlertEnabledEl || !temperatureAlertThresholdEl) return { ok: true };
+            const unit = temperatureAlertUnit();
+            const thresholdDisplay = Number(temperatureAlertThresholdEl.value);
+            const minDisplay = unit === 'F' ? 32 : 0;
+            const maxDisplay = unit === 'F' ? 176 : 80;
+            if (!Number.isFinite(thresholdDisplay) || thresholdDisplay < minDisplay || thresholdDisplay > maxDisplay) {
+              return { ok: false, detail: `${tSetup('temperatureAlertThreshold')}: ${minDisplay}–${maxDisplay} °${unit}` };
+            }
+            const thresholdC = unit === 'F' ? setupFToC(thresholdDisplay) : thresholdDisplay;
+            const res = await fetch('/config/temperature-alert', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                enabled: !!temperatureAlertEnabledEl.checked,
+                threshold_c: thresholdC,
+                display_unit: unit,
+              }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (res.ok) {
+              temperatureAlertEnabledEl.checked = !!body.enabled;
+              const savedC = Number(body.threshold_c);
+              temperatureAlertThresholdEl.value = (unit === 'F' ? setupCToF(savedC) : savedC).toFixed(1);
+              temperatureAlertUiUnit = unit;
+              updateTemperatureAlertThresholdUi(false);
+            }
+            return { ok: res.ok, detail: body?.detail || '' };
+          }
+
           document.getElementById('savePushoverBtn')?.addEventListener('click', async () => {
             const msgEl = document.getElementById('pushoverMsg');
+            const tempResult = await saveTemperatureAlertConfig();
+            if (!tempResult.ok) {
+              if (msgEl) msgEl.textContent = tempResult.detail || ((langSel?.value === 'de') ? 'Temperaturalarm konnte nicht gespeichert werden.' : 'Temperature alert could not be saved.');
+              return;
+            }
             document.getElementById('saveAuthBtn')?.click();
             if (msgEl) msgEl.textContent = (langSel?.value === 'de') ? 'Pushover gespeichert.' : 'Pushover saved.';
           });
@@ -7112,6 +7448,7 @@ def setup_page(request: Request):
             loadSetupNavTents();
             loadAuthConfigUi();
             loadAdminUsers();
+            loadTemperatureAlertConfigUi();
             loadAirSensorConfigUi();
             loadGuestUsers();
           })();
@@ -7310,6 +7647,9 @@ def changelog_page():
                   <li><strong>v0.323:</strong> Simplifies access setup so password and 2FA are managed only inside each administrator card and self-heals legacy admin migration when the admin list is opened.</li>
                   <li><strong>v0.324:</strong> Fixes missing modular admin API routes and adds an active-administrator overview in Setup.</li>
                   <li><strong>v0.325:</strong> Adds admin-only CSV import for the strain library with safe name-based merge/update behavior.</li>
+                  <li><strong>v0.326:</strong> Adds a global configurable high-temperature Pushover alarm for BME280 and DS18B20 sensors across all tents.</li>
+                  <li><strong>v0.327:</strong> Makes the high-temperature alarm use the selected Celsius/Fahrenheit display unit while comparing sensor values internally in Celsius.</li>
+                  <li><strong>v0.328:</strong> Adds Shelly Flood Gen4 status, battery and last-seen information from the tent /stats payload to the dashboard header.</li>
                 </ul>
               </section>
             </div>
@@ -8228,6 +8568,14 @@ def dashboard_page(request: Request):
           .mobile-nav-toggle { display:none; }
           .title-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
           .title-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+          .flood-status { display:none; flex-direction:column; align-items:flex-start; justify-content:center; padding:4px 8px; border-radius:8px; border:1px solid var(--grid); background:rgba(148,163,184,.10); line-height:1.15; min-width:0; }
+          .flood-status.ok { border-color:rgba(34,197,94,.45); background:rgba(34,197,94,.12); }
+          .flood-status.alarm { border-color:rgba(239,68,68,.58); background:rgba(239,68,68,.15); }
+          .flood-status.unknown { border-color:rgba(148,163,184,.40); background:rgba(148,163,184,.10); }
+          .flood-status-main { font-size:.78rem; font-weight:800; white-space:nowrap; }
+          .flood-status.ok .flood-status-main { color:#22c55e; }
+          .flood-status.alarm .flood-status-main { color:#ef4444; }
+          .flood-status-meta { margin-top:2px; font-size:.70rem; color:var(--small); white-space:nowrap; }
           .stream-open-btn:hover { filter:brightness(1.06); box-shadow:0 4px 14px rgba(2,6,23,.28); }
           .stream-open-btn:active { transform:translateY(1px) scale(.99); }
           .pot-strains { margin-top:8px; line-height:1.45; }
@@ -8309,6 +8657,8 @@ def dashboard_page(request: Request):
             #shellyDevices { grid-template-columns: 1fr; }
             .row { gap:6px; }
             button, .stream-open-btn { width:100%; text-align:center; }
+            .flood-status { max-width:100%; padding:4px 6px; }
+            .flood-status-meta { white-space:normal; }
           }
 
           body.force-mobile .layout { display:block; }
@@ -8453,6 +8803,7 @@ def dashboard_page(request: Request):
         <div class=\"title-row\">
           <h1 id=\"titleMain\">GrowTent Dashboard</h1>
           <div class=\"title-actions\">
+            <div id=\"floodStatusWidget\" class=\"flood-status unknown\" style=\"display:none;\"><div id=\"floodStatusMain\" class=\"flood-status-main\"></div><div id=\"floodStatusMeta\" class=\"flood-status-meta\"></div></div>
             <span id=\"uptimeBadge\" class=\"small\" style=\"display:none;\">-</span>
             <button id=\"exportCsvBtn\" type=\"button\">Export JSON</button>
             <a id=\"espOpenBtn\" class=\"stream-open-btn\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:none;\">Open ESP</a>
@@ -8801,6 +9152,11 @@ def dashboard_page(request: Request):
               consumptionToday: 'Consumption / cost today (0-24)',
               tankLevel: 'Tank level',
               tankDistance: 'Distance',
+              floodDry: 'Flood: dry',
+              floodWater: 'Flood: WATER',
+              floodUnknown: 'Flood: unknown',
+              floodBattery: 'Battery',
+              floodLastSeen: 'Last seen',
               updated: 'Updated',
               apiOk: 'API: OK',
               online: 'online',
@@ -8964,6 +9320,11 @@ def dashboard_page(request: Request):
               consumptionToday: 'Verbrauch / Kosten heute (0-24)',
               tankLevel: 'Tankfüllstand',
               tankDistance: 'Abstand',
+              floodDry: 'Flood: trocken',
+              floodWater: 'Flood: WASSER',
+              floodUnknown: 'Flood: unbekannt',
+              floodBattery: 'Batterie',
+              floodLastSeen: 'Zuletzt',
               updated: 'Aktualisiert',
               apiOk: 'API: OK',
               online: 'online',
@@ -9422,6 +9783,61 @@ def dashboard_page(request: Request):
             if (!modal || !frame || !currentTentMeta?.id) return;
             frame.src = `/poll-errors?tent=${encodeURIComponent(currentTentMeta.id)}`;
             modal.style.display = 'flex';
+          }
+
+          function floodBool(value){
+            if (value === true || value === 1) return true;
+            const s = String(value ?? '').trim().toLowerCase();
+            return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+          }
+
+          function formatFloodLastSeen(value){
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            const ms = Date.parse(raw);
+            if (!Number.isFinite(ms)) return raw;
+            const locale = currentLang === 'de' ? 'de-DE' : 'en-GB';
+            return new Date(ms).toLocaleString(locale, {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+          }
+
+          function renderFloodStatus(payload){
+            const widget = document.getElementById('floodStatusWidget');
+            const main = document.getElementById('floodStatusMain');
+            const meta = document.getElementById('floodStatusMeta');
+            if (!widget || !main || !meta) return;
+            const configured = floodBool(payload?.['sensors.flood.configured']);
+            if (!configured) {
+              widget.style.display = 'none';
+              main.textContent = '';
+              meta.textContent = '';
+              return;
+            }
+            const status = String(payload?.['sensors.flood.status'] || '').trim().toLowerCase();
+            const alarm = floodBool(payload?.['sensors.flood.alarm']) || status === 'alarm';
+            let state = 'unknown';
+            let label = tr('floodUnknown');
+            if (alarm) {
+              state = 'alarm';
+              label = `⚠ ${tr('floodWater')}`;
+            } else if (status === 'ok') {
+              state = 'ok';
+              label = `✓ ${tr('floodDry')}`;
+            }
+            widget.classList.remove('ok', 'alarm', 'unknown');
+            widget.classList.add(state);
+            main.textContent = label;
+            const parts = [];
+            const batteryRaw = payload?.['sensors.flood.batteryPct'];
+            if (batteryRaw !== null && batteryRaw !== undefined && batteryRaw !== '') {
+              const battery = Number(batteryRaw);
+              if (Number.isFinite(battery)) parts.push(`${tr('floodBattery')} ${Math.round(battery)} %`);
+            }
+            const lastSeen = formatFloodLastSeen(payload?.['sensors.flood.lastSeen']);
+            if (lastSeen) parts.push(`${tr('floodLastSeen')} ${lastSeen}`);
+            meta.textContent = parts.join(' · ');
+            meta.style.display = parts.length ? 'block' : 'none';
+            widget.title = parts.length ? `${label} — ${parts.join(' · ')}` : label;
+            widget.style.display = 'inline-flex';
           }
 
           function renderTentHeader(){
@@ -11363,6 +11779,7 @@ def dashboard_page(request: Request):
             extTempSensorName = extName || 'DS18B20';
             txt('lblExtTemp', extTempSensorName);
             txt('lblExtTempHistory', `${extTempLabelBase()} ${currentLang === 'de' ? 'Verlauf' : 'History'}`);
+            renderFloodStatus(d);
             renderSoilSensors(d);
             // main power tile removed
 

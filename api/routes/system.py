@@ -101,6 +101,16 @@ def ui_preferences_save(payload: legacy.UiPreferencesPayload, request: Request):
     return legacy.save_ui_preferences(payload, request)
 
 
+@router.get('/config/temperature-alert')
+def temperature_alert_config_get():
+    return legacy.get_temperature_alert_config()
+
+
+@router.post('/config/temperature-alert')
+def temperature_alert_config_save(payload: legacy.TemperatureAlertSettings):
+    return legacy.set_temperature_alert_config(payload)
+
+
 @router.get('/config/air-sensor')
 def air_sensor_config_get():
     return legacy.get_air_sensor_config()

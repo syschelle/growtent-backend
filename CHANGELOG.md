@@ -2,6 +2,41 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.328
+
+### Shelly Flood Gen4 dashboard status
+- Reads the new `sensors.flood.*` values already delivered by each tent `/stats` payload.
+- Shows a compact Flood status in the tent dashboard header only when `sensors.flood.configured` is true.
+- Displays `Flood: trocken/dry`, `Flood: WASSER/WATER`, or an unknown state based on `sensors.flood.alarm` and `sensors.flood.status`.
+- Shows Flood battery percentage and the localized `lastSeen` timestamp underneath the status.
+- Does not infer offline state from an old `lastSeen` timestamp because the battery-powered Shelly Flood Gen4 may sleep between events.
+- Adds no separate polling of the Flood sensor.
+- Bumped the application version to `v0.328`.
+
+## v0.327
+
+### Celsius/Fahrenheit temperature alert units
+- Makes the global high-temperature threshold input follow the selected Setup temperature unit.
+- Displays the threshold in °C or °F and converts it safely to Celsius for internal sensor comparisons.
+- Stores the preferred alert display unit so server-side Pushover messages use the same unit.
+- Converts both the threshold and measured temperatures in grouped Pushover alerts.
+- Existing v0.326 configurations migrate automatically with Celsius as the default display unit.
+- Bumped the configuration backup schema to version 10 while keeping older backups compatible.
+- Bumped the application version to `v0.327`.
+
+## v0.326
+
+### Global high-temperature Pushover alarm
+- Adds a global Setup toggle for high-temperature Pushover monitoring across all configured tents.
+- Adds one global Celsius threshold shared by both supported temperature sensors.
+- Monitors the main BME280 temperature and the DS18B20 external/root-zone temperature for every tent.
+- Groups all newly over-threshold sensors from the same polling cycle into one Pushover message.
+- Sends one warning per sensor for each continuous over-threshold episode and rearms automatically after that sensor returns to or below the configured threshold.
+- Does not send temperature recovery notifications.
+- Keeps the alert disabled by default on upgrade and preconfigures the threshold to `30.0 °C`.
+- Includes the temperature alert configuration in backup/restore schema version 9.
+- Bumped the application version to `v0.326`.
+
 ## v0.325
 
 ### Strain library CSV import
