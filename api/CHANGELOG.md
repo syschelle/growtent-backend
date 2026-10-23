@@ -2,6 +2,21 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.330
+
+### Security hardening
+- Fixes an authentication bypass where `/auth/login` could create an administrator session without validating administrator credentials while global authentication was disabled.
+- Makes Setup, `/config/*`, project ZIP downloads, poll-error diagnostics, Swagger/OpenAPI and 2FA QR rendering administrator-only even when normal dashboard authentication is disabled.
+- Adds login rate limiting and caps invalid 2FA attempts per pre-authentication session.
+- Revokes active administrator sessions after account disable/delete, password/username/2FA security changes, and configuration restores.
+- Secures the session cookie with `HttpOnly`, `SameSite=Lax` and `Secure` by default.
+- Disables project ZIP downloads by default and always excludes `.env`, `.env.*` and private key material when explicitly enabled.
+- Re-enforces the `history_api_enabled` switch on `/api/history`.
+- Binds the API host port to `127.0.0.1` by default through `GT_API_BIND_ADDRESS`, reducing direct reverse-proxy bypass exposure.
+- Adds common security response headers.
+- Adds security regression tests for anonymous writes, sensitive GETs, project download secrets, rate limiting, session revocation, history API enforcement and loopback binding.
+- Bumped the application version to `v0.330`.
+
 ## v0.329
 
 ### Shelly Flood Gen4 Pushover alarm

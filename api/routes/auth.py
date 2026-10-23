@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
 import app as legacy
@@ -14,18 +14,18 @@ def login_page():
 
 
 @router.post('/auth/login')
-def login(payload: legacy.LoginPayload):
-    return legacy.auth_login(payload)
+def login(payload: legacy.LoginPayload, request: Request):
+    return legacy.auth_login(payload, request)
 
 
 @router.post('/auth/login/2fa')
-def login_2fa(payload: legacy.Login2FAPayload):
-    return legacy.auth_login_2fa(payload)
+def login_2fa(payload: legacy.Login2FAPayload, request: Request):
+    return legacy.auth_login_2fa(payload, request)
 
 
 @router.post('/auth/logout')
-def logout():
-    return legacy.auth_logout()
+def logout(request: Request):
+    return legacy.auth_logout(request)
 
 
 @router.get('/auth/qr.png')

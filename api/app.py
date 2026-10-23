@@ -43,10 +43,15 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.329"
+APP_VERSION = "v0.330"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
+PROJECT_DOWNLOAD_ENABLED = (os.getenv("PROJECT_DOWNLOAD_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"})
+SESSION_COOKIE_SECURE = (os.getenv("SESSION_COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes", "on"})
+LOGIN_RATE_LIMIT_ATTEMPTS = max(3, int(os.getenv("LOGIN_RATE_LIMIT_ATTEMPTS", "6")))
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "900")))
+TWOFA_MAX_ATTEMPTS = max(3, int(os.getenv("TWOFA_MAX_ATTEMPTS", "5")))
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -57,6 +62,8 @@ FAVICON_LINKS = (
 
 SESSIONS: dict[str, dict] = {}
 TWOFA_ENROLL: dict[str, dict] = {}
+LOGIN_FAILURES: dict[str, list[float]] = {}
+LOGIN_FAILURES_LOCK = threading.RLock()
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(60 * 60 * 72)))
 SESSION_REFRESH_THRESHOLD_SECONDS = int(os.getenv("SESSION_REFRESH_THRESHOLD_SECONDS", "900"))
 EMA_ALPHA = float(os.getenv("EMA_ALPHA", "0.3"))
@@ -137,6 +144,83 @@ def _verify_secret(stored_hash: str | None, value: str | None) -> bool:
         return PASSWORD_HASHER.verify(stored, value)
     except (VerifyMismatchError, VerificationError, InvalidHashError, ValueError, TypeError):
         return False
+
+
+def _session_cookie(response: Response, token: str, max_age: int) -> None:
+    response.set_cookie(
+        "caop_session",
+        token,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+        max_age=max(1, int(max_age)),
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie("caop_session", path="/", secure=SESSION_COOKIE_SECURE, samesite="lax")
+
+
+def _login_rate_keys(username: str, request: Request | None = None) -> list[str]:
+    keys = [f"user:{str(username or '').strip().casefold() or '_empty'}"]
+    if request is not None:
+        client = getattr(request, "client", None)
+        host = str(getattr(client, "host", "") or "").strip()
+        if host:
+            keys.append(f"ip:{host}")
+    return keys
+
+
+def _prune_login_failures(now: float) -> None:
+    cutoff = now - LOGIN_RATE_LIMIT_WINDOW_SECONDS
+    for key in list(LOGIN_FAILURES):
+        kept = [ts for ts in LOGIN_FAILURES.get(key, []) if ts >= cutoff]
+        if kept:
+            LOGIN_FAILURES[key] = kept
+        else:
+            LOGIN_FAILURES.pop(key, None)
+
+
+def _check_login_rate_limit(username: str, request: Request | None = None) -> None:
+    now = time.time()
+    with LOGIN_FAILURES_LOCK:
+        _prune_login_failures(now)
+        for key in _login_rate_keys(username, request):
+            if len(LOGIN_FAILURES.get(key, [])) >= LOGIN_RATE_LIMIT_ATTEMPTS:
+                raise HTTPException(
+                    status_code=429,
+                    detail="too many login attempts; try again later",
+                    headers={"Retry-After": str(LOGIN_RATE_LIMIT_WINDOW_SECONDS)},
+                )
+
+
+def _record_login_failure(username: str, request: Request | None = None) -> None:
+    now = time.time()
+    with LOGIN_FAILURES_LOCK:
+        _prune_login_failures(now)
+        for key in _login_rate_keys(username, request):
+            LOGIN_FAILURES.setdefault(key, []).append(now)
+
+
+def _clear_login_failures(username: str, request: Request | None = None) -> None:
+    with LOGIN_FAILURES_LOCK:
+        for key in _login_rate_keys(username, request):
+            LOGIN_FAILURES.pop(key, None)
+
+
+def _revoke_admin_sessions(admin_id: int | None = None, username: str | None = None) -> int:
+    removed = 0
+    normalized_username = str(username or "").strip().casefold()
+    for token, session in list(SESSIONS.items()):
+        if (session.get("role") or "admin") != "admin":
+            continue
+        id_match = admin_id is not None and session.get("admin_id") is not None and int(session.get("admin_id")) == int(admin_id)
+        user_match = bool(normalized_username and str(session.get("username") or "").strip().casefold() == normalized_username)
+        if id_match or user_match:
+            SESSIONS.pop(token, None)
+            removed += 1
+    return removed
 
 
 def _clean_imported_secret_hash(value: object) -> str | None:
@@ -339,7 +423,7 @@ def _tent_label_for_notify(tent: dict, payload: dict | None = None) -> str:
 
 
 @app.post("/auth/login")
-def auth_login(payload: LoginPayload):
+def auth_login(payload: LoginPayload, request: Request):
     try:
         if is_initial_install_available():
             raise HTTPException(status_code=403, detail="initial installation required")
@@ -348,53 +432,7 @@ def auth_login(payload: LoginPayload):
     except Exception:
         pass
     cfg = load_auth_config()
-    if not cfg.get("enabled"):
-        # If auth is globally disabled, keep local convenience login,
-        # but still honor defined guest accounts as read-only sessions.
-        # Legacy single guest from app_auth_config
-        legacy_guest_user = (cfg.get("guest_username") or "").strip()
-        legacy_guest_hash = (cfg.get("guest_password_hash") or "")
-        legacy_guest_exp = cfg.get("guest_expires_at")
-        legacy_match = bool(legacy_guest_user and payload.username == legacy_guest_user and _verify_secret(legacy_guest_hash, payload.password))
-        if legacy_match:
-            guest_exp_ts = None
-            try:
-                if legacy_guest_exp:
-                    guest_exp_ts = datetime.fromisoformat(str(legacy_guest_exp).replace('Z', '+00:00')).timestamp()
-            except Exception:
-                guest_exp_ts = None
-            if guest_exp_ts is None or guest_exp_ts <= time.time():
-                raise HTTPException(status_code=401, detail="guest access expired")
-            token = secrets.token_urlsafe(32)
-            exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
-            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp, "max_expires_at": guest_exp_ts}
-            resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": legacy_guest_exp})
-            resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
-            return resp
-
-        # New multi-guest table
-        g = _find_active_guest_user(payload.username, payload.password)
-        if g and not g.get("expired"):
-            guest_exp_ts = None
-            try:
-                if g.get("expires_at"):
-                    guest_exp_ts = datetime.fromisoformat(str(g.get("expires_at")).replace('Z', '+00:00')).timestamp()
-            except Exception:
-                guest_exp_ts = None
-            if guest_exp_ts is None or guest_exp_ts <= time.time():
-                raise HTTPException(status_code=401, detail="guest access expired")
-            token = secrets.token_urlsafe(32)
-            exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
-            SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp, "max_expires_at": guest_exp_ts}
-            resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": g.get("expires_at")})
-            resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
-            return resp
-
-        token = secrets.token_urlsafe(32)
-        SESSIONS[token] = {"authenticated": True, "role": "admin", "username": payload.username or None, "admin_id": None, "expires_at": time.time() + SESSION_TTL_SECONDS}
-        resp = JSONResponse({"ok": True})
-        resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
-        return resp
+    _check_login_rate_limit(payload.username, request)
 
     admin_user = (cfg.get("username") or "")
     admin_hash = (cfg.get("password_hash") or "")
@@ -415,7 +453,10 @@ def auth_login(payload: LoginPayload):
     is_guest_login = bool(legacy_guest_login or db_guest_login)
 
     if not is_admin_login and not is_guest_login:
+        _record_login_failure(payload.username, request)
         raise HTTPException(status_code=401, detail="invalid credentials")
+
+    _clear_login_failures(payload.username, request)
 
     if is_guest_login:
         guest_exp_ts = None
@@ -431,7 +472,7 @@ def auth_login(payload: LoginPayload):
         exp = min(time.time() + SESSION_TTL_SECONDS, guest_exp_ts)
         SESSIONS[token] = {"authenticated": True, "role": "guest", "username": payload.username, "expires_at": exp, "max_expires_at": guest_exp_ts}
         resp = JSONResponse({"ok": True, "role": "guest", "guest_expires_at": src_expires})
-        resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=max(1, int(exp - time.time())))
+        _session_cookie(resp, token, max(1, int(exp - time.time())))
         return resp
 
     admin_twofa_enabled = bool(admin_account.get("twofa_enabled")) if admin_account else bool(cfg.get("twofa_enabled"))
@@ -444,18 +485,19 @@ def auth_login(payload: LoginPayload):
             "username": payload.username,
             "admin_id": admin_id,
             "expires_at": time.time() + 300,
+            "attempts": 0,
         }
         return {"ok": True, "requires2fa": True, "preauth_token": pre}
 
     token = secrets.token_urlsafe(32)
     SESSIONS[token] = {"authenticated": True, "role": "admin", "username": payload.username, "admin_id": admin_id, "expires_at": time.time() + SESSION_TTL_SECONDS}
     resp = JSONResponse({"ok": True})
-    resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
+    _session_cookie(resp, token, SESSION_TTL_SECONDS)
     return resp
 
 
 @app.post("/auth/login/2fa")
-def auth_login_2fa(payload: Login2FAPayload):
+def auth_login_2fa(payload: Login2FAPayload, request: Request):
     s = SESSIONS.get(payload.preauth_token)
     if not s or not s.get("preauth") or s.get("expires_at", 0) < time.time():
         raise HTTPException(status_code=401, detail="2FA session expired")
@@ -507,6 +549,11 @@ def auth_login_2fa(payload: Login2FAPayload):
                         )
 
     if not code_ok:
+        s["attempts"] = int(s.get("attempts") or 0) + 1
+        SESSIONS[payload.preauth_token] = s
+        if s["attempts"] >= TWOFA_MAX_ATTEMPTS:
+            SESSIONS.pop(payload.preauth_token, None)
+            raise HTTPException(status_code=429, detail="too many 2FA attempts; start login again")
         raise HTTPException(status_code=401, detail="2FA code or recovery code required")
 
     SESSIONS.pop(payload.preauth_token, None)
@@ -519,14 +566,17 @@ def auth_login_2fa(payload: Login2FAPayload):
         "expires_at": time.time() + SESSION_TTL_SECONDS,
     }
     resp = JSONResponse({"ok": True})
-    resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
+    _session_cookie(resp, token, SESSION_TTL_SECONDS)
     return resp
 
 
 @app.post("/auth/logout")
-def auth_logout():
+def auth_logout(request: Request):
+    token = request.cookies.get("caop_session")
+    if token:
+        SESSIONS.pop(token, None)
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie("caop_session")
+    _clear_session_cookie(resp)
     return resp
 
 
@@ -876,7 +926,7 @@ def _create_admin_session_response(username: str, admin_id: int | None = None):
         "expires_at": time.time() + SESSION_TTL_SECONDS,
     }
     resp = JSONResponse({"ok": True, "installed": True, "username": username})
-    resp.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=SESSION_TTL_SECONDS)
+    _session_cookie(resp, token, SESSION_TTL_SECONDS)
     return resp
 
 
@@ -1144,9 +1194,17 @@ def require_admin(request: Request):
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt_prefixes = ("/health", "/favicon.svg", "/favicon.ico", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/auth/", "/install", "/api/install")
-    if path.startswith(exempt_prefixes):
-        return await call_next(request)
+    public_exact = {
+        "/health", "/favicon.svg", "/favicon.ico",
+        "/auth/login", "/auth/login/2fa", "/auth/whoami",
+        "/install", "/api/install",
+    }
+    if path in public_exact:
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
 
     try:
         cfg = load_auth_config()
@@ -1163,21 +1221,37 @@ async def auth_middleware(request: Request, call_next):
     token = request.cookies.get("caop_session")
     session = get_session(token)
 
-    if cfg.get("enabled"):
-        if not session:
+    # Security-sensitive URLs always require a real administrator session,
+    # even when normal dashboard authentication is globally disabled.
+    always_admin = (
+        path == "/setup"
+        or path.startswith("/config")
+        or path == "/download/project.zip"
+        or path == "/openapi.json"
+        or path == "/docs"
+        or path.startswith("/docs/")
+        or path == "/poll-errors"
+        or path == "/api/poll-errors"
+        or path == "/auth/qr.png"
+    )
+    if always_admin:
+        if not session or (session.get("role") or "admin") != "admin":
             if "text/html" in (request.headers.get("accept") or ""):
                 return RedirectResponse(url="/auth/login", status_code=302)
-            return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+            return JSONResponse(status_code=403, content={"detail": "admin required"})
 
-    # If auth is disabled, never allow anonymous write actions.
-    # This avoids bypassing guest restrictions via no-session requests.
+    if cfg.get("enabled") and not session:
+        if "text/html" in (request.headers.get("accept") or ""):
+            return RedirectResponse(url="/auth/login", status_code=302)
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
+    # Authentication-disabled mode remains read-only for anonymous clients.
+    # An administrator must still authenticate with real credentials before writes.
     if not cfg.get("enabled") and not session and request.method.upper() != "GET":
         return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
-    # Guest restrictions must always apply when a guest session exists,
-    # regardless of global auth enabled/disabled.
     if session and (session.get("role") or "admin") == "guest":
-        if path.startswith("/config"):
+        if path.startswith("/config") or always_admin:
             if "text/html" in (request.headers.get("accept") or ""):
                 return RedirectResponse(url="/app?page=dashboard", status_code=302)
             return JSONResponse(status_code=403, content={"detail": "guest mode: access denied"})
@@ -1187,7 +1261,11 @@ async def auth_middleware(request: Request, call_next):
     response = await call_next(request)
     refreshed_max_age = _refresh_session_if_needed(token, session)
     if refreshed_max_age is not None:
-        response.set_cookie("caop_session", token, httponly=True, samesite="lax", max_age=refreshed_max_age)
+        _session_cookie(response, token, refreshed_max_age)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     if request.method == "GET" and (
         path.startswith("/app") or path.startswith("/setup") or path.startswith("/dashboard") or path.startswith("/changelog") or path.startswith("/strain")
     ):
@@ -3457,6 +3535,9 @@ def set_auth_config(payload: AuthConfigPayload):
     enabled = as_bool(payload.enabled)
     username = (payload.username or "").strip()
     password = payload.password
+    revoke_primary_admin_id = None
+    revoke_primary_username = None
+    revoke_primary_sessions = False
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT username, password_hash, twofa_enabled, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, soil_moisture_alert_enabled FROM app_auth_config WHERE id=1")
@@ -3577,6 +3658,16 @@ def set_auth_config(payload: AuthConfigPayload):
                     )
             if primary_admin_id is not None:
                 _sync_legacy_admin_mirror(cur, primary_admin_id)
+                revoke_primary_admin_id = int(primary_admin_id)
+                revoke_primary_username = current_username or username
+                revoke_primary_sessions = (
+                    username != current_username
+                    or new_hash != current_hash
+                    or (is_twofa_enabled and not want_twofa)
+                )
+
+    if revoke_primary_sessions:
+        _revoke_admin_sessions(revoke_primary_admin_id, revoke_primary_username)
 
     # Start 2FA enrollment flow (QR + verify code), do NOT enable immediately.
     if enabled and want_twofa and not load_auth_config().get("twofa_enabled"):
@@ -3755,6 +3846,13 @@ def update_admin_user(admin_id: int, payload: AdminUserUpdatePayload):
         if getattr(exc, "pgcode", None) == "23505":
             raise HTTPException(status_code=409, detail="username already exists")
         raise
+    security_changed = (
+        username != str(current.get("username") or "")
+        or enabled != bool(current.get("enabled"))
+        or password_hash != current.get("password_hash")
+    )
+    if security_changed:
+        _revoke_admin_sessions(int(admin_id), str(current.get("username") or ""))
     return {"ok": True, "item": _public_admin_item(_get_admin_user_by_id(admin_id))}
 
 
@@ -3773,6 +3871,7 @@ def delete_admin_user(admin_id: int, request: Request):
         with conn.cursor() as cur:
             cur.execute("DELETE FROM app_admin_users WHERE id=%s", (int(admin_id),))
             _sync_legacy_admin_mirror(cur)
+    _revoke_admin_sessions(int(admin_id), str(current.get("username") or ""))
     return {"ok": True}
 
 
@@ -3791,6 +3890,7 @@ def set_admin_2fa_config(admin_id: int, payload: AdminTwoFAConfigPayload):
                     (int(admin_id),),
                 )
                 _sync_legacy_admin_mirror(cur, int(admin_id))
+        _revoke_admin_sessions(int(admin_id), str(admin.get("username") or ""))
         return {"ok": True, "twofa_enabled": False, "recovery_codes": []}
 
     if admin.get("twofa_enabled") and admin.get("totp_secret") and regen_codes:
@@ -4340,6 +4440,7 @@ def verify_2fa_setup(payload: TwoFAVerifyPayload):
     TWOFA_ENROLL.pop(payload.token, None)
     if admin_id is not None:
         admin = _get_admin_user_by_id(int(admin_id))
+        _revoke_admin_sessions(int(admin_id), str((admin or {}).get("username") or pending.get("username") or ""))
         return {"ok": True, "twofa_enabled": bool(admin and admin.get("twofa_enabled")), "admin_id": int(admin_id)}
     cfg = load_auth_config()
     return {"ok": True, "twofa_enabled": bool(cfg.get("twofa_enabled"))}
@@ -4644,6 +4745,10 @@ def import_config_backup(payload: dict):
             cur.execute("SELECT setval(pg_get_serial_sequence('tents','id'), %s, true)", (max_id,))
 
     imported_strains = _insert_strains_db(strains, replace=True)
+
+    # Restoring authentication/admin configuration invalidates all existing sessions.
+    SESSIONS.clear()
+    TWOFA_ENROLL.clear()
 
     return {
         "ok": True,
@@ -5257,6 +5362,9 @@ def _iso_utc_z(ts: str | None):
 
 
 def api_history_for_device(device_id: str | None, hours: int | None = None, limit: int | None = None, from_ts: str | None = None, to_ts: str | None = None):
+    if not bool(load_auth_config().get("history_api_enabled", True)):
+        return JSONResponse(status_code=403, content={"error": "history API disabled"})
+
     def _err(status: int, msg: str):
         return JSONResponse(status_code=status, content={"error": msg})
 
@@ -7673,24 +7781,29 @@ def setup_page(request: Request):
 
 
 @app.get("/download/project.zip")
-def download_project_zip():
+def download_project_zip(request: Request):
+    require_admin(request)
+    if not PROJECT_DOWNLOAD_ENABLED:
+        raise HTTPException(status_code=404, detail="project download disabled")
     project_root = PROJECT_ROOT
-    out_path = os.path.join(tempfile.gettempdir(), "growtent-backend-poc.zip")
+    out_path = os.path.join(tempfile.gettempdir(), "growtent-backend-project.zip")
 
-    skip_dirs = {".git", "__pycache__", ".pytest_cache", ".venv", "node_modules"}
-    skip_suffixes = {".pyc", ".pyo", ".log"}
+    skip_dirs = {".git", "__pycache__", ".pytest_cache", ".venv", "node_modules", ".idea", ".vscode"}
+    skip_suffixes = {".pyc", ".pyo", ".log", ".key", ".pem", ".p12", ".pfx"}
+    skip_names = {".env", ".env.local", ".env.production", ".env.development", "secrets.json"}
 
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(project_root):
             dirs[:] = [d for d in dirs if d not in skip_dirs]
             for name in files:
-                if any(name.endswith(sfx) for sfx in skip_suffixes):
+                lowered = name.lower()
+                if name in skip_names or lowered.startswith(".env.") or any(lowered.endswith(sfx) for sfx in skip_suffixes):
                     continue
                 full = os.path.join(root, name)
                 rel = os.path.relpath(full, project_root)
                 zf.write(full, rel)
 
-    return FileResponse(out_path, media_type="application/zip", filename="growtent-backend-poc.zip")
+    return FileResponse(out_path, media_type="application/zip", filename="growtent-backend-project.zip")
 
 
 @app.get("/changelog", response_class=HTMLResponse)
@@ -7865,6 +7978,7 @@ def changelog_page():
                   <li><strong>v0.327:</strong> Makes the high-temperature alarm use the selected Celsius/Fahrenheit display unit while comparing sensor values internally in Celsius.</li>
                   <li><strong>v0.328:</strong> Adds Shelly Flood Gen4 status, battery and last-seen information from the tent /stats payload to the dashboard header.</li>
                   <li><strong>v0.329:</strong> Adds a configurable grouped Pushover alarm for Shelly Flood Gen4 water events with persistent anti-spam rearming.</li>
+                  <li><strong>v0.330:</strong> Security hardening for authentication, sessions, sensitive URLs, project downloads, history API enforcement and Docker port binding.</li>
                 </ul>
               </section>
             </div>
@@ -7935,7 +8049,6 @@ def changelog_page():
           <main class="content">
             <h1>About</h1>
             <a class="navlink active download" href="https://github.com/syschelle/growtent-backend" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
-            <a class="navlink active download" href="/download/project.zip">Projekt herunterladen (ZIP)</a>
             {release_highlights_html}
             <div class="md-root">{rendered_cards}</div>
           </main>

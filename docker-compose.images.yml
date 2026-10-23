@@ -29,6 +29,8 @@ services:
       INSTALL_API_ENABLED: ${INSTALL_API_ENABLED:-true}
       INSTALL_API_REQUIRE_TOKEN: ${INSTALL_API_REQUIRE_TOKEN:-true}
       INSTALL_API_TOKEN: ${INSTALL_API_TOKEN:?Set INSTALL_API_TOKEN in .env for first-run bootstrap}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      PROJECT_DOWNLOAD_ENABLED: ${PROJECT_DOWNLOAD_ENABLED:-false}
     volumes:
       - ./:/project:ro
       - ./data:/data
@@ -38,7 +40,7 @@ services:
       go2rtc:
         condition: service_started
     ports:
-      - "8088:8080"
+      - "${GT_API_BIND_ADDRESS:-127.0.0.1}:8088:8080"
 
   go2rtc:
     restart: unless-stopped

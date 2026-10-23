@@ -1,3 +1,11 @@
+
+## v0.330 security defaults
+
+- API host binding defaults to `127.0.0.1:8088`; override with `GT_API_BIND_ADDRESS` only when required.
+- Session cookies default to `Secure`; use HTTPS. For deliberate plain-HTTP local testing only, set `SESSION_COOKIE_SECURE=false`.
+- `PROJECT_DOWNLOAD_ENABLED=false` by default. Project downloads, when enabled, are administrator-only and never include `.env` or private key material.
+- Do not publish port 8088 directly to the Internet. Prefer an HTTPS reverse proxy and firewall rules.
+
 # Deploying GrowTent Backend with prebuilt images
 
 This deployment mode pulls a prebuilt API image from GHCR instead of building the API on the target host. It is intended for Raspberry Pi / ARM systems as well as x86 servers.
@@ -6,7 +14,7 @@ This deployment mode pulls a prebuilt API image from GHCR instead of building th
 
 Only the API is published to the host by default:
 
-- API/UI: `8088:8080`
+- API/UI: `127.0.0.1:8088:8080` by default
 
 The following services stay internal to the Docker Compose network:
 
@@ -49,13 +57,13 @@ Important: if the database password contains special characters, URL-encode it i
 The image-based Compose file defaults to the moving latest API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.329
+ghcr.io/syschelle/growtent-backend-api:v0.330
 ```
 
 For deterministic deployments, pin a specific version with `GT_API_IMAGE`, for example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.329
+ghcr.io/syschelle/growtent-backend-api:v0.330
 ```
 
 go2rtc is pinned in the Compose files as an immutable reference instead of `latest`:
@@ -71,8 +79,8 @@ Override `GO2RTC_IMAGE` only deliberately for controlled upgrades.
 Use the current release image explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.329 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.329 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.330 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.330 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Or use the image configured in `.env` / Compose:
@@ -95,6 +103,9 @@ The token needs `read:packages`.
 On a fresh database volume, open the initial install page first:
 
 ```text
+
+> **v0.330:** direct `http://<server-ip>:8088` access requires an explicit non-loopback `GT_API_BIND_ADDRESS`. Plain HTTP sessions also require `SESSION_COOKIE_SECURE=false`; HTTPS via reverse proxy is recommended.
+
 http://<server-ip>:8088/install
 ```
 
@@ -115,11 +126,11 @@ ss -tulpn | grep -E ':8088|:1984|:8554|:5432' || true
 
 Expected:
 
-- `gt_api` shows `8080/tcp -> 0.0.0.0:8088` and/or `[::]:8088`
+- `gt_api` shows `8080/tcp -> 127.0.0.1:8088` with the secure default bind
 - `gt_go2rtc` prints no published ports
 - `gt_db` prints no published ports
 - `/health` returns HTTP 200
-- for this stack, only `8088` is listening on the host
+- with the secure default, `8088` listens only on host loopback
 
 ## If go2rtc ports are still visible
 
@@ -128,7 +139,7 @@ Docker does not remove port mappings from an already-created container. Recreate
 ```bash
 docker compose -f docker-compose.images.yml down --remove-orphans
 docker rm -f gt_go2rtc gt_api gt_db 2>/dev/null || true
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.329 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.330 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Then verify again with `docker port` and `ss`.

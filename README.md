@@ -60,19 +60,39 @@ Main features:
 
 ---
 
+
+### v0.330 security defaults
+
+The API host port is bound to loopback by default:
+
+```yaml
+${GT_API_BIND_ADDRESS:-127.0.0.1}:8088:8080
+```
+
+This prevents direct LAN/Internet access to port 8088 unless you explicitly change `GT_API_BIND_ADDRESS`. Prefer exposing the application through an HTTPS reverse proxy. If direct LAN access is intentionally required, set `GT_API_BIND_ADDRESS=0.0.0.0` and protect the port with the host/network firewall.
+
+Session cookies use the `Secure` flag by default (`SESSION_COOKIE_SECURE=true`). Set `SESSION_COOKIE_SECURE=false` only for an intentional plain-HTTP local deployment; HTTPS is recommended.
+
+Project ZIP download is disabled by default (`PROJECT_DOWNLOAD_ENABLED=false`). If explicitly enabled, it is administrator-only and excludes `.env`, `.env.*`, private keys and similar secret material.
+
+Even when normal dashboard authentication is globally disabled, Setup, `/config/*`, project downloads, poll diagnostics and API documentation still require an authenticated administrator session. Administrator login always validates real credentials.
+
 ## Architecture
 
 The default Docker stack contains three services.
 
 | Service | Container | Purpose | Host exposure |
 |---|---|---|---|
-| API/UI | `gt_api` | FastAPI app, web UI, authentication, proxy/helper endpoints | yes, default `8088:8080` |
+| API/UI | `gt_api` | FastAPI app, web UI, authentication, proxy/helper endpoints | yes, default `127.0.0.1:8088:8080` |
 | PostgreSQL | `gt_db` | persistent configuration and history database | no |
 | go2rtc | `gt_go2rtc` | internal camera/RTSP helper | no |
 
 Normal browser access:
 
 ```text
+
+> **v0.330:** direct `http://<server-ip>:8088` access only works when `GT_API_BIND_ADDRESS=0.0.0.0` (or another non-loopback bind address) and, for plain HTTP login sessions, `SESSION_COOKIE_SECURE=false`. Prefer HTTPS through a reverse proxy.
+
 http://<server-ip>:8088
 ```
 
@@ -95,14 +115,14 @@ By default, only the API/web UI should be reachable from outside Docker.
 
 | Component | Internal address | Published host port | Notes |
 |---|---:|---:|---|
-| API/UI | `api:8080` | `8088:8080` | the only service published to the host |
+| API/UI | `api:8080` | `127.0.0.1:8088:8080` by default | loopback-only unless `GT_API_BIND_ADDRESS` is overridden |
 | PostgreSQL | `db:5432` | none | Docker-network only |
 | go2rtc HTTP/API | `go2rtc:1984` | none | Docker-network only |
 | go2rtc RTSP | `go2rtc:8554` | none | Docker-network only |
 
 This means:
 
-- browsers and external clients use `http://<server-ip>:8088`
+- by default only the host itself can use `http://127.0.0.1:8088`; use an HTTPS reverse proxy for remote clients
 - the API reaches PostgreSQL internally via `db:5432`
 - the API reaches go2rtc internally via `http://go2rtc:1984`
 - PostgreSQL is not intended to be reachable directly from the host or LAN
@@ -120,8 +140,7 @@ ss -tulpn | grep -E ':8088|:1984|:8554|:5432' || true
 Expected result for the default stack:
 
 ```text
-8080/tcp -> 0.0.0.0:8088
-8080/tcp -> [::]:8088
+8080/tcp -> 127.0.0.1:8088
 ```
 
 `docker port gt_go2rtc` and `docker port gt_db` should print no published ports. In `ss`, only `8088` should appear for this stack.
@@ -191,7 +210,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.329
+ghcr.io/syschelle/growtent-backend-api:v0.330
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -283,8 +302,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.329 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.329 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.330 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.330 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -862,7 +881,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.329 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.330 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

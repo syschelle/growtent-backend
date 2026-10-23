@@ -47,8 +47,8 @@ def setup_page(request: Request):
 
 
 @router.get('/download/project.zip')
-def download_project_zip():
-    return legacy.download_project_zip()
+def download_project_zip(request: Request):
+    return legacy.download_project_zip(request)
 
 
 @router.get('/changelog', response_class=HTMLResponse)
