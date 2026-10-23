@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.331
+
+### About page redesign
+- Replaces the oversized hardcoded `Changes since v0.265` list with a structured About landing page.
+- Adds an installed-version header and compact capability overview grouped by security, alerts, sensors/irrigation and data portability.
+- Shows only the six newest releases directly on the page.
+- Keeps the complete older release history available in a collapsible section.
+- Improves desktop and mobile spacing, typography and release-card readability.
+- Bumped the application version to `v0.331`.
+
 ## v0.330
 
 ### Security hardening

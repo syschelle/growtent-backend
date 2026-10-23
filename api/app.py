@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.330"
+APP_VERSION = "v0.331"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7835,6 +7835,7 @@ def changelog_page():
 
     lines = content.splitlines()
     cards = []
+    card_records = []
     current_title = ""
     current_body = []
     in_ul = False
@@ -7854,7 +7855,9 @@ def changelog_page():
         close_ul()
         if current_title or current_body:
             title_html = f"<h2>{esc(current_title)}</h2>" if current_title else ""
-            cards.append(f"<section class='entry-card'>{title_html}{''.join(current_body)}</section>")
+            card_html = f"<section class='entry-card'>{title_html}{''.join(current_body)}</section>"
+            cards.append(card_html)
+            card_records.append((current_title, card_html))
         current_title = ""
         current_body = []
 
@@ -7900,89 +7903,75 @@ def changelog_page():
     flush_card()
     rendered_cards = "\n".join(cards)
 
-    release_highlights_html = """
-            <div class="release-highlights">
-              <section class="entry-card">
-                <h2>Changes since v0.265</h2>
-                <p class="muted">Summary of the most important changes from v0.265 to the current version.</p>
-                <h3 class="section-changes">Strain library and pot assignment</h3>
-                <ul>
-                  <li><strong>v0.265:</strong> Simplified the strain CSV to a single-language schema: Name, Genetics, THC, CBD, Effects and Aroma.</li>
-                  <li><strong>v0.266:</strong> Added three pot strain assignments per tent in setup; guest users can only view the strain library.</li>
-                  <li><strong>v0.267:</strong> Moved the strain library to PostgreSQL. The CSV now serves only as initial seed and export.</li>
-                  <li><strong>v0.284:</strong> Added 50/50 as a selectable genetics value for cannabis strains.</li>
-                </ul>
-                <h3 class="section-changes">Dashboard and camera stream</h3>
-                <ul>
-                  <li><strong>v0.268:</strong> Displayed pot strains below the camera stream in the dashboard.</li>
-                  <li><strong>v0.269:</strong> Reduced the display to a compact list without an additional prefix.</li>
-                  <li><strong>v0.270:</strong> Added the missing placeholder for stream pot strains in the dashboard.</li>
-                  <li><strong>v0.271:</strong> Made strain names clickable; a popover shows genetics, THC, CBD, effects and aroma.</li>
-                  <li><strong>v0.272:</strong> Fixed JavaScript escaping in the strain popover.</li>
-                  <li><strong>v0.273:</strong> Only the strain name is clickable; underline styling was removed.</li>
-                  <li><strong>v0.274:</strong> Moved temperature and VPD to the fullscreen camera preview header so the image remains unobstructed.</li>
-                  <li><strong>v0.282:</strong> Dashboard now reports when an active irrigation plan cannot calculate the next run because the light schedule is missing.</li>
-                  <li><strong>v0.283:</strong> Reads the light Shelly schedule on demand and caches it to calculate the next irrigation run without permanent schedule polling.</li>
-                  <li><strong>v0.286:</strong> Uses the controller pump-enable flags to disable and gray out unavailable irrigation pump controls.</li>
-                  <li><strong>v0.287:</strong> Makes irrigation pump mapping board-aware: relays 6-8 on legacy 8-relay controllers and relays 1-3 on ESP32-S3-Relay-6Ch controllers.</li>
-                </ul>
-                <h3 class="section-changes">Exhaust and history</h3>
-                <ul>
-                  <li><strong>v0.275:</strong> Added exhaust history as an additional watt chart in the dashboard.</li>
-                  <li><strong>v0.276:</strong> Exhaust history is only shown when exhaust is configured or when exhaust history values already exist.</li>
-                </ul>
-                <h3 class="section-changes">Security and diagnostics</h3>
-                <ul>
-                  <li><strong>v0.285:</strong> Sanitized Shelly schedule error responses to avoid exposing internal exception details.</li>
-                </ul>
-                <h3 class="section-changes">About page</h3>
-                <ul>
-                  <li><strong>v0.277:</strong> Added this compact summary of changes since v0.265 to the About page.</li>
-                  <li><strong>v0.278:</strong> Translated the About page summary to English.</li>
-                  <li><strong>v0.279:</strong> Normalized Shelly toggle responses so proxied devices report usable state data.</li>
-                  <li><strong>v0.280:</strong> Switched configured Shelly devices directly from the backend to avoid controller action proxy timeouts.</li>
-                  <li><strong>v0.281:</strong> Bumped the release version and updated deployment metadata for the direct Shelly toggle hotfix.</li>
-                  <li><strong>v0.288:</strong> Added browser tab favicon links and an ico compatibility route.</li>
-                  <li><strong>v0.289:</strong> Versioned favicon URLs and disabled favicon response caching so browser tabs refresh the icon reliably.</li>
-                  <li><strong>v0.290:</strong> Guest users can open pot strain detail popovers, and the default library includes Cereal Milk, Green Poison and Oreoz.</li>
-                  <li><strong>v0.291:</strong> Strain detail popovers no longer block repeated clicks on dashboard pot strain links.</li>
-                  <li><strong>v0.292:</strong> Restored the modular `/ui/preferences` routes used by guest display mode.</li>
-                  <li><strong>v0.293:</strong> Pot strain links stay enabled after the guest dashboard refresh cycle.</li>
-                  <li><strong>v0.294:</strong> Added an optional Luftdaten-compatible live air sensor integration with cached backend polling and a compact header widget.</li>
-                  <li><strong>v0.295:</strong> Moved the compact air sensor widget behind the CanopyOps application name.</li>
-                  <li><strong>v0.296:</strong> Shows the Shelly light schedule as a light/dark cycle in the grow phase tile.</li>
-                  <li><strong>v0.297:</strong> Optimized the air sensor header widget for mobile view.</li>
-                  <li><strong>v0.299:</strong> Adds calculated start dates to the grow and phase day/week lines.</li>
-                  <li><strong>v0.300:</strong> Shows grow and phase dates without weekday or date label.</li>
-                  <li><strong>v0.301:</strong> Adds 40-second soil moisture polling, live values and colored history lines for up to three sensors per tent.</li>
-                  <li><strong>v0.302:</strong> Configures dedicated ESP8266 soil sensor IPs per tent instead of deriving them from the controller URL.</li>
-                  <li><strong>v0.303:</strong> Persists soil sensor IPs through the active setup API so saved values remain visible after updating a tent.</li>
-                  <li><strong>v0.304:</strong> Lets setup save soil sensor IPs without retyping tent name and source URL when the target tent is known.</li>
-                  <li><strong>v0.305:</strong> Shows soil moisture live cards as Topf 1/2/3 and moves the ESP sensor name into the detail line while hiding firmware metadata.</li>
-                  <li><strong>v0.306:</strong> Places the soil sensor name on its own line below the raw ADC value in the live moisture tile.</li>
-                  <li><strong>v0.307:</strong> Preserves fixed Topf/Pot 1-3 soil sensor slots so moving a configured sensor IP does not collapse it back to Topf/Pot 1.</li>
-                  <li><strong>v0.308:</strong> Uses Pot 1/2/3 labels instead of ESP sensor names in the soil moisture history chart.</li>
-                  <li><strong>v0.309:</strong> Aligns the live soil moisture tile with the other dashboard tiles by moving the moisture value to the left.</li>
-                  <li><strong>v0.310:</strong> Uses the pot label as the live soil moisture tile title for single-sensor tents.</li>
-                  <li><strong>v0.311:</strong> Restores the ESP soil sensor name below the raw value in the live soil moisture tile.</li>
-                  <li><strong>v0.312:</strong> Adds an admin-only Open button for each live soil moisture sensor that opens its configured HTTP address in a new browser tab.</li>
-                  <li><strong>v0.313:</strong> Shows each soil moisture sensor in its own dashboard card instead of stacking multiple sensors inside one card.</li>
-                  <li><strong>v0.319:</strong> Shows bad when a soil moisture sensor measurement is older than five minutes.</li>
-                  <li><strong>v0.320:</strong> Adds grouped daily Pushover warnings for valid soil moisture readings below 25% outside the drying phase.</li>
-                  <li><strong>v0.321:</strong> Adds a Setup toggle for low soil-moisture Pushover warnings and includes tent name, pot number and moisture value in each grouped alert entry.</li>
-                  <li><strong>v0.322:</strong> Adds multiple administrator accounts with per-user optional 2FA and automatic migration of the legacy single-admin configuration.</li>
-                  <li><strong>v0.323:</strong> Simplifies access setup so password and 2FA are managed only inside each administrator card and self-heals legacy admin migration when the admin list is opened.</li>
-                  <li><strong>v0.324:</strong> Fixes missing modular admin API routes and adds an active-administrator overview in Setup.</li>
-                  <li><strong>v0.325:</strong> Adds admin-only CSV import for the strain library with safe name-based merge/update behavior.</li>
-                  <li><strong>v0.326:</strong> Adds a global configurable high-temperature Pushover alarm for BME280 and DS18B20 sensors across all tents.</li>
-                  <li><strong>v0.327:</strong> Makes the high-temperature alarm use the selected Celsius/Fahrenheit display unit while comparing sensor values internally in Celsius.</li>
-                  <li><strong>v0.328:</strong> Adds Shelly Flood Gen4 status, battery and last-seen information from the tent /stats payload to the dashboard header.</li>
-                  <li><strong>v0.329:</strong> Adds a configurable grouped Pushover alarm for Shelly Flood Gen4 water events with persistent anti-spam rearming.</li>
-                  <li><strong>v0.330:</strong> Security hardening for authentication, sessions, sensitive URLs, project downloads, history API enforcement and Docker port binding.</li>
-                </ul>
-              </section>
-            </div>
+    release_cards = [html for title, html in card_records if str(title).strip().lower().startswith("v")]
+    recent_cards_html = "\n".join(release_cards[:6])
+    older_cards_html = "\n".join(release_cards[6:])
+
+    release_highlights_html = f"""
+            <section class="about-hero">
+              <div>
+                <div class="eyebrow">GrowTent Backend</div>
+                <h1>About</h1>
+                <p class="hero-text">Monitoring, automation and alerting for one or more grow tents.</p>
+              </div>
+              <div class="version-badge">
+                <span>Installed version</span>
+                <strong>{esc(APP_VERSION)}</strong>
+              </div>
+            </section>
+
+            <section class="about-section">
+              <div class="section-heading">
+                <div>
+                  <h2>At a glance</h2>
+                  <p>Current capabilities grouped by topic.</p>
+                </div>
+              </div>
+              <div class="summary-grid">
+                <article class="summary-card">
+                  <div class="summary-icon">🔐</div>
+                  <h3>Security & access</h3>
+                  <p>Multiple administrators, optional per-user 2FA, guest access controls, hardened sessions and protected administrative endpoints.</p>
+                </article>
+                <article class="summary-card">
+                  <div class="summary-icon">🚨</div>
+                  <h3>Monitoring & alerts</h3>
+                  <p>Pushover alerts for high temperature, low soil moisture and Shelly Flood water events with anti-spam state handling.</p>
+                </article>
+                <article class="summary-card">
+                  <div class="summary-icon">🌱</div>
+                  <h3>Sensors & irrigation</h3>
+                  <p>BME280, DS18B20, ESP8266 soil moisture sensors, Shelly Flood Gen4 and board-aware irrigation pump handling.</p>
+                </article>
+                <article class="summary-card">
+                  <div class="summary-icon">💾</div>
+                  <h3>Data & portability</h3>
+                  <p>Configuration backup/restore plus strain-library CSV import/export for transferring data between instances.</p>
+                </article>
+              </div>
+            </section>
+
+            <section class="about-section">
+              <div class="section-heading">
+                <div>
+                  <h2>Recent releases</h2>
+                  <p>The six newest releases are shown directly.</p>
+                </div>
+              </div>
+              <div class="release-grid">{recent_cards_html}</div>
+            </section>
+
+            <section class="about-section history-section">
+              <details>
+                <summary>
+                  <span>Older releases</span>
+                  <span class="history-hint">Show complete version history</span>
+                </summary>
+                <div class="older-grid">{older_cards_html}</div>
+              </details>
+            </section>
     """
+
 
     tent_links_html = ""
     try:
@@ -8014,21 +8003,53 @@ def changelog_page():
           body.embed .content {{ padding:.8rem; }}
           .navlink {{ display:block; padding:8px 10px; margin-bottom:8px; border-radius:8px; color:var(--text); text-decoration:none; }}
           .navlink.active {{ background:rgba(59,130,246,.2); }}
-          .download {{ display:inline-block; margin-bottom:12px; }}
-          .release-highlights {{ display:grid; gap:12px; margin-bottom:12px; }}
-          .release-highlights .muted {{ color:var(--muted); }}
-          .md-root {{ display:grid; gap:12px; }}
-          .entry-card {{ background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:12px; box-shadow:0 2px 10px rgba(0,0,0,.12); }}
-          .entry-card h2 {{ font-size:1.12rem; margin:.1rem 0 .5rem; color:#93c5fd; }}
-          .entry-card h3 {{ font-size:1rem; margin:.8rem 0 .25rem; }}
-          .entry-card p, .entry-card li {{ line-height:1.45; font-size:.95rem; }}
-          .entry-card ul {{ margin:.2rem 0 .8rem 1.1rem; padding:0; }}
+          .about-hero {{ display:flex; align-items:flex-start; justify-content:space-between; gap:20px; background:linear-gradient(135deg, color-mix(in srgb, var(--card) 92%, #2563eb 8%), var(--card)); border:1px solid var(--grid); border-radius:14px; padding:20px; margin-bottom:16px; box-shadow:0 2px 12px rgba(0,0,0,.14); }}
+          .about-hero h1 {{ margin:.15rem 0 .35rem; font-size:1.8rem; }}
+          .eyebrow {{ color:#60a5fa; text-transform:uppercase; letter-spacing:.08em; font-size:.75rem; font-weight:800; }}
+          .hero-text {{ margin:0; color:var(--muted); line-height:1.45; }}
+          .version-badge {{ min-width:140px; border:1px solid var(--grid); border-radius:12px; padding:10px 12px; background:rgba(15,23,42,.18); text-align:right; }}
+          .version-badge span {{ display:block; color:var(--muted); font-size:.75rem; margin-bottom:3px; }}
+          .version-badge strong {{ font-size:1.2rem; color:#93c5fd; }}
+          .about-section {{ margin-bottom:16px; }}
+          .section-heading {{ display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:8px; }}
+          .section-heading h2 {{ margin:0; font-size:1.18rem; }}
+          .section-heading p {{ margin:3px 0 0; color:var(--muted); font-size:.88rem; }}
+          .summary-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
+          .summary-card {{ background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:13px; box-shadow:0 2px 10px rgba(0,0,0,.1); }}
+          .summary-icon {{ font-size:1.2rem; margin-bottom:6px; }}
+          .summary-card h3 {{ margin:0 0 6px; font-size:.96rem; color:#93c5fd; }}
+          .summary-card p {{ margin:0; color:var(--muted); font-size:.86rem; line-height:1.4; }}
+          .release-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }}
+          .older-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding-top:10px; }}
+          .entry-card {{ background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:12px; box-shadow:0 2px 10px rgba(0,0,0,.1); }}
+          .entry-card h2 {{ font-size:1.02rem; margin:.05rem 0 .45rem; color:#93c5fd; }}
+          .entry-card h3 {{ font-size:.92rem; margin:.65rem 0 .2rem; color:#34d399; }}
+          .entry-card p, .entry-card li {{ line-height:1.4; font-size:.88rem; }}
+          .entry-card ul {{ margin:.15rem 0 .25rem 1.05rem; padding:0; }}
+          .entry-card li + li {{ margin-top:.2rem; }}
+          .history-section details {{ background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:0 12px 12px; }}
+          .history-section summary {{ cursor:pointer; list-style:none; display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 0 0; font-weight:800; }}
+          .history-section summary::-webkit-details-marker {{ display:none; }}
+          .history-section summary::after {{ content:'▾'; color:#93c5fd; transition:transform .15s ease; }}
+          .history-section details[open] summary::after {{ transform:rotate(180deg); }}
+          .history-hint {{ color:var(--muted); font-size:.8rem; font-weight:500; margin-left:auto; }}
+          .about-links {{ display:flex; justify-content:flex-end; margin-top:4px; }}
+          .about-link {{ color:#93c5fd; text-decoration:none; font-size:.9rem; font-weight:700; }}
+          .about-link:hover {{ text-decoration:underline; }}
           .section-question {{ color:#facc15; }}
           .section-answer {{ color:#22d3ee; }}
           .section-changes {{ color:#34d399; }}
           @media (max-width: 1024px) {{
             .layout {{ display:block; }}
             .sidebar {{ width:100%; border-right:none; border-bottom:1px solid var(--grid); }}
+            .summary-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+          }}
+          @media (max-width: 640px) {{
+            .content {{ padding:.8rem; }}
+            .about-hero {{ flex-direction:column; padding:14px; }}
+            .version-badge {{ text-align:left; min-width:0; width:100%; box-sizing:border-box; }}
+            .summary-grid, .release-grid, .older-grid {{ grid-template-columns:1fr; }}
+            .history-hint {{ display:none; }}
           }}
         </style>
       </head>
@@ -8047,10 +8068,10 @@ def changelog_page():
             <a class="navlink active" href="/app?page=changelog">About</a>
           </aside>
           <main class="content">
-            <h1>About</h1>
-            <a class="navlink active download" href="https://github.com/syschelle/growtent-backend" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
             {release_highlights_html}
-            <div class="md-root">{rendered_cards}</div>
+            <div class="about-links">
+              <a class="about-link" href="https://github.com/syschelle/growtent-backend" target="_blank" rel="noopener noreferrer">GitHub Repository ↗</a>
+            </div>
           </main>
         </div>
       </body>
