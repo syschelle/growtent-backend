@@ -111,6 +111,16 @@ def temperature_alert_config_save(payload: legacy.TemperatureAlertSettings):
     return legacy.set_temperature_alert_config(payload)
 
 
+@router.get('/config/flood-alert')
+def flood_alert_config_get():
+    return legacy.get_flood_alert_config()
+
+
+@router.post('/config/flood-alert')
+def flood_alert_config_save(payload: legacy.FloodAlertSettings):
+    return legacy.set_flood_alert_config(payload)
+
+
 @router.get('/config/air-sensor')
 def air_sensor_config_get():
     return legacy.get_air_sensor_config()

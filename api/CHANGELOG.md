@@ -2,6 +2,19 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.329
+
+### Shelly Flood Gen4 Pushover alarm
+- Adds a global Setup toggle for Shelly Flood Gen4 water alarms via Pushover.
+- Triggers when `sensors.flood.alarm=true` or `sensors.flood.status="alarm"` for a configured Flood sensor.
+- Sends one notification per tent for each continuous water-alarm episode and rearms only after the Flood returns to a non-alarm/dry state.
+- Persists the active alarm state in PostgreSQL so container restarts do not cause repeated alerts.
+- Groups simultaneous Flood alarms from multiple tents into a single Pushover message.
+- Includes the tent name and Flood battery percentage when available.
+- Does not send recovery notifications.
+- Adds the Flood alert setting to backup/restore schema version 11 while keeping older backups compatible.
+- Bumped the application version to `v0.329`.
+
 ## v0.328
 
 ### Shelly Flood Gen4 dashboard status

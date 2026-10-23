@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.328"
+APP_VERSION = "v0.329"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1274,6 +1274,28 @@ def init_db():
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (tent_id, sensor_key),
                     CHECK (sensor_key IN ('bme280', 'ds18b20'))
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS flood_alert_config (
+                    id INTEGER PRIMARY KEY,
+                    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CHECK (id = 1)
+                );
+                """
+            )
+            cur.execute(
+                "INSERT INTO flood_alert_config(id, enabled) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING"
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS flood_alert_state (
+                    tent_id INTEGER PRIMARY KEY REFERENCES tents(id) ON DELETE CASCADE,
+                    alert_active BOOLEAN NOT NULL DEFAULT FALSE,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
             )
@@ -2921,6 +2943,95 @@ def _send_grouped_temperature_alerts(alerts: list[dict], threshold_c: float, dis
     return True
 
 
+def _get_flood_alert_config() -> dict:
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT enabled FROM flood_alert_config WHERE id=1")
+                row = cur.fetchone()
+                if row:
+                    return {"enabled": bool(row[0])}
+    except Exception as exc:
+        LOGGER.warning("Could not load flood alert config: %s", exc)
+    return {"enabled": False}
+
+
+def _boolish(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _flood_alarm_state(payload: dict | None) -> dict:
+    data = payload or {}
+    configured = _boolish(data.get("sensors.flood.configured"))
+    status = str(data.get("sensors.flood.status") or "").strip().lower()
+    alarm = configured and (_boolish(data.get("sensors.flood.alarm")) or status == "alarm")
+    battery_raw = _to_float(data.get("sensors.flood.batteryPct"))
+    battery_pct = None
+    if battery_raw is not None and math.isfinite(battery_raw):
+        battery_pct = max(0, min(100, int(round(battery_raw))))
+    return {
+        "configured": configured,
+        "alarm": bool(alarm),
+        "status": status or None,
+        "battery_pct": battery_pct,
+        "last_seen": str(data.get("sensors.flood.lastSeen") or "").strip() or None,
+    }
+
+
+def _flood_alert_active_state(tent_id: int) -> bool:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT alert_active FROM flood_alert_state WHERE tent_id=%s", (int(tent_id),))
+            row = cur.fetchone()
+            return bool(row[0]) if row else False
+
+
+def _set_flood_alert_state(tent_id: int, active: bool) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO flood_alert_state(tent_id, alert_active, updated_at)
+                VALUES(%s, %s, NOW())
+                ON CONFLICT (tent_id)
+                DO UPDATE SET alert_active=EXCLUDED.alert_active, updated_at=NOW()
+                """,
+                (int(tent_id), bool(active)),
+            )
+
+
+def _flood_alert_candidate(payload: dict | None, was_active: bool) -> tuple[dict | None, bool]:
+    state = _flood_alarm_state(payload)
+    if state["alarm"]:
+        return (state if not was_active else None), False
+    return None, bool(was_active)
+
+
+def _mark_flood_alerts_active(alerts: list[dict]) -> None:
+    for alert in alerts:
+        _set_flood_alert_state(int(alert["tent_id"]), True)
+
+
+def _send_grouped_flood_alerts(alerts: list[dict]) -> bool:
+    if not alerts:
+        return False
+    lines: list[str] = []
+    for item in alerts:
+        label = str(item.get("tent_label") or f"Tent #{item['tent_id']}")
+        battery = item.get("battery_pct")
+        battery_text = f" – Batterie {int(battery)} %" if battery is not None else ""
+        lines.append(f"{label} – Flood: WASSER{battery_text}")
+    message = "Wasser erkannt:\n" + "\n".join(lines)
+    if not _send_pushover("CanopyOps: Wasser erkannt", message, priority=0):
+        return False
+    _mark_flood_alerts_active(alerts)
+    return True
+
+
 def poll_loop():
     loops = 0
     while True:
@@ -2938,6 +3049,8 @@ def poll_loop():
             temperature_alert_enabled = bool(temperature_alert_config.get("enabled", False))
             temperature_alert_threshold_c = float(temperature_alert_config.get("threshold_c", 30.0))
             temperature_alert_display_unit = _normalize_temperature_unit(temperature_alert_config.get("display_unit", "C"))
+            flood_alerts_to_send: list[dict] = []
+            flood_alert_enabled = bool(_get_flood_alert_config().get("enabled", False))
             with httpx.Client(timeout=5.0) as client:
                 for tent in tents:
                     try:
@@ -2982,6 +3095,19 @@ def poll_loop():
                             for item in temp_candidates:
                                 temperature_alerts_to_send.append({
                                     **item,
+                                    "tent_id": int(tent["id"]),
+                                    "tent_label": label,
+                                })
+
+                        # Shelly Flood Pushover: one notification per continuous alarm episode.
+                        if flood_alert_enabled:
+                            flood_was_active = _flood_alert_active_state(int(tent["id"]))
+                            flood_candidate, flood_reset = _flood_alert_candidate(payload, flood_was_active)
+                            if flood_reset:
+                                _set_flood_alert_state(int(tent["id"]), False)
+                            if flood_candidate:
+                                flood_alerts_to_send.append({
+                                    **flood_candidate,
                                     "tent_id": int(tent["id"]),
                                     "tent_label": label,
                                 })
@@ -3121,6 +3247,8 @@ def poll_loop():
                 _send_grouped_soil_moisture_alerts(soil_alerts_to_send, soil_alert_date)
             if temperature_alerts_to_send:
                 _send_grouped_temperature_alerts(temperature_alerts_to_send, temperature_alert_threshold_c, temperature_alert_display_unit)
+            if flood_alerts_to_send:
+                _send_grouped_flood_alerts(flood_alerts_to_send)
 
             loops += 1
             # Run retention cleanup regularly (roughly every 10 minutes at 10s poll interval).
@@ -3217,6 +3345,32 @@ def set_temperature_alert_config(payload: TemperatureAlertSettings):
             )
             cur.execute("UPDATE temperature_alert_state SET alert_active=FALSE, updated_at=NOW()")
     return {"enabled": bool(payload.enabled), "threshold_c": threshold_c, "display_unit": display_unit}
+
+
+class FloodAlertSettings(BaseModel):
+    enabled: bool = False
+
+
+@app.get("/config/flood-alert")
+def get_flood_alert_config():
+    return _get_flood_alert_config()
+
+
+@app.post("/config/flood-alert")
+def set_flood_alert_config(payload: FloodAlertSettings):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO flood_alert_config(id, enabled, updated_at)
+                VALUES(1, %s, NOW())
+                ON CONFLICT (id)
+                DO UPDATE SET enabled=EXCLUDED.enabled, updated_at=NOW()
+                """,
+                (bool(payload.enabled),),
+            )
+            cur.execute("UPDATE flood_alert_state SET alert_active=FALSE, updated_at=NOW()")
+    return {"enabled": bool(payload.enabled)}
 
 
 @app.get("/config/air-sensor")
@@ -4227,6 +4381,9 @@ def export_config_backup():
             cur.execute("SELECT enabled, threshold_c, display_unit FROM temperature_alert_config WHERE id=1")
             temperature_alert_row = cur.fetchone()
 
+            cur.execute("SELECT enabled FROM flood_alert_config WHERE id=1")
+            flood_alert_row = cur.fetchone()
+
     tents = []
     for r in tent_rows:
         tents.append(
@@ -4285,7 +4442,7 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 10,
+        "schema_version": 11,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -4296,6 +4453,9 @@ def export_config_backup():
                 "enabled": bool(temperature_alert_row[0]) if temperature_alert_row else False,
                 "threshold_c": float(temperature_alert_row[1]) if temperature_alert_row else 30.0,
                 "display_unit": _normalize_temperature_unit(temperature_alert_row[2]) if temperature_alert_row else "C",
+            },
+            "flood_alert": {
+                "enabled": bool(flood_alert_row[0]) if flood_alert_row else False,
             },
             "strains": strains,
         },
@@ -4319,6 +4479,7 @@ def import_config_backup(payload: dict):
     auth = data.get("auth")
     admins = data.get("admins", None)
     temperature_alert = data.get("temperature_alert", None)
+    flood_alert = data.get("flood_alert", None)
     strains = data.get("strains", [])
     if not isinstance(tents, list):
         raise HTTPException(status_code=400, detail="invalid tents section")
@@ -4326,6 +4487,8 @@ def import_config_backup(payload: dict):
         raise HTTPException(status_code=400, detail="invalid admins section")
     if temperature_alert is not None and not isinstance(temperature_alert, dict):
         raise HTTPException(status_code=400, detail="invalid temperature_alert section")
+    if flood_alert is not None and not isinstance(flood_alert, dict):
+        raise HTTPException(status_code=400, detail="invalid flood_alert section")
     if not isinstance(strains, list):
         raise HTTPException(status_code=400, detail="invalid strains section")
 
@@ -4419,6 +4582,18 @@ def import_config_backup(payload: dict):
                     (bool(temperature_alert.get("enabled", False)), threshold_c, display_unit),
                 )
                 cur.execute("UPDATE temperature_alert_state SET alert_active=FALSE, updated_at=NOW()")
+
+            if flood_alert is not None:
+                cur.execute(
+                    """
+                    INSERT INTO flood_alert_config(id, enabled, updated_at)
+                    VALUES(1, %s, NOW())
+                    ON CONFLICT (id)
+                    DO UPDATE SET enabled=EXCLUDED.enabled, updated_at=NOW()
+                    """,
+                    (bool(flood_alert.get("enabled", False)),),
+                )
+                cur.execute("UPDATE flood_alert_state SET alert_active=FALSE, updated_at=NOW()")
 
             # v0.322+: restore multiple administrators. Older backups without an
             # admins section are migrated from their legacy auth record below.
@@ -5871,11 +6046,16 @@ def setup_page(request: Request):
               <div id=\"temperatureAlertThresholdLabel\" style=\"margin-bottom:6px;\">Temperature threshold</div>
               <input id=\"temperatureAlertThreshold\" type=\"number\" min=\"0\" max=\"80\" step=\"0.1\" value=\"30.0\" style=\"padding:8px 10px; border-radius:8px; width:120px; margin-bottom:6px;\" />
               <div id=\"temperatureAlertHint\" class=\"muted\" style=\"margin-bottom:10px;\">Monitors BME280 and DS18B20 in all tents; one alert per over-threshold episode.</div>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:6px;\">
+                <input type=\"checkbox\" id=\"floodAlertEnabled\" />
+                <span id=\"floodAlertEnabledLabel\">Flood water warning</span>
+              </label>
+              <div id=\"floodAlertHint\" class=\"muted\" style=\"margin-bottom:10px;\">One alert per continuous Flood alarm episode; rearms after the sensor reports dry again.</div>
               <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;\">
                 <button type=\"button\" id=\"savePushoverBtn\">Save Pushover</button>
               </div>
               <div id=\"pushoverMsg\" style=\"margin-top:8px;\"></div>
-              <div class=\"muted\">Status messages for online/offline transitions and optional low soil moisture warnings.</div>
+              <div class=\"muted\">Status messages for online/offline transitions and optional soil moisture, temperature and Flood warnings.</div>
             </div>
 
             <div class=\"card\" id=\"airSensorCard\" style=\"margin-bottom:12px; max-width:540px;\">
@@ -5998,6 +6178,7 @@ def setup_page(request: Request):
           const soilMoistureAlertEnabledEl = document.getElementById('soilMoistureAlertEnabled');
           const temperatureAlertEnabledEl = document.getElementById('temperatureAlertEnabled');
           const temperatureAlertThresholdEl = document.getElementById('temperatureAlertThreshold');
+          const floodAlertEnabledEl = document.getElementById('floodAlertEnabled');
           const airSensorEnabledEl = document.getElementById('airSensorEnabled');
           const airSensorHostEl = document.getElementById('airSensorHost');
           const airSensorMsgEl = document.getElementById('airSensorMsg');
@@ -6055,6 +6236,8 @@ def setup_page(request: Request):
               temperatureAlertEnabled: 'High temperature warning',
               temperatureAlertThreshold: 'Temperature threshold',
               temperatureAlertHint: 'Monitors BME280 and DS18B20 in all tents; one alert per over-threshold episode.',
+              floodAlertEnabled: 'Flood water warning',
+              floodAlertHint: 'One alert per continuous Flood alarm episode; rearms after the sensor reports dry again.',
               gromateApiPassword: 'API-History-Password',
               twofa: 'Enable 2FA (TOTP)',
               regenRecovery: 'Regenerate recovery codes',
@@ -6159,6 +6342,8 @@ def setup_page(request: Request):
               temperatureAlertEnabled: 'Temperaturalarm',
               temperatureAlertThreshold: 'Temperaturschwelle',
               temperatureAlertHint: 'Überwacht BME280 und DS18B20 in allen Zelten; eine Meldung pro Überschreitungsphase.',
+              floodAlertEnabled: 'Wasseralarm (Flood)',
+              floodAlertHint: 'Eine Meldung pro zusammenhängendem Flood-Alarm; wird nach trockenem Status wieder scharf.',
               gromateApiPassword: 'Passwort für Device-History-API',
               twofa: '2FA (TOTP) aktivieren',
               regenRecovery: 'Recovery-Codes neu erzeugen',
@@ -6284,6 +6469,8 @@ def setup_page(request: Request):
             set('temperatureAlertEnabledLabel', tSetup('temperatureAlertEnabled'));
             set('temperatureAlertThresholdLabel', tSetup('temperatureAlertThreshold'));
             set('temperatureAlertHint', tSetup('temperatureAlertHint'));
+            set('floodAlertEnabledLabel', tSetup('floodAlertEnabled'));
+            set('floodAlertHint', tSetup('floodAlertHint'));
             updateTemperatureAlertThresholdUi(false);
             set('airSensorTitle', tSetup('airSensorTitle'));
             set('airSensorEnabledLabel', tSetup('airSensorEnabled'));
@@ -7137,11 +7324,37 @@ def setup_page(request: Request):
             return { ok: res.ok, detail: body?.detail || '' };
           }
 
+          async function loadFloodAlertConfigUi(){
+            if (!floodAlertEnabledEl) return;
+            try {
+              const res = await fetch('/config/flood-alert', { cache: 'no-store' });
+              const cfg = await res.json().catch(() => ({}));
+              if (res.ok) floodAlertEnabledEl.checked = !!cfg.enabled;
+            } catch {}
+          }
+
+          async function saveFloodAlertConfig(){
+            if (!floodAlertEnabledEl) return { ok: true };
+            const res = await fetch('/config/flood-alert', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enabled: !!floodAlertEnabledEl.checked }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (res.ok) floodAlertEnabledEl.checked = !!body.enabled;
+            return { ok: res.ok, detail: body?.detail || '' };
+          }
+
           document.getElementById('savePushoverBtn')?.addEventListener('click', async () => {
             const msgEl = document.getElementById('pushoverMsg');
             const tempResult = await saveTemperatureAlertConfig();
             if (!tempResult.ok) {
               if (msgEl) msgEl.textContent = tempResult.detail || ((langSel?.value === 'de') ? 'Temperaturalarm konnte nicht gespeichert werden.' : 'Temperature alert could not be saved.');
+              return;
+            }
+            const floodResult = await saveFloodAlertConfig();
+            if (!floodResult.ok) {
+              if (msgEl) msgEl.textContent = floodResult.detail || ((langSel?.value === 'de') ? 'Flood-Alarm konnte nicht gespeichert werden.' : 'Flood alert could not be saved.');
               return;
             }
             document.getElementById('saveAuthBtn')?.click();
@@ -7449,6 +7662,7 @@ def setup_page(request: Request):
             loadAuthConfigUi();
             loadAdminUsers();
             loadTemperatureAlertConfigUi();
+            loadFloodAlertConfigUi();
             loadAirSensorConfigUi();
             loadGuestUsers();
           })();
@@ -7650,6 +7864,7 @@ def changelog_page():
                   <li><strong>v0.326:</strong> Adds a global configurable high-temperature Pushover alarm for BME280 and DS18B20 sensors across all tents.</li>
                   <li><strong>v0.327:</strong> Makes the high-temperature alarm use the selected Celsius/Fahrenheit display unit while comparing sensor values internally in Celsius.</li>
                   <li><strong>v0.328:</strong> Adds Shelly Flood Gen4 status, battery and last-seen information from the tent /stats payload to the dashboard header.</li>
+                  <li><strong>v0.329:</strong> Adds a configurable grouped Pushover alarm for Shelly Flood Gen4 water events with persistent anti-spam rearming.</li>
                 </ul>
               </section>
             </div>
