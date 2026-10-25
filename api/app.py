@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.333"
+APP_VERSION = "v0.334"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5170,7 +5170,7 @@ def tent_preview(
 
 @app.get("/tents/{tent_id}/shelly/last-switches")
 def shelly_last_switches(tent_id: int, max_rows: int = 5000):
-    keys = ["main", "light", "humidifier", "heater", "fan", "exhaust"]
+    keys = ["main", "light", "humidifier", "heater", "heatmat", "fan", "exhaust"]
 
     def to_bool(v):
         if isinstance(v, bool):
@@ -5859,7 +5859,7 @@ def shelly_direct_all_state(tent_id: int):
         raise HTTPException(status_code=404, detail="tent not found")
 
     latest = get_latest_payload_for_tent(tent_id) or {}
-    base = ["main", "light", "humidifier", "heater", "fan", "exhaust"]
+    base = ["main", "light", "humidifier", "heater", "heatmat", "fan", "exhaust"]
     dynamic = []
     for k in (latest or {}).keys():
         m = re.match(r"^settings[.]shelly[.]([^.]+)[.]ip$", str(k))
@@ -9642,6 +9642,7 @@ def dashboard_page(request: Request):
               shellyLight: 'Light',
               shellyHumidifier: 'Humidifier',
               shellyHeater: 'Heater',
+              shellyHeatmat: 'Heat mat',
               shellyFan: 'Fan',
               shellyExhaust: 'Exhaust',
               growPhase: 'Grow Phase',
@@ -9810,6 +9811,7 @@ def dashboard_page(request: Request):
               shellyLight: 'Licht',
               shellyHumidifier: 'Luftbefeuchter',
               shellyHeater: 'Heizung',
+              shellyHeatmat: 'Heizmatte',
               shellyFan: 'Lüfter',
               shellyExhaust: 'Abluft',
               growPhase: 'Growphase',
@@ -10668,6 +10670,7 @@ def dashboard_page(request: Request):
               case 'light': return '💡';
               case 'humidifier': return '💧';
               case 'heater': return '🔥';
+              case 'heatmat': return '♨️';
               case 'fan': return '🌀';
               case 'exhaust': return '🌬️';
               default: return '🔘';
@@ -10680,6 +10683,7 @@ def dashboard_page(request: Request):
               light: tr('shellyLight'),
               humidifier: tr('shellyHumidifier'),
               heater: tr('shellyHeater'),
+              heatmat: tr('shellyHeatmat'),
               fan: tr('shellyFan'),
               exhaust: tr('shellyExhaust')
             };
@@ -11497,7 +11501,7 @@ def dashboard_page(request: Request):
               return `http://${raw}`;
             };
 
-            const base = ['main', 'light', 'humidifier', 'heater', 'fan', 'exhaust'];
+            const base = ['main', 'light', 'humidifier', 'heater', 'heatmat', 'fan', 'exhaust'];
             const dynamic = Object.keys(d || {})
               .map(k => {
                 const m = /^settings[.]shelly[.]([^.]+)[.]ip$/.exec(k);

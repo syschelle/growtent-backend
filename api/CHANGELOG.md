@@ -2,6 +2,18 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.334
+
+- Added first-class support for the Shelly heat-mat device exposed through `settings.shelly.heatmat.*` and `cur.shelly.heatmat.*`.
+- Shows the heat mat in Shelly Control with state, power, energy, cost, IP address and Shelly generation.
+- Added localized device names (`Heat mat` / `Heizmatte`) and a dedicated heat-mat icon.
+- Added heat-mat activity/last-change tracking to the Shelly history scan.
+- Added the heat mat to the direct Shelly state refresh so live power/state values are handled consistently with the other configured Shellys.
+- Keeps the heat mat monitoring-only: no toggle button or backend toggle action is enabled for this device.
+- The existing controller-side `/api/shelly/reset-energy` action remains the source of truth for resetting all configured Shelly energy counters, including the heat mat when supported by the controller firmware.
+- Added regression tests for the heat-mat integration.
+- Bumped the application version to `v0.334`.
+
 ## v0.333
 
 ### Shelly Flood low-battery warning
