@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.332"
+APP_VERSION = "v0.333"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -118,6 +118,8 @@ PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_DEVICE = (os.getenv("PUSHOVER_DEVICE") or "").strip()
 SOIL_MOISTURE_ALERT_THRESHOLD_PCT = float(os.getenv("SOIL_MOISTURE_ALERT_THRESHOLD_PCT", "25"))
 SOIL_MOISTURE_ALERT_MAX_AGE_SECONDS = int(os.getenv("SOIL_MOISTURE_ALERT_MAX_AGE_SECONDS", "300"))
+FLOOD_BATTERY_ALERT_THRESHOLD_PCT = 7
+FLOOD_BATTERY_ALERT_COOLDOWN = timedelta(days=7)
 POLL_NOTIFY_STATE: dict[int, dict] = {}
 WATERING_ACTIVE_BY_TENT: dict[int, bool] = {}
 SHELLY_SCHEDULE_CACHE_SECONDS = int(os.getenv("SHELLY_SCHEDULE_CACHE_SECONDS", "1800"))
@@ -1377,6 +1379,7 @@ def init_db():
                 );
                 """
             )
+            cur.execute("ALTER TABLE flood_alert_state ADD COLUMN IF NOT EXISTS battery_alert_last_sent TIMESTAMPTZ;")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS app_auth_config (
@@ -3089,6 +3092,67 @@ def _flood_alert_candidate(payload: dict | None, was_active: bool) -> tuple[dict
     return None, bool(was_active)
 
 
+def _flood_battery_last_sent(tent_id: int):
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT battery_alert_last_sent FROM flood_alert_state WHERE tent_id=%s", (int(tent_id),))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+
+def _set_flood_battery_last_sent(tent_id: int, sent_at: datetime | None = None) -> None:
+    timestamp = sent_at or datetime.now(timezone.utc)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO flood_alert_state(tent_id, alert_active, battery_alert_last_sent, updated_at)
+                VALUES(%s, FALSE, %s, NOW())
+                ON CONFLICT (tent_id)
+                DO UPDATE SET battery_alert_last_sent=EXCLUDED.battery_alert_last_sent, updated_at=NOW()
+                """,
+                (int(tent_id), timestamp),
+            )
+
+
+def _flood_battery_alert_candidate(payload: dict | None, last_sent_at, now: datetime | None = None) -> dict | None:
+    state = _flood_alarm_state(payload)
+    battery = state.get("battery_pct")
+    if not state.get("configured") or battery is None or int(battery) > FLOOD_BATTERY_ALERT_THRESHOLD_PCT:
+        return None
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if last_sent_at is not None:
+        previous = last_sent_at
+        if getattr(previous, "tzinfo", None) is None:
+            previous = previous.replace(tzinfo=timezone.utc)
+        if current - previous < FLOOD_BATTERY_ALERT_COOLDOWN:
+            return None
+    return state
+
+
+def _mark_flood_battery_alerts_sent(alerts: list[dict], sent_at: datetime | None = None) -> None:
+    timestamp = sent_at or datetime.now(timezone.utc)
+    for alert in alerts:
+        _set_flood_battery_last_sent(int(alert["tent_id"]), timestamp)
+
+
+def _send_grouped_flood_battery_alerts(alerts: list[dict]) -> bool:
+    if not alerts:
+        return False
+    lines: list[str] = []
+    for item in alerts:
+        label = str(item.get("tent_label") or f"Tent #{item['tent_id']}")
+        battery = int(item.get("battery_pct"))
+        lines.append(f"{label} – Flood: Batterie {battery} %")
+    message = f"Flood-Batterie bei {FLOOD_BATTERY_ALERT_THRESHOLD_PCT} % oder weniger:\n" + "\n".join(lines)
+    if not _send_pushover("CanopyOps: Flood-Batterie niedrig", message, priority=0):
+        return False
+    _mark_flood_battery_alerts_sent(alerts)
+    return True
+
+
 def _mark_flood_alerts_active(alerts: list[dict]) -> None:
     for alert in alerts:
         _set_flood_alert_state(int(alert["tent_id"]), True)
@@ -3128,6 +3192,7 @@ def poll_loop():
             temperature_alert_threshold_c = float(temperature_alert_config.get("threshold_c", 30.0))
             temperature_alert_display_unit = _normalize_temperature_unit(temperature_alert_config.get("display_unit", "C"))
             flood_alerts_to_send: list[dict] = []
+            flood_battery_alerts_to_send: list[dict] = []
             flood_alert_enabled = bool(_get_flood_alert_config().get("enabled", False))
             with httpx.Client(timeout=5.0) as client:
                 for tent in tents:
@@ -3186,6 +3251,15 @@ def poll_loop():
                             if flood_candidate:
                                 flood_alerts_to_send.append({
                                     **flood_candidate,
+                                    "tent_id": int(tent["id"]),
+                                    "tent_label": label,
+                                })
+
+                            battery_last_sent = _flood_battery_last_sent(int(tent["id"]))
+                            battery_candidate = _flood_battery_alert_candidate(payload, battery_last_sent)
+                            if battery_candidate:
+                                flood_battery_alerts_to_send.append({
+                                    **battery_candidate,
                                     "tent_id": int(tent["id"]),
                                     "tent_label": label,
                                 })
@@ -3327,6 +3401,8 @@ def poll_loop():
                 _send_grouped_temperature_alerts(temperature_alerts_to_send, temperature_alert_threshold_c, temperature_alert_display_unit)
             if flood_alerts_to_send:
                 _send_grouped_flood_alerts(flood_alerts_to_send)
+            if flood_battery_alerts_to_send:
+                _send_grouped_flood_battery_alerts(flood_battery_alerts_to_send)
 
             loops += 1
             # Run retention cleanup regularly (roughly every 10 minutes at 10s poll interval).
@@ -8934,10 +9010,12 @@ def dashboard_page(request: Request):
           .flood-status { display:none; flex-direction:column; align-items:flex-start; justify-content:center; padding:4px 8px; border-radius:8px; border:1px solid var(--grid); background:rgba(148,163,184,.10); line-height:1.15; min-width:0; }
           .flood-status.ok { border-color:rgba(34,197,94,.45); background:rgba(34,197,94,.12); }
           .flood-status.alarm { border-color:rgba(239,68,68,.58); background:rgba(239,68,68,.15); }
+          .flood-status.battery-low { border-color:rgba(234,179,8,.65); background:rgba(234,179,8,.20); }
           .flood-status.unknown { border-color:rgba(148,163,184,.40); background:rgba(148,163,184,.10); }
           .flood-status-main { font-size:.78rem; font-weight:800; white-space:nowrap; }
           .flood-status.ok .flood-status-main { color:#22c55e; }
           .flood-status.alarm .flood-status-main { color:#ef4444; }
+          .flood-status.battery-low .flood-status-main { color:#eab308; }
           .flood-status-meta { margin-top:2px; font-size:.70rem; color:var(--small); white-space:nowrap; }
           .stream-open-btn:hover { filter:brightness(1.06); box-shadow:0 4px 14px rgba(2,6,23,.28); }
           .stream-open-btn:active { transform:translateY(1px) scale(.99); }
@@ -10177,24 +10255,25 @@ def dashboard_page(request: Request):
             }
             const status = String(payload?.['sensors.flood.status'] || '').trim().toLowerCase();
             const alarm = floodBool(payload?.['sensors.flood.alarm']) || status === 'alarm';
+            const batteryRaw = payload?.['sensors.flood.batteryPct'];
+            const battery = (batteryRaw !== null && batteryRaw !== undefined && batteryRaw !== '') ? Number(batteryRaw) : NaN;
+            const batteryLow = Number.isFinite(battery) && battery <= 7;
             let state = 'unknown';
             let label = tr('floodUnknown');
             if (alarm) {
               state = 'alarm';
               label = `⚠ ${tr('floodWater')}`;
             } else if (status === 'ok') {
-              state = 'ok';
+              state = batteryLow ? 'battery-low' : 'ok';
               label = `✓ ${tr('floodDry')}`;
+            } else if (batteryLow) {
+              state = 'battery-low';
             }
-            widget.classList.remove('ok', 'alarm', 'unknown');
+            widget.classList.remove('ok', 'alarm', 'battery-low', 'unknown');
             widget.classList.add(state);
             main.textContent = label;
             const parts = [];
-            const batteryRaw = payload?.['sensors.flood.batteryPct'];
-            if (batteryRaw !== null && batteryRaw !== undefined && batteryRaw !== '') {
-              const battery = Number(batteryRaw);
-              if (Number.isFinite(battery)) parts.push(`${tr('floodBattery')} ${Math.round(battery)} %`);
-            }
+            if (Number.isFinite(battery)) parts.push(`${tr('floodBattery')} ${Math.round(battery)} %`);
             const lastSeen = formatFloodLastSeen(payload?.['sensors.flood.lastSeen']);
             if (lastSeen) parts.push(`${tr('floodLastSeen')} ${lastSeen}`);
             meta.textContent = parts.join(' · ');

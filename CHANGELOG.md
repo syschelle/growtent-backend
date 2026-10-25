@@ -2,6 +2,17 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.333
+
+### Shelly Flood low-battery warning
+- Adds automatic Shelly Flood Gen4 battery monitoring whenever the existing Flood Pushover warning is enabled.
+- Sends a grouped Pushover warning when a configured Flood sensor reports 7% battery or less.
+- Limits low-battery warnings to at most once per tent/Flood sensor every seven days and persists the last notification time in PostgreSQL.
+- Keeps the seven-day cooldown across backend/container restarts.
+- Highlights the Flood status tile in yellow at 7% battery or less, while an active water alarm continues to take red priority.
+- Adds no additional Setup option; the existing Flood warning switch controls both water and low-battery notifications.
+- Bumped the application version to `v0.333`.
+
 ## v0.332
 
 ### About page release ordering and layout fix
