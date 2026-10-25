@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.334"
+APP_VERSION = "v0.335"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5337,6 +5337,7 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "mainW": d.get("cur.shelly.main.Watt"),
                 "lightW": d.get("cur.shelly.light.Watt"),
                 "humidifierW": d.get("cur.shelly.humidifier.Watt") if d.get("cur.shelly.humidifier.Watt") is not None else d.get("cur.shelly.hum.Watt"),
+                "heatmatW": d.get("cur.shelly.heatmat.Watt") if d.get("cur.shelly.heatmat.Watt") is not None else d.get("shelly.heatmat.watt"),
                 "exhaustW": d.get("cur.shelly.exhaust.Watt") if d.get("cur.shelly.exhaust.Watt") is not None else d.get("shelly.exhaust.watt"),
                 "mainWh": d.get("cur.shelly.main.Wh"),
                 "mainCost": d.get("cur.shelly.main.Cost"),
@@ -9428,6 +9429,12 @@ def dashboard_page(request: Request):
           <div id=\"historyOverlayHumidifierW\" class=\"history-overlay\"></div>
         </div>
 
+        <div class="card history-card" id="heatmatWCard" style="display:none;">
+          <div class="label" id="lblHeatmatWHistory">Heat mat consumption history</div>
+          <canvas id="heatmatWChart"></canvas>
+          <div id="historyOverlayHeatmatW" class="history-overlay"></div>
+        </div>
+
         <div class="card history-card" id="exhaustWCard" style="display:none;">
           <div class="label" id="lblExhaustWHistory">Exhaust history</div>
           <canvas id="exhaustWChart"></canvas>
@@ -9581,6 +9588,8 @@ def dashboard_page(request: Request):
               lightConsumptionHistory: 'Light consumption history',
               humidifierConsumption: 'Humidifier consumption',
               humidifierConsumptionHistory: 'Humidifier consumption history',
+              heatmatConsumption: 'Heat mat',
+              heatmatConsumptionHistory: 'Heat mat consumption history',
               exhaustHistory: 'Exhaust history',
               exhaustConsumption: 'Exhaust',
               heapHistory: 'ESP Heap history',
@@ -9750,6 +9759,8 @@ def dashboard_page(request: Request):
               lightConsumptionHistory: 'Lichtverbrauchsverlauf',
               humidifierConsumption: 'Luftbefeuchterverbrauch',
               humidifierConsumptionHistory: 'Luftbefeuchterverbrauchsverlauf',
+              heatmatConsumption: 'Heizmatte',
+              heatmatConsumptionHistory: 'Heizmattenverbrauchsverlauf',
               exhaustHistory: 'Abluftverlauf',
               exhaustConsumption: 'Abluft',
               heapHistory: 'ESP-Heap Verlauf',
@@ -10023,6 +10034,7 @@ def dashboard_page(request: Request):
             txt('lblMainWHistory', tr('totalConsumptionHistory'));
             txt('lblLightWHistory', tr('lightConsumptionHistory'));
             txt('lblHumidifierWHistory', tr('humidifierConsumptionHistory'));
+            txt('lblHeatmatWHistory', tr('heatmatConsumptionHistory'));
             txt('lblExhaustWHistory', tr('exhaustHistory'));
             txt('lblSoilMoistureHistory', tr('soilMoistureHistory'));
             txt('lblHeapHistoryText', tr('heapHistory'));
@@ -10354,7 +10366,7 @@ def dashboard_page(request: Request):
             const ids = [
               'historyOverlayTemp', 'historyOverlayHum', 'historyOverlayVpd',
               'historyOverlaySoilMoisture', 'historyOverlayAlpha', 'historyOverlayExtTemp', 'historyOverlayMainW',
-              'historyOverlayLightW', 'historyOverlayHumidifierW', 'historyOverlayExhaustW'
+              'historyOverlayLightW', 'historyOverlayHumidifierW', 'historyOverlayHeatmatW', 'historyOverlayExhaustW'
             ];
             ids.forEach((id) => {
               const el = document.getElementById(id);
@@ -10428,6 +10440,30 @@ def dashboard_page(request: Request):
 
           function hasTextValue(value){
             return String(value ?? '').trim().length > 0;
+          }
+
+          function isHeatmatDefined(payload = {}){
+            if (!payload || typeof payload !== 'object') return false;
+            if (hasTextValue(payload['settings.shelly.heatmat.ip'])) return true;
+            if (payload['settings.shelly.heatmat.enabled'] === true) return true;
+            if (payload['cur.shelly.heatmat.isOn'] !== undefined) return true;
+            return firstNum(payload, ['cur.shelly.heatmat.Watt', 'cur.shelly.heatmat.watt', 'shelly.heatmat.watt']) !== null;
+          }
+
+          function setHeatmatHistoryVisible(visible){
+            const card = document.getElementById('heatmatWCard');
+            if (!card) return;
+            const show = !!visible;
+            card.style.display = show ? '' : 'none';
+            if (!show && heatmatWChart) {
+              try { heatmatWChart.destroy(); } catch {}
+              heatmatWChart = null;
+            }
+          }
+
+          function isHeatmatHistoryVisible(){
+            const card = document.getElementById('heatmatWCard');
+            return !!card && card.style.display !== 'none';
           }
 
           function isExhaustDefined(payload = {}){
@@ -11594,6 +11630,7 @@ def dashboard_page(request: Request):
           let mainWChart;
           let lightWChart;
           let humidifierWChart;
+          let heatmatWChart;
           let exhaustWChart;
           let heapChart;
           let previewTimer = null;
@@ -11604,6 +11641,7 @@ def dashboard_page(request: Request):
           let lastGoodLatestPayload = null;
           let lastGoodCapturedAt = null;
           let shellyDirectFallbackUsed = false;
+          let heatmatHistoryConfigured = false;
           let exhaustHistoryConfigured = false;
 
           function buildSingleChart(canvasId, labels, datasetLabel, values, color, unitLabel, lineTension = 0.25){
@@ -11888,7 +11926,7 @@ def dashboard_page(request: Request):
             };
           }
 
-          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries = []){
+          function buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, heatmatW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries = []){
             if (typeof Chart === 'undefined') {
               txt('status', currentLang === 'de' ? 'Charts konnten nicht geladen werden (Chart.js fehlt).' : 'Charts could not be loaded (Chart.js missing).');
               return;
@@ -11911,6 +11949,7 @@ def dashboard_page(request: Request):
             if (mainWChart) mainWChart.destroy();
             if (lightWChart) lightWChart.destroy();
             if (humidifierWChart) humidifierWChart.destroy();
+            if (heatmatWChart) heatmatWChart.destroy();
             if (exhaustWChart) exhaustWChart.destroy();
             if (alphaChart) alphaChart.destroy();
             if (heapChart) heapChart.destroy();
@@ -12056,6 +12095,9 @@ def dashboard_page(request: Request):
             mainWChart = buildSingleChart('mainWChart', labels, `${tr('totalConsumption')} W`, mainW, '#ef4444', 'W', 0);
             lightWChart = buildSingleChart('lightWChart', labels, `${tr('lightConsumption')} W`, lightW, '#eab308', 'W', 0);
             humidifierWChart = buildSingleChart('humidifierWChart', labels, `${tr('humidifierConsumption')} W`, humidifierW, '#3b82f6', 'W', 0);
+            heatmatWChart = isHeatmatHistoryVisible()
+              ? buildSingleChart('heatmatWChart', labels, `${tr('heatmatConsumption')} W`, heatmatW, '#f97316', 'W', 0)
+              : null;
             exhaustWChart = isExhaustHistoryVisible()
               ? buildSingleChart('exhaustWChart', labels, `${tr('exhaustConsumption')} W`, exhaustW, '#14b8a6', 'W', 0)
               : null;
@@ -12157,6 +12199,8 @@ def dashboard_page(request: Request):
               // Keep existing values from /latest once.
             }
 
+            heatmatHistoryConfigured = isHeatmatDefined(d);
+            setHeatmatHistoryVisible(heatmatHistoryConfigured);
             exhaustHistoryConfigured = isExhaustDefined(d);
             setExhaustHistoryVisible(exhaustHistoryConfigured);
 
@@ -12638,6 +12682,12 @@ def dashboard_page(request: Request):
               const w = Number(p.humidifierW);
               return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
             });
+            const heatmatW = points.map(p => {
+              const w = Number(p.heatmatW);
+              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
+            });
+            const heatmatHasHistoryValues = heatmatW.some((value) => Number.isFinite(Number(value)));
+            setHeatmatHistoryVisible(heatmatHistoryConfigured || heatmatHasHistoryValues);
             const exhaustW = points.map(p => {
               const w = Number(p.exhaustW);
               return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
@@ -12668,7 +12718,7 @@ def dashboard_page(request: Request):
               const n = Number(p.sysHeapSize);
               return Number.isFinite(n) ? Math.round(n) : null;
             });
-            buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries);
+            buildCharts(labels, temp, hum, vpd, extTemp, mainW, lightW, humidifierW, heatmatW, exhaustW, alphaTemp, alphaHum, tempRawSeries, humRawSeries, heapFreeSeries, heapMinSeries, heapLargestSeries, heapSizeSeries, soilSeries);
           }
 
           async function loadTentNav(){

@@ -2,6 +2,17 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.335
+
+### Shelly heat-mat consumption history
+- Added a dedicated heat-mat power history chart to the tent history view.
+- Places the heat-mat history directly above the exhaust history.
+- Uses `cur.shelly.heatmat.Watt` from stored `/stats` snapshots.
+- Shows the chart only when a heat mat is configured or historical heat-mat values are available.
+- Keeps the heat mat monitoring-only; no switching controls were added.
+- Added regression tests for history payload, placement, visibility and localization.
+- Bumped the application version to `v0.335`.
+
 ## v0.334
 
 - Added first-class support for the Shelly heat-mat device exposed through `settings.shelly.heatmat.*` and `cur.shelly.heatmat.*`.

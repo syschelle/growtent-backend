@@ -21,3 +21,16 @@ def test_heatmat_has_localized_name_and_icon():
     assert "shellyHeatmat: 'Heizmatte'" in text
     assert "case 'heatmat': return '♨️';" in text
     assert "heatmat: tr('shellyHeatmat')" in text
+
+
+def test_heatmat_has_consumption_history_above_exhaust():
+    text = _app_text()
+    assert '"heatmatW": d.get("cur.shelly.heatmat.Watt")' in text
+    assert 'id="heatmatWCard"' in text
+    assert 'id="heatmatWChart"' in text
+    assert 'historyOverlayHeatmatW' in text
+    assert text.index('id="heatmatWCard"') < text.index('id="exhaustWCard"')
+    assert "heatmatConsumptionHistory: 'Heat mat consumption history'" in text
+    assert "heatmatConsumptionHistory: 'Heizmattenverbrauchsverlauf'" in text
+    assert 'setHeatmatHistoryVisible(heatmatHistoryConfigured || heatmatHasHistoryValues);' in text
+    assert "buildSingleChart('heatmatWChart'" in text
