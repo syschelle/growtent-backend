@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.336
+
+### Hide disabled air sensor during dashboard connection failures
+- Fixed the header air-sensor widget appearing with empty values when the `/air-sensor/current` request failed.
+- Removed the fallback that incorrectly treated a failed request as an enabled/configured air sensor.
+- The air-sensor widget now stays hidden when the sensor is disabled, when its configuration cannot be confirmed, or when the backend request itself fails.
+- A configured and enabled air sensor still shows its normal offline state when the backend successfully reports a real sensor communication error.
+- Added regression tests for the header fallback behavior.
+- Bumped the application version to `v0.336`.
+
 ## v0.335
 
 ### Shelly heat-mat consumption history

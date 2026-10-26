@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.335"
+APP_VERSION = "v0.336"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -8775,12 +8775,21 @@ def app_shell_page():
             const n = Number(value);
             return Number.isFinite(n) ? n.toFixed(digits) : '-';
           }
+          function hideAirSensorWidget(){
+            const widget = document.getElementById('airSensorWidget');
+            const values = document.getElementById('airSensorWidgetValues');
+            if (!widget) return;
+            widget.style.display = 'none';
+            widget.classList.remove('offline');
+            widget.title = '';
+            if (values) values.innerHTML = '';
+          }
           function renderAirSensorWidget(data){
             const widget = document.getElementById('airSensorWidget');
             const values = document.getElementById('airSensorWidgetValues');
             if (!widget || !values) return;
             if (!data?.enabled || !data?.configured) {
-              widget.style.display = 'none';
+              hideAirSensorWidget();
               return;
             }
             values.innerHTML = [
@@ -8798,10 +8807,18 @@ def app_shell_page():
           async function loadAirSensorWidget(){
             try {
               const res = await fetch('/air-sensor/current', { cache: 'no-store' });
-              const data = await res.json().catch(() => ({}));
-              if (res.ok) renderAirSensorWidget(data);
+              if (!res.ok) {
+                hideAirSensorWidget();
+                return;
+              }
+              const data = await res.json().catch(() => null);
+              if (!data) {
+                hideAirSensorWidget();
+                return;
+              }
+              renderAirSensorWidget(data);
             } catch {
-              renderAirSensorWidget({ enabled:true, configured:true, ok:false, last_error:'Air sensor request failed' });
+              hideAirSensorWidget();
             }
           }
           function applyShellI18n(){
