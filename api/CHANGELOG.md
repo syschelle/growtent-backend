@@ -2,6 +2,20 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.339
+
+### Simplified detached Grow Profile page
+- Moved Grow Profile editing out of the dashboard content area into a dedicated CanopyOps page opened from the selected tent dashboard.
+- Kept only a compact `Grow-Profil` action in the Grow Phase card; the technical controller/HMAC configuration remains in Setup.
+- Simplified the editor to one setting per card: current value, new value and a single `Send` button.
+- Removed the outgoing JSON preview, manual reload control, inline dashboard panel and the user-facing `Send and verify` wording. Controller verification continues automatically in the backend.
+- Added explicit `Delete` actions only for flowering and drying dates so date removal still uses JSON `null` as required by the firmware contract.
+- Added a responsive single-column mobile layout with full-width action buttons on small screens.
+- Kept administrator gating, per-tent Write API readiness checks, HMAC signing, retry behavior and post-write `stored`/`runtime` verification unchanged.
+- Updated UI regression coverage for the detached page and simplified send flow.
+- Full automated test suite: `90 passed`.
+- Bumped the application version to `v0.339`.
+
 ## v0.338
 
 ### Grow Profile editor moved into each tent dashboard
