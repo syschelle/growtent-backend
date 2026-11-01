@@ -2,6 +2,17 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.341
+
+### Dashboard Grow Profile action placement
+- Moved the Grow Profile action out of the Grow Phase card and placed it directly to the left of the dashboard `Status: OK` display.
+- Renamed the German action to `Anpassen` (`Adjust` in English).
+- The action is now hidden unless the current user is an administrator, the tent Write API is fully configured, the ESP has a fresh successful connection, and the dashboard status is currently `OK`.
+- The detached Grow Profile page and authenticated HMAC write/verification flow remain unchanged.
+- Added regression coverage for the new position and ESP/status visibility gate.
+- Full automated test suite: `93 passed`; dashboard JavaScript syntax check passed.
+- Bumped the application version to `v0.341`.
+
 ## v0.340
 
 ### Grow Profile page routing hotfix

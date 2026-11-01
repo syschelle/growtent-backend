@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.340"
+APP_VERSION = "v0.341"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9505,14 +9505,30 @@ def dashboard_page(request: Request):
           .alpha-led-red { background:#ef4444; }
           .alpha-led-off { background:#64748b; opacity:.55; }
           .status-meta { color:var(--muted); font-size:.92rem; font-weight:500; margin-left:8px; }
+          .status-row {
+            display:flex;
+            align-items:stretch;
+            gap:8px;
+            margin-bottom:10px;
+          }
+          #openGrowProfileBtn {
+            display:none;
+            align-items:center;
+            justify-content:center;
+            flex:0 0 auto;
+            min-height:34px;
+            padding:6px 12px;
+            white-space:nowrap;
+          }
           #status {
             min-height:1.25em;
             max-height:3.1em;
             overflow:auto;
             display:flex;
             align-items:flex-start;
+            flex:1 1 auto;
+            min-width:0;
             padding:6px 8px;
-            margin-bottom:10px;
             border:1px solid var(--grid);
             border-radius:8px;
             background:color-mix(in srgb, var(--card) 88%, transparent);
@@ -9591,7 +9607,10 @@ def dashboard_page(request: Request):
         <div class=\"small\" id=\"sourceText\">Source: -</div>
         <!-- language moved to setup -->
         <!-- temperature unit moved to setup -->
-        <div id=\"status\" class=\"small\">Loading…</div>
+        <div class=\"status-row\">
+          <button id=\"openGrowProfileBtn\" type=\"button\" style=\"display:none;\">Adjust</button>
+          <div id=\"status\" class=\"small\">Loading…</div>
+        </div>
 
         <div class=\"top-cards\">
           <div class=\"card stream-card\" id=\"streamCard\" style=\"margin-bottom:0;\">
@@ -9990,7 +10009,7 @@ def dashboard_page(request: Request):
               shellyFan: 'Fan',
               shellyExhaust: 'Exhaust',
               growPhase: 'Grow Phase',
-              editGrowProfile: 'Grow profile',
+              editGrowProfile: 'Adjust',
               growLoadFailed: 'Failed to load controller state.',
               growNotConfigured: 'Backend Write API is not fully configured for this tent.',
               mainSwitchCost: 'Total Cost',
@@ -10164,7 +10183,7 @@ def dashboard_page(request: Request):
               shellyFan: 'Lüfter',
               shellyExhaust: 'Abluft',
               growPhase: 'Growphase',
-              editGrowProfile: 'Grow-Profil',
+              editGrowProfile: 'Anpassen',
               growLoadFailed: 'Controllerzustand konnte nicht geladen werden.',
               growNotConfigured: 'Die Backend Write API ist für dieses Zelt noch nicht vollständig konfiguriert.',
               mainSwitchCost: 'Gesamtkosten',
@@ -10224,6 +10243,8 @@ def dashboard_page(request: Request):
           let currentTentId = Number.isFinite(qTent) && qTent > 0 ? qTent : Number(localStorage.getItem('gt_tent_id') || '1');
           let currentTentMeta = null;
           let currentUserRole = 'none';
+          let currentEspOnline = false;
+          let currentStatusOk = false;
           let shellyLastSwitches = {};
           let shellyLastActivity = {};
           let shellyLastActivityDirect = {};
@@ -10284,13 +10305,14 @@ def dashboard_page(request: Request):
             if (!btn) return;
             const isAdmin = currentUserRole === 'admin';
             const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
-            btn.style.display = isAdmin ? 'inline-block' : 'none';
-            btn.disabled = !ready;
-            btn.title = ready ? tr('editGrowProfile') : tr('growNotConfigured');
+            const visible = isAdmin && ready && currentEspOnline && currentStatusOk;
+            btn.style.display = visible ? 'inline-flex' : 'none';
+            btn.disabled = !visible;
+            btn.title = visible ? tr('editGrowProfile') : '';
           }
 
           function openGrowProfilePage(){
-            if (currentUserRole !== 'admin' || !currentTentId) return;
+            if (currentUserRole !== 'admin' || !currentTentId || !currentEspOnline || !currentStatusOk) return;
             const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
             if (!ready) return;
             const url = `/app?page=grow-profile&tent=${encodeURIComponent(String(currentTentId))}`;
@@ -10300,6 +10322,7 @@ def dashboard_page(request: Request):
 
           function applyI18n(){
             txt('titleMain', tr('title'));
+            txt('openGrowProfileBtn', tr('editGrowProfile'));
             txt('sourceText', '');
             txt('navTitle', tr('nav'));
             txt('navStrains', tr('strains'));
@@ -10444,16 +10467,13 @@ def dashboard_page(request: Request):
             txt('mainKwhTodayValue', '- kWh / - €');
             const phaseActions = document.getElementById('phaseActions');
             if (phaseActions) {
-              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openMinVpdInfoBtn" type="button">${tr('minVpdInfo')}</button><button id="openGrowProfileBtn" type="button">${tr('editGrowProfile')}</button>`;
+              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openMinVpdInfoBtn" type="button">${tr('minVpdInfo')}</button>`;
               document.getElementById('resetEnergyBtn')?.addEventListener('click', async () => {
                 if (!window.confirm(tr('confirmResetCounter'))) return;
                 await resetShellyEnergy();
               });
               document.getElementById('openMinVpdInfoBtn')?.addEventListener('click', async () => {
                 await openDashboardMinVpdInfoModal();
-              });
-              document.getElementById('openGrowProfileBtn')?.addEventListener('click', () => {
-                openGrowProfilePage();
               });
               syncGrowProfileAction();
             }
@@ -10506,12 +10526,16 @@ def dashboard_page(request: Request):
               const s = String(val ?? '').trim();
               if (s) {
                 window.__statusKnown = true;
+                currentStatusOk = false;
                 el.innerHTML = `Status: <span class="status-err">${esc(s)}</span>`;
               } else if (window.__statusKnown) {
+                currentStatusOk = true;
                 el.innerHTML = `Status: <span class="status-ok">OK</span>`;
               } else {
+                currentStatusOk = false;
                 el.innerHTML = `Status:`;
               }
+              syncGrowProfileAction();
               return;
             }
             el.textContent = val;
@@ -12571,6 +12595,8 @@ def dashboard_page(request: Request):
 
             renderStream(j.rtsp_url, j.webrtc_url, j.player_url, j.preview_url);
             renderPotStrains(j.pot_strains || {});
+            currentEspOnline = getTentOnlineState(j?.captured_at || currentTentMeta?.capturedAt || null);
+            syncGrowProfileAction();
             txt('status', '');
             if (j?.captured_at) {
               const ageMs = Date.now() - new Date(j.captured_at).getTime();
@@ -13127,6 +13153,7 @@ def dashboard_page(request: Request):
               const active = enriched.find(t => Number(t.id) === Number(currentTentId));
               if (active) {
                 currentTentMeta = active;
+                currentEspOnline = getTentOnlineState(active.capturedAt);
                 renderTentHeader();
                 syncGrowProfileAction();
               }
@@ -13221,6 +13248,11 @@ def dashboard_page(request: Request):
               } catch {}
               applyViewMode();
             });
+          }
+
+          const growProfileBtnEl = document.getElementById('openGrowProfileBtn');
+          if (growProfileBtnEl) {
+            growProfileBtnEl.addEventListener('click', openGrowProfilePage);
           }
 
           const exportBtnEl = document.getElementById('exportCsvBtn');

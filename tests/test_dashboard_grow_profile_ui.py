@@ -29,8 +29,8 @@ def test_grow_profile_editor_is_detached_from_dashboard_and_setup():
     page = _grow_profile_page_source()
     assert '@app.get("/grow-profile", response_class=HTMLResponse)' in source
     assert 'id=\\"growProfileInline\\"' not in dashboard
-    assert 'id="openGrowProfileBtn"' in dashboard
-    assert 'openGrowProfilePage()' in dashboard
+    assert 'openGrowProfileBtn' in dashboard
+    assert 'function openGrowProfilePage()' in dashboard
     assert 'data-grow-profile-tent' not in setup
     assert 'id=\\"tentBackendWriteEnabled\\"' in setup
     assert 'id=\\"tentBackendControllerUrl\\"' in setup
@@ -90,3 +90,32 @@ def test_detached_editor_keeps_controller_api_in_celsius():
     assert '<strong id="tempCurrent">-</strong> °C' in page
     assert 'id="tempInput" type="number" min="18" max="30" step="0.1"' in page
     assert 'id="vpdInput" type="number" min="0.5" max="3.5" step="0.01"' in page
+
+
+def test_dashboard_adjust_button_is_left_of_status_and_not_in_phase_card():
+    dashboard = _dashboard_source()
+    row = '<div class=\\"status-row\\">'
+    button = '<button id=\\"openGrowProfileBtn\\"'
+    status = '<div id=\\"status\\" class=\\"small\\">'
+    assert row in dashboard
+    row_start = dashboard.index(row)
+    button_pos = dashboard.index(button, row_start)
+    status_pos = dashboard.index(status, row_start)
+    assert button_pos < status_pos
+    assert "editGrowProfile: 'Anpassen'" in dashboard
+    phase_line = 'phaseActions.innerHTML = `<button id="resetEnergyBtn"'
+    phase_start = dashboard.index(phase_line)
+    phase_end = dashboard.index(';', phase_start)
+    assert 'openGrowProfileBtn' not in dashboard[phase_start:phase_end]
+
+
+def test_dashboard_adjust_button_only_shows_for_admin_ready_online_ok_controller():
+    dashboard = _dashboard_source()
+    assert 'let currentEspOnline = false;' in dashboard
+    assert 'let currentStatusOk = false;' in dashboard
+    assert 'const visible = isAdmin && ready && currentEspOnline && currentStatusOk;' in dashboard
+    assert "btn.style.display = visible ? 'inline-flex' : 'none';" in dashboard
+    assert "if (currentUserRole !== 'admin' || !currentTentId || !currentEspOnline || !currentStatusOk) return;" in dashboard
+    assert 'currentEspOnline = getTentOnlineState(j?.captured_at || currentTentMeta?.capturedAt || null);' in dashboard
+    assert 'currentStatusOk = false;' in dashboard
+    assert 'currentStatusOk = true;' in dashboard
