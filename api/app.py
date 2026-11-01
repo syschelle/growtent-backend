@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.342"
+APP_VERSION = "v0.343"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9350,7 +9350,10 @@ def dashboard_page(request: Request):
           .card { background:var(--card); border-radius:10px; padding:12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); margin-bottom:12px; }
           .stream-card { width: min(100%, 500px); max-width: 500px; }
           .phase-card { display:flex; flex-direction:column; justify-content:space-between; min-height:280px; }
+          .phase-heading-row { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
           .phase-title { font-size:.85rem; color:var(--muted); margin-bottom:6px; }
+          .hmac-badge { display:none; align-items:center; gap:5px; flex:0 0 auto; color:#22c55e; font-weight:800; font-size:.92rem; line-height:1; padding-top:1px; }
+          .hmac-badge .hmac-hint { cursor:help; opacity:.92; font-weight:600; }
           .phase-main { font-size:2rem; font-weight:800; line-height:1.1; margin-bottom:10px; }
           .phase-veg { color:#22c55e; }
           .phase-flower { color:#ef4444; }
@@ -9649,7 +9652,10 @@ def dashboard_page(request: Request):
 
           <div class=\"card stream-card meta-card phase-card\" style=\"margin-bottom:0;\">
             <div>
-              <div class=\"phase-title\" id=\"lblGrowPhase\">Grow Phase</div>
+              <div class=\"phase-heading-row\">
+                <div class=\"phase-title\" id=\"lblGrowPhase\">Grow Phase</div>
+                <div id=\"hmacBadge\" class=\"hmac-badge\" aria-hidden=\"true\">HMAC <span id=\"hmacMeaningHint\" class=\"hmac-hint\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
+              </div>
               <div class=\"phase-main\" id=\"growPhaseValue\">-</div>
               <div class=\"phase-stats\">
                 <div class=\"phase-chip\" id=\"growTotals\">-</div>
@@ -10032,6 +10038,7 @@ def dashboard_page(request: Request):
               shellyFan: 'Fan',
               shellyExhaust: 'Exhaust',
               growPhase: 'Grow Phase',
+              hmacHint: 'HMAC stands for Hash-based Message Authentication Code. The backend and GrowTent controller share a secret key. Write requests are signed so the controller can verify that they are unchanged and come from the authorized backend. HMAC does not encrypt the HTTP connection.',
               editGrowProfile: 'Adjust',
               growLoadFailed: 'Failed to load controller state.',
               growNotConfigured: 'Backend Write API is not fully configured for this tent.',
@@ -10206,6 +10213,7 @@ def dashboard_page(request: Request):
               shellyFan: 'Lüfter',
               shellyExhaust: 'Abluft',
               growPhase: 'Growphase',
+              hmacHint: 'HMAC steht für Hash-based Message Authentication Code. Backend und GrowTent-Controller teilen einen geheimen Schlüssel. Schreibzugriffe werden damit signiert, sodass der Controller prüfen kann, ob sie unverändert und vom berechtigten Backend stammen. HMAC verschlüsselt die HTTP-Verbindung nicht.',
               editGrowProfile: 'Anpassen',
               growLoadFailed: 'Controllerzustand konnte nicht geladen werden.',
               growNotConfigured: 'Die Backend Write API ist für dieses Zelt noch nicht vollständig konfiguriert.',
@@ -10323,6 +10331,14 @@ def dashboard_page(request: Request):
             return (I18N[currentLang] && I18N[currentLang][key]) || I18N.en[key] || key;
           }
 
+          function syncHmacBadge(){
+            const badge = document.getElementById('hmacBadge');
+            if (!badge) return;
+            const configured = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
+            badge.style.display = configured ? 'inline-flex' : 'none';
+            badge.setAttribute('aria-hidden', configured ? 'false' : 'true');
+          }
+
           function syncGrowProfileAction(){
             const btn = document.getElementById('openGrowProfileBtn');
             if (!btn) return;
@@ -10409,6 +10425,13 @@ def dashboard_page(request: Request):
               humMeaningEl.setAttribute('aria-label', hint);
               humMeaningEl.onclick = (ev) => { ev.preventDefault(); showInfoPopover(humMeaningEl, hint); };
             }
+            const hmacMeaningEl = document.getElementById('hmacMeaningHint');
+            if (hmacMeaningEl) {
+              const hint = tr('hmacHint');
+              hmacMeaningEl.removeAttribute('title');
+              hmacMeaningEl.setAttribute('aria-label', hint);
+              hmacMeaningEl.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); showInfoPopover(hmacMeaningEl, hint); };
+            }
             const humHistoryMeaningEl = document.getElementById('humHistoryMeaningHint');
             if (humHistoryMeaningEl) {
               const hint = tr('humMeaningHint');
@@ -10464,6 +10487,7 @@ def dashboard_page(request: Request):
             txt('uptimeBadge', `${tr('uptime')}: -`);
             applyViewMode();
             txt('lblGrowPhase', tr('growPhase'));
+            syncHmacBadge();
             txt('lblMainEnergy', tr('mainEnergy'));
             txt('lblMainCost', tr('mainSwitchCost'));
             txt('lblMainKwhToday', tr('consumptionToday'));
@@ -10499,6 +10523,7 @@ def dashboard_page(request: Request):
                 await openDashboardMinVpdInfoModal();
               });
               syncGrowProfileAction();
+              syncHmacBadge();
             }
             txt('tempLastChange', `${tr('lastChange')} -`);
             txt('humLastChange', `${tr('lastChange')} -`);
@@ -10514,6 +10539,7 @@ def dashboard_page(request: Request):
             const triggerVpd = document.getElementById('vpdMeaningHint');
             const triggerTemp = document.getElementById('tempMeaningHint');
             const triggerHum = document.getElementById('humMeaningHint');
+            const triggerHmac = document.getElementById('hmacMeaningHint');
             const triggerHumHistory = document.getElementById('humHistoryMeaningHint');
             const triggerTempHistory = document.getElementById('tempHistoryMeaningHint');
             const triggerVpdHistory = document.getElementById('vpdHistoryMeaningHint');
@@ -10523,6 +10549,7 @@ def dashboard_page(request: Request):
             if (ev.target === triggerVpd || triggerVpd?.contains(ev.target)) return;
             if (ev.target === triggerTemp || triggerTemp?.contains(ev.target)) return;
             if (ev.target === triggerHum || triggerHum?.contains(ev.target)) return;
+            if (ev.target === triggerHmac || triggerHmac?.contains(ev.target)) return;
             if (ev.target === triggerHumHistory || triggerHumHistory?.contains(ev.target)) return;
             if (ev.target === triggerTempHistory || triggerTempHistory?.contains(ev.target)) return;
             if (ev.target === triggerVpdHistory || triggerVpdHistory?.contains(ev.target)) return;
@@ -10560,6 +10587,7 @@ def dashboard_page(request: Request):
                 statusText.innerHTML = `Status:`;
               }
               syncGrowProfileAction();
+              syncHmacBadge();
               return;
             }
             el.textContent = val;
@@ -12621,6 +12649,7 @@ def dashboard_page(request: Request):
             renderPotStrains(j.pot_strains || {});
             currentEspOnline = getTentOnlineState(j?.captured_at || currentTentMeta?.capturedAt || null);
             syncGrowProfileAction();
+            syncHmacBadge();
             txt('status', '');
             if (j?.captured_at) {
               const ageMs = Date.now() - new Date(j.captured_at).getTime();
@@ -13180,6 +13209,7 @@ def dashboard_page(request: Request):
                 currentEspOnline = getTentOnlineState(active.capturedAt);
                 renderTentHeader();
                 syncGrowProfileAction();
+                syncHmacBadge();
               }
             } catch (e) {
               // ignore nav errors in UI and keep previous state
@@ -13305,6 +13335,7 @@ def dashboard_page(request: Request):
               btn.disabled = isGuestMode && !keep;
             });
             syncGrowProfileAction();
+            syncHmacBadge();
           }
 
           const mobileNavBtnEl = document.getElementById('mobileNavToggle');

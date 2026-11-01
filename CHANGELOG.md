@@ -2,6 +2,17 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.343
+
+### HMAC status hint in Grow Phase card
+- Added a compact green `HMAC` indicator in the top-right area of the Grow Phase card.
+- The indicator is shown only when the tent Backend Write API is enabled, a controller URL is configured, and a stored HMAC secret is present.
+- Added a bilingual info popover using the same dashboard hint mechanism as Temperature and VPD.
+- The hint explains that HMAC signs write requests with a shared secret, verifies integrity and origin, and does not encrypt the HTTP connection.
+- Added regression coverage for indicator placement, visibility conditions, green styling, and both German and English hint text.
+- Full automated test suite: `100 passed`; dashboard JavaScript syntax check passed.
+- Bumped the application version to `v0.343`.
+
 ## v0.342
 
 ### Grow Profile admin hardening and adjustment step sizes

@@ -136,3 +136,28 @@ def test_grow_profile_page_has_route_level_real_admin_guard():
     assert 'session = get_session(token)' in page
     assert 'if not session or (session.get("role") or "") != "admin":' in page
     assert 'raise HTTPException(status_code=403, detail="admin required")' in page
+
+
+def test_dashboard_shows_green_hmac_badge_in_grow_phase_card_when_write_api_is_configured():
+    dashboard = _dashboard_source()
+    assert 'id=\\"hmacBadge\\" class=\\"hmac-badge\\"' in dashboard
+    assert '.hmac-badge { display:none;' in dashboard
+    assert 'color:#22c55e;' in dashboard
+    assert 'function syncHmacBadge()' in dashboard
+    assert 'currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret' in dashboard
+    assert "badge.style.display = configured ? 'inline-flex' : 'none';" in dashboard
+    phase_heading = dashboard.index('class=\\"phase-heading-row\\"')
+    phase_main = dashboard.index('id=\\"growPhaseValue\\"', phase_heading)
+    assert dashboard.index('id=\\"hmacBadge\\"', phase_heading) < phase_main
+
+
+def test_hmac_badge_uses_same_bilingual_info_popover_pattern_as_temperature_and_vpd():
+    dashboard = _dashboard_source()
+    assert "hmacHint: 'HMAC stands for Hash-based Message Authentication Code." in dashboard
+    assert "hmacHint: 'HMAC steht für Hash-based Message Authentication Code." in dashboard
+    assert 'id=\\"hmacMeaningHint\\"' in dashboard
+    assert "const hmacMeaningEl = document.getElementById('hmacMeaningHint');" in dashboard
+    assert "showInfoPopover(hmacMeaningEl, hint)" in dashboard
+    assert "const triggerHmac = document.getElementById('hmacMeaningHint');" in dashboard
+    assert 'HMAC does not encrypt the HTTP connection.' in dashboard
+    assert 'HMAC verschlüsselt die HTTP-Verbindung nicht.' in dashboard
