@@ -14,3 +14,9 @@ def test_modular_system_router_exposes_flood_alert_routes():
     text = (Path(__file__).parents[1] / "api" / "routes" / "system.py").read_text(encoding="utf-8")
     assert "@router.get('/config/flood-alert')" in text
     assert "@router.post('/config/flood-alert')" in text
+
+
+def test_modular_system_router_exposes_grow_profile_page():
+    text = (Path(__file__).parents[1] / "api" / "routes" / "system.py").read_text(encoding="utf-8")
+    assert "@router.get('/grow-profile', response_class=HTMLResponse)" in text
+    assert "return legacy.grow_profile_page(request)" in text

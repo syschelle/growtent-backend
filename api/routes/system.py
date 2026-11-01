@@ -71,6 +71,12 @@ def grow_guide_page(request: Request):
     return legacy.grow_guide_page(request)
 
 
+@router.get('/grow-profile', response_class=HTMLResponse)
+def grow_profile_page(request: Request):
+    return legacy.grow_profile_page(request)
+
+
+
 @router.get('/strain-library', response_class=HTMLResponse)
 def strain_library_page(request: Request):
     return legacy.strain_library_page(request)

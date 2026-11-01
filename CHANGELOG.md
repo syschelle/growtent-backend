@@ -2,6 +2,14 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.340
+
+### Grow Profile page routing hotfix
+- Registered `/grow-profile` in the modular production `main:app` system router.
+- Fixes the `{"detail":"Not Found"}` response when opening Grow Profile from a tent dashboard.
+- Added regression coverage to ensure the production router exposes the detached Grow Profile page.
+- Bumped the application version to `v0.340`.
+
 ## v0.339
 
 ### Simplified detached Grow Profile page
