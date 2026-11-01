@@ -161,3 +161,25 @@ def test_hmac_badge_uses_same_bilingual_info_popover_pattern_as_temperature_and_
     assert "const triggerHmac = document.getElementById('hmacMeaningHint');" in dashboard
     assert 'HMAC does not encrypt the HTTP connection.' in dashboard
     assert 'HMAC verschlüsselt die HTTP-Verbindung nicht.' in dashboard
+
+
+def test_dashboard_adjust_button_stays_compact_on_mobile():
+    dashboard = _dashboard_source()
+    assert 'button, .stream-open-btn { width:100%; text-align:center; }' in dashboard
+    start = dashboard.index('#openGrowProfileBtn {')
+    end = dashboard.index('}', start)
+    block = dashboard[start:end]
+    assert 'width:auto;' in block
+    assert 'max-width:max-content;' in block
+    assert 'flex:0 0 auto;' in block
+
+
+def test_dashboard_info_popover_is_clamped_inside_mobile_visual_viewport():
+    dashboard = _dashboard_source()
+    assert 'max-width: min(460px, calc(100vw - 24px));' in dashboard
+    assert 'overflow-wrap: anywhere;' in dashboard
+    assert 'const vv = window.visualViewport;' in dashboard
+    assert 'const maxLeft = Math.max(minLeft, viewportLeft + viewportWidth - pr.width - margin);' in dashboard
+    assert 'if (top + pr.height > maxBottom) top = r.top - pr.height - gap;' in dashboard
+    assert 'pop.style.left = `${Math.round(left)}px`;' in dashboard
+    assert 'pop.style.top = `${Math.round(top)}px`;' in dashboard

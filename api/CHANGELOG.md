@@ -2,6 +2,22 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.345
+
+### Mobile hint viewport positioning
+- Keeps dashboard information popovers inside the visible mobile viewport.
+- HMAC, temperature, VPD and other shared info hints now clamp horizontally and flip above the trigger when there is insufficient space below.
+- Added viewport-aware sizing and wrapping for narrow screens without changing desktop behavior.
+- Bumped the application version to `v0.345`.
+
+## v0.344
+
+- Fixed the mobile dashboard status tile so the `Anpassen` / `Adjust` button remains content-sized instead of expanding to the full row width.
+- Desktop layout and Grow Profile behavior are unchanged.
+- Added a regression test for the compact mobile button layout.
+- Full automated test suite: `101 passed`.
+- Bumped the application version to `v0.344`.
+
 ## v0.343
 
 ### HMAC status hint in Grow Phase card

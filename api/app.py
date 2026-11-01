@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.343"
+APP_VERSION = "v0.345"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9541,6 +9541,8 @@ def dashboard_page(request: Request):
             align-items:center;
             justify-content:center;
             flex:0 0 auto;
+            width:auto;
+            max-width:max-content;
             min-height:26px;
             padding:4px 10px;
             white-space:nowrap;
@@ -9594,7 +9596,9 @@ def dashboard_page(request: Request):
           .alpha-hint-popover {
             position: fixed;
             z-index: 1400;
-            max-width: 460px;
+            width: max-content;
+            max-width: min(460px, calc(100vw - 24px));
+            box-sizing: border-box;
             pointer-events: none;
             background: var(--bg);
             color: var(--text);
@@ -9605,6 +9609,7 @@ def dashboard_page(request: Request):
             font-size: 17px;
             line-height: 1.5;
             white-space: normal;
+            overflow-wrap: anywhere;
             display: none;
           }
         </style>
@@ -10398,11 +10403,30 @@ def dashboard_page(request: Request):
               if (!pop || !anchorEl) return;
               pop.textContent = text || '';
               pop.style.display = 'block';
+              pop.style.left = '12px';
+              pop.style.top = '12px';
+
               const r = anchorEl.getBoundingClientRect();
-              const top = Math.min(window.innerHeight - 20, r.bottom + 10);
-              const left = Math.min(window.innerWidth - 20, Math.max(10, r.left));
-              pop.style.top = `${top}px`;
-              pop.style.left = `${left}px`;
+              const vv = window.visualViewport;
+              const viewportLeft = vv ? vv.offsetLeft : 0;
+              const viewportTop = vv ? vv.offsetTop : 0;
+              const viewportWidth = vv ? vv.width : window.innerWidth;
+              const viewportHeight = vv ? vv.height : window.innerHeight;
+              const margin = 12;
+              const gap = 10;
+              const pr = pop.getBoundingClientRect();
+
+              const minLeft = viewportLeft + margin;
+              const maxLeft = Math.max(minLeft, viewportLeft + viewportWidth - pr.width - margin);
+              let left = Math.min(maxLeft, Math.max(minLeft, r.left));
+
+              let top = r.bottom + gap;
+              const maxBottom = viewportTop + viewportHeight - margin;
+              if (top + pr.height > maxBottom) top = r.top - pr.height - gap;
+              top = Math.max(viewportTop + margin, Math.min(top, maxBottom - pr.height));
+
+              pop.style.left = `${Math.round(left)}px`;
+              pop.style.top = `${Math.round(top)}px`;
             };
             const vpdMeaningEl = document.getElementById('vpdMeaningHint');
             if (vpdMeaningEl) {
