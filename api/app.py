@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.337"
+APP_VERSION = "v0.338"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7154,7 +7154,6 @@ def setup_page(request: Request):
                   <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">${tSetup('editTent')}</button>
                   <button data-plan-tent="${t.id}" style="margin-top:6px; margin-left:6px;">${tSetup('irrigationPlan')}</button>
-                  <button data-grow-profile-tent="${t.id}" ${t.backend_write_enabled ? '' : 'disabled'} style="margin-top:6px; margin-left:6px;">${tSetup('growProfile')}</button>
                   <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('deleteTent')}</button>
                 </div>
               `;
@@ -7190,15 +7189,6 @@ def setup_page(request: Request):
                   openIrrigationPlanModal(tent);
                 });
               });
-              list.querySelectorAll('button[data-grow-profile-tent]').forEach(btn => {
-                btn.addEventListener('click', () => {
-                  const id = Number(btn.getAttribute('data-grow-profile-tent'));
-                  const tent = tents.find(x => x.id === id);
-                  if (!tent || !tent.backend_write_enabled) return;
-                  openGrowProfileModal(tent);
-                });
-              });
-
               list.querySelectorAll('button[data-delete-tent]').forEach(btn => {
                 btn.addEventListener('click', async () => {
                   const id = Number(btn.getAttribute('data-delete-tent'));
@@ -9283,6 +9273,23 @@ def dashboard_page(request: Request):
           .phase-chip { background:rgba(148,163,184,.12); border:1px solid var(--grid); border-radius:10px; padding:10px 12px; font-size:1.08rem; font-weight:600; line-height:1.25; }
           .phase-cost-label { font-size:.85rem; color:var(--muted); margin-top:8px; }
           .phase-cost { font-size:2rem; font-weight:800; line-height:1.1; }
+          .grow-profile-inline { display:none; margin-bottom:12px; overflow:hidden; }
+          .grow-profile-inline.open { display:block; }
+          .grow-profile-inline-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+          .grow-profile-inline-title { font-size:1.05rem; font-weight:800; }
+          .grow-profile-inline-head > button { width:auto; flex:0 0 auto; }
+          .grow-profile-editor { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+          .grow-profile-field { min-width:0; }
+          .grow-profile-field > label { display:block; font-size:.82rem; color:var(--muted); margin-bottom:5px; font-weight:700; }
+          .grow-profile-field input, .grow-profile-field select { width:100%; box-sizing:border-box; padding:10px 11px; border-radius:9px; border:1px solid var(--grid); background:var(--bg); color:var(--text); font-size:1rem; }
+          .grow-profile-date-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; }
+          .grow-profile-delete { display:flex; align-items:center; gap:6px; min-height:42px; white-space:nowrap; font-size:.85rem; }
+          .grow-profile-delete input { width:auto; }
+          .grow-profile-preview { white-space:pre-wrap; word-break:break-word; border:1px solid var(--grid); background:rgba(148,163,184,.08); padding:10px; border-radius:9px; min-height:44px; margin:6px 0 0 0; }
+          .grow-profile-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+          .grow-profile-message { margin-top:10px; min-height:1.2em; }
+          .grow-profile-message.ok { color:#22c55e; }
+          .grow-profile-message.err { color:#ef4444; }
           .card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; }
           .status-badge { padding:2px 8px; border-radius:999px; font-size:.75rem; font-weight:700; }
           .stream-open-btn { display:inline-block; padding:7px 11px; border-radius:9px; border:1px solid var(--grid); background:linear-gradient(180deg, rgba(59,130,246,.28), rgba(37,99,235,.22)); color:var(--text); text-decoration:none; font-size:.8rem; font-weight:700; box-shadow:0 2px 10px rgba(2,6,23,.22); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; }
@@ -9379,6 +9386,11 @@ def dashboard_page(request: Request):
             .soil-card .card-head .label { white-space:nowrap; max-width:100%; }
             .soil-card .card-head .small { white-space:normal; overflow-wrap:anywhere; line-height:1.15; max-width:100%; }
             #shellyDevices { grid-template-columns: 1fr; }
+            .grow-profile-editor { grid-template-columns:1fr; }
+            .grow-profile-date-row { grid-template-columns:1fr; }
+            .grow-profile-delete { min-height:auto; padding:2px 0; }
+            .grow-profile-actions button { width:100%; padding:10px 12px; }
+            .grow-profile-inline-head { align-items:center; }
             .row { gap:6px; }
             button, .stream-open-btn { width:100%; text-align:center; }
             .flood-status { max-width:100%; padding:4px 6px; }
@@ -9398,6 +9410,9 @@ def dashboard_page(request: Request):
           body.force-mobile .soil-card .card-head .label { white-space:nowrap; max-width:100%; }
           body.force-mobile .soil-card .card-head .small { white-space:normal; overflow-wrap:anywhere; line-height:1.15; max-width:100%; }
           body.force-mobile #shellyDevices { grid-template-columns: 1fr; }
+          body.force-mobile .grow-profile-editor { grid-template-columns:1fr; }
+          body.force-mobile .grow-profile-date-row { grid-template-columns:1fr; }
+          body.force-mobile .grow-profile-actions button { width:100%; padding:10px 12px; }
 
           button {
             border:1px solid var(--grid);
@@ -9588,6 +9603,55 @@ def dashboard_page(request: Request):
             </div>
           </div>
         </div>
+
+        <section id=\"growProfileInline\" class=\"card grow-profile-inline\" aria-hidden=\"true\">
+          <div class=\"grow-profile-inline-head\">
+            <div>
+              <div class=\"grow-profile-inline-title\" id=\"dbGrowProfileTitle\">Grow profile</div>
+              <div class=\"small\" id=\"dbGrowProfileController\">Controller: -</div>
+            </div>
+            <button type=\"button\" id=\"dbGrowProfileCloseBtn\" aria-label=\"Close\">✕</button>
+          </div>
+          <div class=\"small\" id=\"dbGrowProfileHint\" style=\"margin-bottom:12px;\">Only changed fields are sent. Date values are cleared explicitly and sent as JSON null.</div>
+          <div class=\"grow-profile-editor\">
+            <div class=\"grow-profile-field\">
+              <label id=\"dbGrowTargetTemperatureLabel\" for=\"dbGrowTargetTemperature\">Target temperature (°C)</label>
+              <input id=\"dbGrowTargetTemperature\" type=\"number\" min=\"18\" max=\"30\" step=\"0.1\" inputmode=\"decimal\" />
+            </div>
+            <div class=\"grow-profile-field\">
+              <label id=\"dbGrowTargetVpdLabel\" for=\"dbGrowTargetVpd\">Target VPD (kPa)</label>
+              <input id=\"dbGrowTargetVpd\" type=\"number\" min=\"0.5\" max=\"3.5\" step=\"0.01\" inputmode=\"decimal\" />
+            </div>
+            <div class=\"grow-profile-field\">
+              <label id=\"dbGrowCurrentPhaseLabel\" for=\"dbGrowCurrentPhase\">Current phase</label>
+              <select id=\"dbGrowCurrentPhase\"><option value=\"1\">1 – Vegetative</option><option value=\"2\">2 – Flowering</option><option value=\"3\">3 – Drying</option></select>
+            </div>
+            <div class=\"grow-profile-field\">
+              <label id=\"dbGrowFloweringStartLabel\" for=\"dbGrowFloweringStart\">Flowering start</label>
+              <div class=\"grow-profile-date-row\">
+                <input id=\"dbGrowFloweringStart\" type=\"date\" />
+                <label class=\"grow-profile-delete\"><input type=\"checkbox\" id=\"dbGrowFloweringDelete\" /><span id=\"dbGrowFloweringDeleteLabel\">Delete</span></label>
+              </div>
+            </div>
+            <div class=\"grow-profile-field\">
+              <label id=\"dbGrowDryingStartLabel\" for=\"dbGrowDryingStart\">Drying start</label>
+              <div class=\"grow-profile-date-row\">
+                <input id=\"dbGrowDryingStart\" type=\"date\" />
+                <label class=\"grow-profile-delete\"><input type=\"checkbox\" id=\"dbGrowDryingDelete\" /><span id=\"dbGrowDryingDeleteLabel\">Delete</span></label>
+              </div>
+            </div>
+            <div class=\"grow-profile-field\">
+              <label id=\"dbGrowOutgoingLabel\">Will be sent</label>
+              <pre id=\"dbGrowOutgoing\" class=\"grow-profile-preview\">{{}}</pre>
+            </div>
+          </div>
+          <div class=\"grow-profile-actions\">
+            <button type=\"button\" id=\"dbGrowProfileSaveBtn\">Send and verify</button>
+            <button type=\"button\" id=\"dbGrowProfileReloadBtn\">Reload controller state</button>
+            <button type=\"button\" id=\"dbGrowProfileCancelBtn\">Close</button>
+          </div>
+          <div id=\"dbGrowProfileMsg\" class=\"grow-profile-message small\"></div>
+        </section>
 
         <div class=\"grid\" id=\"currentValuesGrid\">
           <div class=\"card\">
@@ -9937,6 +10001,30 @@ def dashboard_page(request: Request):
               shellyFan: 'Fan',
               shellyExhaust: 'Exhaust',
               growPhase: 'Grow Phase',
+              editGrowProfile: 'Edit grow profile',
+              growProfileTitle: 'Grow profile',
+              growProfileHint: 'Only changed fields are sent. Dates are cleared only with Delete and are transmitted as JSON null.',
+              growTargetTemperature: 'Target temperature (°C)',
+              growTargetVpd: 'Target VPD (kPa)',
+              growCurrentPhase: 'Current phase',
+              growFloweringStart: 'Flowering start',
+              growDryingStart: 'Drying start',
+              growDelete: 'Delete',
+              growOutgoing: 'Will be sent',
+              growSendVerify: 'Send and verify',
+              growReload: 'Reload controller state',
+              growClose: 'Close',
+              growController: 'Controller',
+              growLoading: 'Loading controller state…',
+              growLoaded: 'Controller state loaded.',
+              growNoChanges: 'No changes selected.',
+              growDateDeleteRequired: 'To clear an existing date, use the Delete checkbox.',
+              growConfirm: 'Send these values to the controller and verify them afterwards?',
+              growSending: 'Sending and verifying…',
+              growVerified: 'Successfully verified',
+              growLoadFailed: 'Failed to load controller state.',
+              growWriteFailed: 'Write failed.',
+              growNotConfigured: 'Backend Write API is not fully configured for this tent.',
               mainSwitchCost: 'Total Cost',
               mainEnergy: 'Energy',
               resetCounter: 'Reset counter',
@@ -10108,6 +10196,30 @@ def dashboard_page(request: Request):
               shellyFan: 'Lüfter',
               shellyExhaust: 'Abluft',
               growPhase: 'Growphase',
+              editGrowProfile: 'Grow-Profil bearbeiten',
+              growProfileTitle: 'Grow-Profil bearbeiten',
+              growProfileHint: 'Es werden nur geänderte Felder gesendet. Datumswerte werden ausschließlich über Löschen als JSON null entfernt.',
+              growTargetTemperature: 'Solltemperatur (°C)',
+              growTargetVpd: 'Soll-VPD (kPa)',
+              growCurrentPhase: 'Aktuelle Phase',
+              growFloweringStart: 'Blütestart',
+              growDryingStart: 'Trocknungsstart',
+              growDelete: 'Löschen',
+              growOutgoing: 'Wird übertragen',
+              growSendVerify: 'Senden und verifizieren',
+              growReload: 'Controllerzustand neu laden',
+              growClose: 'Schließen',
+              growController: 'Controller',
+              growLoading: 'Lade Controllerzustand…',
+              growLoaded: 'Controllerzustand geladen.',
+              growNoChanges: 'Keine Änderungen ausgewählt.',
+              growDateDeleteRequired: 'Zum Löschen eines vorhandenen Datums bitte die Checkbox „Löschen“ verwenden.',
+              growConfirm: 'Diese Werte an den Controller senden und anschließend verifizieren?',
+              growSending: 'Sende und verifiziere…',
+              growVerified: 'Erfolgreich verifiziert',
+              growLoadFailed: 'Controllerzustand konnte nicht geladen werden.',
+              growWriteFailed: 'Schreibvorgang fehlgeschlagen.',
+              growNotConfigured: 'Die Backend Write API ist für dieses Zelt noch nicht vollständig konfiguriert.',
               mainSwitchCost: 'Gesamtkosten',
               mainEnergy: 'Energie',
               resetCounter: 'Zähler zurücksetzen',
@@ -10164,6 +10276,9 @@ def dashboard_page(request: Request):
           const qTent = Number(new URLSearchParams(window.location.search).get('tent') || '0');
           let currentTentId = Number.isFinite(qTent) && qTent > 0 ? qTent : Number(localStorage.getItem('gt_tent_id') || '1');
           let currentTentMeta = null;
+          let currentUserRole = 'none';
+          let dashboardGrowProfileOriginal = {};
+          let dashboardGrowProfileOpen = false;
           let shellyLastSwitches = {};
           let shellyLastActivity = {};
           let shellyLastActivityDirect = {};
@@ -10217,6 +10332,170 @@ def dashboard_page(request: Request):
 
           function tr(key){
             return (I18N[currentLang] && I18N[currentLang][key]) || I18N.en[key] || key;
+          }
+
+          function setGrowProfileMessage(text, kind = ''){
+            const el = document.getElementById('dbGrowProfileMsg');
+            if (!el) return;
+            el.textContent = text || '';
+            el.classList.remove('ok', 'err');
+            if (kind === 'ok' || kind === 'err') el.classList.add(kind);
+          }
+
+          function syncGrowProfileAction(){
+            const btn = document.getElementById('openGrowProfileBtn');
+            if (!btn) return;
+            const isAdmin = currentUserRole === 'admin';
+            const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
+            btn.style.display = isAdmin ? 'inline-block' : 'none';
+            btn.disabled = !ready;
+            btn.title = ready ? tr('editGrowProfile') : tr('growNotConfigured');
+          }
+
+          function dashboardGrowProfileBuildPatch(){
+            const patch = {};
+            const tempEl = document.getElementById('dbGrowTargetTemperature');
+            const vpdEl = document.getElementById('dbGrowTargetVpd');
+            const phaseEl = document.getElementById('dbGrowCurrentPhase');
+            const floweringEl = document.getElementById('dbGrowFloweringStart');
+            const dryingEl = document.getElementById('dbGrowDryingStart');
+            const floweringDelete = !!document.getElementById('dbGrowFloweringDelete')?.checked;
+            const dryingDelete = !!document.getElementById('dbGrowDryingDelete')?.checked;
+            const temp = tempEl?.value === '' ? null : Number(tempEl?.value);
+            const vpd = vpdEl?.value === '' ? null : Number(vpdEl?.value);
+            const phase = phaseEl?.value ? Number(phaseEl.value) : null;
+            const flowering = (floweringEl?.value || '').trim();
+            const drying = (dryingEl?.value || '').trim();
+
+            if (temp !== null && Number.isFinite(temp) && Number(temp) !== Number(dashboardGrowProfileOriginal.targetTemperature)) patch.targetTemperature = temp;
+            if (vpd !== null && Number.isFinite(vpd) && Number(vpd) !== Number(dashboardGrowProfileOriginal.targetVPD)) patch.targetVPD = vpd;
+            if (phase !== null && Number.isInteger(phase) && Number(phase) !== Number(dashboardGrowProfileOriginal.currentPhase)) patch.currentPhase = phase;
+            if (floweringDelete) patch.floweringStart = null;
+            else if (flowering && flowering !== String(dashboardGrowProfileOriginal.floweringStart || '')) patch.floweringStart = flowering;
+            if (dryingDelete) patch.dryingStart = null;
+            else if (drying && drying !== String(dashboardGrowProfileOriginal.dryingStart || '')) patch.dryingStart = drying;
+            return patch;
+          }
+
+          function dashboardGrowProfileValidationError(){
+            const flowering = (document.getElementById('dbGrowFloweringStart')?.value || '').trim();
+            const drying = (document.getElementById('dbGrowDryingStart')?.value || '').trim();
+            const floweringDelete = !!document.getElementById('dbGrowFloweringDelete')?.checked;
+            const dryingDelete = !!document.getElementById('dbGrowDryingDelete')?.checked;
+            if (!floweringDelete && dashboardGrowProfileOriginal.floweringStart && !flowering) return tr('growDateDeleteRequired');
+            if (!dryingDelete && dashboardGrowProfileOriginal.dryingStart && !drying) return tr('growDateDeleteRequired');
+            return '';
+          }
+
+          function refreshDashboardGrowProfileOutgoing(){
+            const floweringDelete = !!document.getElementById('dbGrowFloweringDelete')?.checked;
+            const dryingDelete = !!document.getElementById('dbGrowDryingDelete')?.checked;
+            const floweringEl = document.getElementById('dbGrowFloweringStart');
+            const dryingEl = document.getElementById('dbGrowDryingStart');
+            if (floweringEl) floweringEl.disabled = floweringDelete;
+            if (dryingEl) dryingEl.disabled = dryingDelete;
+            const pre = document.getElementById('dbGrowOutgoing');
+            if (pre) pre.textContent = JSON.stringify(dashboardGrowProfileBuildPatch(), null, 2);
+          }
+
+          function fillDashboardGrowProfile(state){
+            dashboardGrowProfileOriginal = { ...(state || {}) };
+            const setValue = (id, value) => { const el = document.getElementById(id); if (el) el.value = value ?? ''; };
+            setValue('dbGrowTargetTemperature', state?.targetTemperature);
+            setValue('dbGrowTargetVpd', state?.targetVPD);
+            setValue('dbGrowCurrentPhase', state?.currentPhase || 1);
+            setValue('dbGrowFloweringStart', state?.floweringStart || '');
+            setValue('dbGrowDryingStart', state?.dryingStart || '');
+            const fd = document.getElementById('dbGrowFloweringDelete'); if (fd) fd.checked = false;
+            const dd = document.getElementById('dbGrowDryingDelete'); if (dd) dd.checked = false;
+            refreshDashboardGrowProfileOutgoing();
+          }
+
+          async function loadDashboardGrowProfile(){
+            if (!currentTentId) return false;
+            setGrowProfileMessage(tr('growLoading'));
+            try {
+              const res = await fetch(`/tents/${currentTentId}/grow-profile`, { cache:'no-store' });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                const detail = body?.detail;
+                const text = (detail && typeof detail === 'object' ? detail.message : detail) || `HTTP ${res.status}`;
+                setGrowProfileMessage(text, 'err');
+                return false;
+              }
+              const state = body?.state?.runtime || body?.state?.stored || {};
+              fillDashboardGrowProfile(state);
+              const controller = document.getElementById('dbGrowProfileController');
+              if (controller) controller.textContent = `${tr('growController')}: ${body?.controllerUrl || currentTentMeta?.backend_controller_url || '-'}`;
+              setGrowProfileMessage(tr('growLoaded'), 'ok');
+              return true;
+            } catch {
+              setGrowProfileMessage(tr('growLoadFailed'), 'err');
+              return false;
+            }
+          }
+
+          async function openDashboardGrowProfile(){
+            if (currentUserRole !== 'admin') return;
+            const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
+            if (!ready) return;
+            const panel = document.getElementById('growProfileInline');
+            if (!panel) return;
+            dashboardGrowProfileOpen = true;
+            panel.classList.add('open');
+            panel.setAttribute('aria-hidden', 'false');
+            panel.scrollIntoView({ behavior:'smooth', block:'start' });
+            await loadDashboardGrowProfile();
+          }
+
+          function closeDashboardGrowProfile(){
+            const panel = document.getElementById('growProfileInline');
+            if (panel) {
+              panel.classList.remove('open');
+              panel.setAttribute('aria-hidden', 'true');
+            }
+            dashboardGrowProfileOpen = false;
+            dashboardGrowProfileOriginal = {};
+            setGrowProfileMessage('');
+          }
+
+          async function saveDashboardGrowProfile(){
+            if (currentUserRole !== 'admin' || !currentTentId) return;
+            const validationError = dashboardGrowProfileValidationError();
+            if (validationError) {
+              setGrowProfileMessage(validationError, 'err');
+              return;
+            }
+            const patch = dashboardGrowProfileBuildPatch();
+            if (!Object.keys(patch).length) {
+              setGrowProfileMessage(tr('growNoChanges'));
+              return;
+            }
+            const preview = JSON.stringify(patch, null, 2);
+            if (!window.confirm(`${tr('growConfirm')}\n\n${preview}`)) return;
+            const saveBtn = document.getElementById('dbGrowProfileSaveBtn');
+            if (saveBtn) saveBtn.disabled = true;
+            setGrowProfileMessage(tr('growSending'));
+            try {
+              const res = await fetch(`/tents/${currentTentId}/grow-profile`, {
+                method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch)
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                const detail = body?.detail;
+                const text = (detail && typeof detail === 'object' ? detail.message : detail) || `HTTP ${res.status}`;
+                setGrowProfileMessage(text, 'err');
+                return;
+              }
+              const state = body?.state?.runtime || body?.state?.stored || dashboardGrowProfileOriginal;
+              fillDashboardGrowProfile(state);
+              setGrowProfileMessage(`${tr('growVerified')}${body?.requestId != null ? ` (Request ${body.requestId})` : ''}.`, 'ok');
+              await loadLatest();
+            } catch {
+              setGrowProfileMessage(tr('growWriteFailed'), 'err');
+            } finally {
+              if (saveBtn) saveBtn.disabled = false;
+            }
           }
 
           function applyI18n(){
@@ -10339,6 +10618,19 @@ def dashboard_page(request: Request):
             txt('uptimeBadge', `${tr('uptime')}: -`);
             applyViewMode();
             txt('lblGrowPhase', tr('growPhase'));
+            txt('dbGrowProfileTitle', tr('growProfileTitle'));
+            txt('dbGrowProfileHint', tr('growProfileHint'));
+            txt('dbGrowTargetTemperatureLabel', tr('growTargetTemperature'));
+            txt('dbGrowTargetVpdLabel', tr('growTargetVpd'));
+            txt('dbGrowCurrentPhaseLabel', tr('growCurrentPhase'));
+            txt('dbGrowFloweringStartLabel', tr('growFloweringStart'));
+            txt('dbGrowDryingStartLabel', tr('growDryingStart'));
+            txt('dbGrowFloweringDeleteLabel', tr('growDelete'));
+            txt('dbGrowDryingDeleteLabel', tr('growDelete'));
+            txt('dbGrowOutgoingLabel', tr('growOutgoing'));
+            txt('dbGrowProfileSaveBtn', tr('growSendVerify'));
+            txt('dbGrowProfileReloadBtn', tr('growReload'));
+            txt('dbGrowProfileCancelBtn', tr('growClose'));
             txt('lblMainEnergy', tr('mainEnergy'));
             txt('lblMainCost', tr('mainSwitchCost'));
             txt('lblMainKwhToday', tr('consumptionToday'));
@@ -10365,7 +10657,7 @@ def dashboard_page(request: Request):
             txt('mainKwhTodayValue', '- kWh / - €');
             const phaseActions = document.getElementById('phaseActions');
             if (phaseActions) {
-              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openMinVpdInfoBtn" type="button">${tr('minVpdInfo')}</button>`;
+              phaseActions.innerHTML = `<button id="resetEnergyBtn" type="button">${tr('resetCounter')}</button><button id="openMinVpdInfoBtn" type="button">${tr('minVpdInfo')}</button><button id="openGrowProfileBtn" type="button">${tr('editGrowProfile')}</button>`;
               document.getElementById('resetEnergyBtn')?.addEventListener('click', async () => {
                 if (!window.confirm(tr('confirmResetCounter'))) return;
                 await resetShellyEnergy();
@@ -10373,6 +10665,10 @@ def dashboard_page(request: Request):
               document.getElementById('openMinVpdInfoBtn')?.addEventListener('click', async () => {
                 await openDashboardMinVpdInfoModal();
               });
+              document.getElementById('openGrowProfileBtn')?.addEventListener('click', async () => {
+                await openDashboardGrowProfile();
+              });
+              syncGrowProfileAction();
             }
             txt('tempLastChange', `${tr('lastChange')} -`);
             txt('humLastChange', `${tr('lastChange')} -`);
@@ -13045,6 +13341,11 @@ def dashboard_page(request: Request):
               if (active) {
                 currentTentMeta = active;
                 renderTentHeader();
+                syncGrowProfileAction();
+                if (dashboardGrowProfileOpen) {
+                  const controller = document.getElementById('dbGrowProfileController');
+                  if (controller) controller.textContent = `${tr('growController')}: ${currentTentMeta?.backend_controller_url || '-'}`;
+                }
               }
             } catch (e) {
               // ignore nav errors in UI and keep previous state
@@ -13164,7 +13465,15 @@ def dashboard_page(request: Request):
               const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || btn.classList.contains('pot-strain-link'));
               btn.disabled = isGuestMode && !keep;
             });
+            syncGrowProfileAction();
           }
+
+          ['dbGrowTargetTemperature','dbGrowTargetVpd','dbGrowCurrentPhase','dbGrowFloweringStart','dbGrowDryingStart','dbGrowFloweringDelete','dbGrowDryingDelete']
+            .forEach(id => document.getElementById(id)?.addEventListener('input', refreshDashboardGrowProfileOutgoing));
+          document.getElementById('dbGrowProfileCloseBtn')?.addEventListener('click', closeDashboardGrowProfile);
+          document.getElementById('dbGrowProfileCancelBtn')?.addEventListener('click', closeDashboardGrowProfile);
+          document.getElementById('dbGrowProfileReloadBtn')?.addEventListener('click', loadDashboardGrowProfile);
+          document.getElementById('dbGrowProfileSaveBtn')?.addEventListener('click', saveDashboardGrowProfile);
 
           const mobileNavBtnEl = document.getElementById('mobileNavToggle');
           if (mobileNavBtnEl) {
@@ -13184,7 +13493,8 @@ def dashboard_page(request: Request):
             try {
               const r = await fetch('/auth/whoami', { cache:'no-store' });
               const j = await r.json().catch(() => ({}));
-              isGuestMode = (j?.role === 'guest');
+              currentUserRole = String(j?.role || 'none');
+              isGuestMode = (currentUserRole === 'guest');
               if (isGuestMode) {
                 try {
                   const pr = await fetch('/ui/preferences', { cache:'no-store' });
@@ -13200,6 +13510,7 @@ def dashboard_page(request: Request):
                 localStorage.removeItem('gt_view_mode');
               }
             } catch {
+              currentUserRole = 'none';
               isGuestMode = false;
             }
             applyGuestModeUi();

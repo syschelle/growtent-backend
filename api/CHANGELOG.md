@@ -2,6 +2,21 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.338
+
+### Grow Profile editor moved into each tent dashboard
+- Moved Grow Profile value editing out of Setup and into the selected tent dashboard.
+- Added an administrator-only `Grow-Profil bearbeiten` action to the Grow Phase card when the tent write API is fully configured.
+- Added a responsive inline editor directly below the dashboard top cards for target temperature, target VPD, current phase, flowering start and drying start.
+- The editor reloads the authoritative controller state on open and continues to use the authenticated `/tents/{tent_id}/grow-profile` backend integration with post-write `stored`/`runtime` verification.
+- Keeps the exact outgoing partial JSON visible before sending.
+- Keeps date deletion explicit through dedicated delete controls that send JSON `null`; clearing an existing date field without selecting Delete is rejected in the UI.
+- Keeps controller URL, enable/disable state and HMAC secret configuration in Setup, while operational Grow Profile changes are no longer offered there.
+- Added single-column mobile/forced-mobile layouts with touch-friendly full-width action buttons.
+- Added regression tests for dashboard placement, mobile layout, admin-only write access, explicit date deletion and the Celsius API contract.
+- Full automated test suite: `88 passed`.
+- Bumped the application version to `v0.338`.
+
 ## v0.337
 
 ### Authenticated GrowTent firmware write API (firmware v0.5.0+)
