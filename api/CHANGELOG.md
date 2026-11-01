@@ -2,6 +2,20 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.342
+
+### Grow Profile admin hardening and adjustment step sizes
+- The dashboard `Anpassen` action is now rendered server-side only for real administrator sessions; guest dashboards receive no Grow Profile button element.
+- `/grow-profile` and `/app?page=grow-profile...` are treated as administrator-only pages, and the Grow Profile page itself performs an additional real-admin session check.
+- Existing `GET/PATCH /tents/{tent_id}/grow-profile` server-side admin checks remain in place, keeping write access protected independently of the UI.
+- The `Anpassen` action now sits inside the dashboard status tile, immediately after `Status: OK`, instead of outside the tile.
+- Target temperature adjustment now uses `0.5 °C` steps.
+- Target VPD adjustment now uses `0.1 kPa` steps.
+- Added client-side step validation so off-step values cannot be sent accidentally from the Grow Profile page.
+- Added regression coverage for guest HTML rendering, direct Grow Profile access, shell-route access and the new adjustment increments.
+- Full automated test suite: `98 passed`; dashboard and Grow Profile JavaScript syntax checks passed.
+- Bumped the application version to `v0.342`.
+
 ## v0.341
 
 ### Dashboard Grow Profile action placement

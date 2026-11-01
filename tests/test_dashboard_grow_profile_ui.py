@@ -88,26 +88,26 @@ def test_date_deletion_is_explicit_null_and_blank_date_is_not_sent():
 def test_detached_editor_keeps_controller_api_in_celsius():
     page = _grow_profile_page_source()
     assert '<strong id="tempCurrent">-</strong> °C' in page
-    assert 'id="tempInput" type="number" min="18" max="30" step="0.1"' in page
-    assert 'id="vpdInput" type="number" min="0.5" max="3.5" step="0.01"' in page
+    assert 'id="tempInput" type="number" min="18" max="30" step="0.5"' in page
+    assert 'id="vpdInput" type="number" min="0.5" max="3.5" step="0.1"' in page
+    assert "matchesStep(value,0.5,18)" in page
+    assert "matchesStep(value,0.1,0.5)" in page
 
 
-def test_dashboard_adjust_button_is_left_of_status_and_not_in_phase_card():
+def test_dashboard_adjust_button_is_inside_status_tile_after_status_text_and_not_in_phase_card():
     dashboard = _dashboard_source()
-    row = '<div class=\\"status-row\\">'
-    button = '<button id=\\"openGrowProfileBtn\\"'
-    status = '<div id=\\"status\\" class=\\"small\\">'
+    row = r'<div class=\"status-row\">'
+    status = r'<div id=\"status\" class=\"small\"><span id=\"statusText\">Loading…</span> __GROW_PROFILE_ACTION__</div>'
     assert row in dashboard
-    row_start = dashboard.index(row)
-    button_pos = dashboard.index(button, row_start)
-    status_pos = dashboard.index(status, row_start)
-    assert button_pos < status_pos
+    assert status in dashboard
+    assert "grow_profile_action = '<button id=\"openGrowProfileBtn\"" in dashboard
     assert "editGrowProfile: 'Anpassen'" in dashboard
+    assert "const statusText = document.getElementById('statusText') || el;" in dashboard
+    assert 'statusText.innerHTML = `Status: <span class="status-ok">OK</span>`;' in dashboard
     phase_line = 'phaseActions.innerHTML = `<button id="resetEnergyBtn"'
     phase_start = dashboard.index(phase_line)
     phase_end = dashboard.index(';', phase_start)
     assert 'openGrowProfileBtn' not in dashboard[phase_start:phase_end]
-
 
 def test_dashboard_adjust_button_only_shows_for_admin_ready_online_ok_controller():
     dashboard = _dashboard_source()
@@ -119,3 +119,20 @@ def test_dashboard_adjust_button_only_shows_for_admin_ready_online_ok_controller
     assert 'currentEspOnline = getTentOnlineState(j?.captured_at || currentTentMeta?.capturedAt || null);' in dashboard
     assert 'currentStatusOk = false;' in dashboard
     assert 'currentStatusOk = true;' in dashboard
+
+
+def test_dashboard_button_is_server_rendered_only_for_real_admin_sessions():
+    dashboard = _dashboard_source()
+    assert "session = get_session(token)" in dashboard
+    assert "is_admin = bool(session and (session.get(\"role\") or \"\") == \"admin\")" in dashboard
+    assert "grow_profile_action = '<button id=\"openGrowProfileBtn\"" in dashboard
+    assert "if is_admin else ''" in dashboard
+    assert '__GROW_PROFILE_ACTION__' in dashboard
+    assert '.replace("__GROW_PROFILE_ACTION__", grow_profile_action)' in dashboard
+
+
+def test_grow_profile_page_has_route_level_real_admin_guard():
+    page = _grow_profile_page_source()
+    assert 'session = get_session(token)' in page
+    assert 'if not session or (session.get("role") or "") != "admin":' in page
+    assert 'raise HTTPException(status_code=403, detail="admin required")' in page

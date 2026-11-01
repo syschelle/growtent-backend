@@ -236,3 +236,62 @@ def test_twofa_preauth_is_revoked_after_too_many_failures(monkeypatch):
             app.auth_login_2fa(payload, req)
         assert exc.value.status_code == expected
     assert token not in app.SESSIONS
+
+
+def _request_with_query(path, query, *, method='GET', cookie=None, accept='application/json'):
+    headers = [(b'accept', accept.encode())]
+    if cookie:
+        headers.append((b'cookie', cookie.encode()))
+    scope = {
+        'type': 'http',
+        'http_version': '1.1',
+        'method': method,
+        'scheme': 'https',
+        'path': path,
+        'raw_path': path.encode(),
+        'query_string': query.encode(),
+        'headers': headers,
+        'client': ('127.0.0.1', 12345),
+        'server': ('testserver', 443),
+    }
+    return Request(scope)
+
+
+def test_guest_dashboard_html_does_not_contain_adjust_button():
+    app.SESSIONS.clear()
+    now = time.time() + 60
+    app.SESSIONS['guest-token'] = {'authenticated': True, 'role': 'guest', 'username': 'guest', 'expires_at': now}
+    app.SESSIONS['admin-token'] = {'authenticated': True, 'role': 'admin', 'username': 'admin', 'expires_at': now}
+
+    guest_html = app.dashboard_page(_request_with_query('/dashboard', 'embed=1', cookie='caop_session=guest-token', accept='text/html'))
+    admin_html = app.dashboard_page(_request_with_query('/dashboard', 'embed=1', cookie='caop_session=admin-token', accept='text/html'))
+
+    assert '<button id="openGrowProfileBtn"' not in guest_html
+    assert '<button id="openGrowProfileBtn"' in admin_html
+    app.SESSIONS.clear()
+
+
+def test_guest_cannot_open_grow_profile_route_even_by_direct_call():
+    app.SESSIONS.clear()
+    app.SESSIONS['guest-token'] = {'authenticated': True, 'role': 'guest', 'username': 'guest', 'expires_at': time.time() + 60}
+    request = _request_with_query('/grow-profile', 'embed=1&tent=1', cookie='caop_session=guest-token', accept='text/html')
+    with pytest.raises(HTTPException) as exc:
+        app.grow_profile_page(request)
+    assert exc.value.status_code == 403
+    assert exc.value.detail == 'admin required'
+    app.SESSIONS.clear()
+
+
+def test_guest_cannot_open_grow_profile_shell_query(monkeypatch):
+    app.SESSIONS.clear()
+    app.SESSIONS['guest-token'] = {'authenticated': True, 'role': 'guest', 'username': 'guest', 'expires_at': time.time() + 60}
+    monkeypatch.setattr(app, 'load_auth_config', lambda: {'enabled': True})
+    monkeypatch.setattr(app, 'is_initial_install_available', lambda: False)
+
+    async def next_handler(_request):
+        return JSONResponse({'ok': True})
+
+    request = _request_with_query('/app', 'page=grow-profile&tent=1', cookie='caop_session=guest-token')
+    resp = asyncio.run(app.auth_middleware(request, next_handler))
+    assert resp.status_code == 403
+    app.SESSIONS.clear()

@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.341"
+APP_VERSION = "v0.342"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1225,8 +1225,11 @@ async def auth_middleware(request: Request, call_next):
 
     # Security-sensitive URLs always require a real administrator session,
     # even when normal dashboard authentication is globally disabled.
+    grow_profile_shell = path == "/app" and request.query_params.get("page") == "grow-profile"
     always_admin = (
         path == "/setup"
+        or path == "/grow-profile"
+        or grow_profile_shell
         or path.startswith("/config")
         or path == "/download/project.zip"
         or path == "/openapi.json"
@@ -8739,6 +8742,10 @@ def grow_guide_page(request: Request):
     """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
 @app.get("/grow-profile", response_class=HTMLResponse)
 def grow_profile_page(request: Request):
+    token = request.cookies.get("caop_session")
+    session = get_session(token)
+    if not session or (session.get("role") or "") != "admin":
+        raise HTTPException(status_code=403, detail="admin required")
     try:
         tent_id = int(request.query_params.get("tent") or 0)
     except (TypeError, ValueError):
@@ -8807,7 +8814,7 @@ def grow_profile_page(request: Request):
               <div class="label" id="tempLabel">Solltemperatur</div>
               <div class="current"><span id="currentLabelTemp">Aktuell:</span> <strong id="tempCurrent">-</strong> °C</div>
               <div class="edit-row">
-                <input id="tempInput" type="number" min="18" max="30" step="0.1" inputmode="decimal" />
+                <input id="tempInput" type="number" min="18" max="30" step="0.5" inputmode="decimal" />
                 <button type="button" data-send="targetTemperature" id="tempSend">Senden</button>
               </div>
             </section>
@@ -8816,7 +8823,7 @@ def grow_profile_page(request: Request):
               <div class="label" id="vpdLabel">Soll-VPD</div>
               <div class="current"><span id="currentLabelVpd">Aktuell:</span> <strong id="vpdCurrent">-</strong> kPa</div>
               <div class="edit-row">
-                <input id="vpdInput" type="number" min="0.5" max="3.5" step="0.01" inputmode="decimal" />
+                <input id="vpdInput" type="number" min="0.5" max="3.5" step="0.1" inputmode="decimal" />
                 <button type="button" data-send="targetVPD" id="vpdSend">Senden</button>
               </div>
             </section>
@@ -8865,14 +8872,14 @@ def grow_profile_page(request: Request):
               title:'Grow-Profil', back:'← Dashboard', current:'Aktuell:', temp:'Solltemperatur', vpd:'Soll-VPD', phase:'Phase', flower:'Blütestart', dry:'Trocknungsstart',
               send:'Senden', del:'Löschen', loading:'Werte werden geladen …', loaded:'', sending:'Wird gesendet …', saved:'Gespeichert und vom Controller bestätigt.',
               denied:'Nur Administratoren dürfen Grow-Einstellungen ändern.', notReady:'Die Backend Write API ist für dieses Zelt noch nicht vollständig eingerichtet. Bitte zuerst unter Setup die Controller-Adresse und das HMAC-Secret konfigurieren.',
-              chooseDate:'Bitte zuerst ein Datum auswählen.', invalidValue:'Bitte einen gültigen Wert eingeben.', deleteConfirm:'Diesen Datumswert wirklich löschen?',
+              chooseDate:'Bitte zuerst ein Datum auswählen.', invalidValue:'Bitte einen gültigen Wert eingeben.', invalidTempStep:'Solltemperatur nur in 0,5-°C-Schritten von 18,0 bis 30,0 °C einstellen.', invalidVpdStep:'Soll-VPD nur in 0,1-kPa-Schritten von 0,5 bis 3,5 kPa einstellen.', deleteConfirm:'Diesen Datumswert wirklich löschen?',
               p1:'Wachstum', p2:'Blüte', p3:'Trocknung', loadFailed:'Werte konnten nicht geladen werden.'
             },
             en: {
               title:'Grow profile', back:'← Dashboard', current:'Current:', temp:'Target temperature', vpd:'Target VPD', phase:'Phase', flower:'Flowering start', dry:'Drying start',
               send:'Send', del:'Delete', loading:'Loading values …', loaded:'', sending:'Sending …', saved:'Saved and confirmed by the controller.',
               denied:'Only administrators may change grow settings.', notReady:'The Backend Write API is not fully configured for this tent. Configure the controller address and HMAC secret in Setup first.',
-              chooseDate:'Select a date first.', invalidValue:'Enter a valid value.', deleteConfirm:'Delete this date value?',
+              chooseDate:'Select a date first.', invalidValue:'Enter a valid value.', invalidTempStep:'Set target temperature only in 0.5 °C steps from 18.0 to 30.0 °C.', invalidVpdStep:'Set target VPD only in 0.1 kPa steps from 0.5 to 3.5 kPa.', deleteConfirm:'Delete this date value?',
               p1:'Vegetative', p2:'Flowering', p3:'Drying', loadFailed:'Values could not be loaded.'
             }
           }[lang];
@@ -8909,7 +8916,7 @@ def grow_profile_page(request: Request):
             original={...(state||{})};
             const temp=Number(state?.targetTemperature), vpd=Number(state?.targetVPD), phase=Number(state?.currentPhase||1);
             setText('tempCurrent',Number.isFinite(temp)?temp.toFixed(1):'-'); $('tempInput').value=Number.isFinite(temp)?temp:'';
-            setText('vpdCurrent',Number.isFinite(vpd)?vpd.toFixed(2):'-'); $('vpdInput').value=Number.isFinite(vpd)?vpd:'';
+            setText('vpdCurrent',Number.isFinite(vpd)?vpd.toFixed(1):'-'); $('vpdInput').value=Number.isFinite(vpd)?vpd:'';
             setText('phaseCurrent',phaseText(phase)); $('phaseInput').value=String([1,2,3].includes(phase)?phase:1);
             setText('flowerCurrent',formatDate(state?.floweringStart)); $('flowerInput').value=state?.floweringStart||'';
             setText('dryCurrent',formatDate(state?.dryingStart)); $('dryInput').value=state?.dryingStart||'';
@@ -8936,10 +8943,22 @@ def grow_profile_page(request: Request):
             }catch(err){ setStatus(err?.message||'Error','err'); }
             finally{ setBusy(false); $('flowerDelete').disabled=!original?.floweringStart; $('dryDelete').disabled=!original?.dryingStart; }
           }
+          function matchesStep(value, step, base){
+            const units=(value-base)/step;
+            return Math.abs(units-Math.round(units)) < 1e-9;
+          }
           document.querySelectorAll('[data-send]').forEach(btn=>btn.addEventListener('click',()=>{
             const field=btn.dataset.send; let value;
-            if(field==='targetTemperature'){ const raw=$('tempInput').value; value=Number(raw); if(raw===''||!Number.isFinite(value)){setStatus(T.invalidValue,'err');return;} }
-            else if(field==='targetVPD'){ const raw=$('vpdInput').value; value=Number(raw); if(raw===''||!Number.isFinite(value)){setStatus(T.invalidValue,'err');return;} }
+            if(field==='targetTemperature'){
+              const raw=$('tempInput').value; value=Number(raw);
+              if(raw===''||!Number.isFinite(value)){setStatus(T.invalidValue,'err');return;}
+              if(value<18||value>30||!matchesStep(value,0.5,18)){setStatus(T.invalidTempStep,'err');return;}
+            }
+            else if(field==='targetVPD'){
+              const raw=$('vpdInput').value; value=Number(raw);
+              if(raw===''||!Number.isFinite(value)){setStatus(T.invalidValue,'err');return;}
+              if(value<0.5||value>3.5||!matchesStep(value,0.1,0.5)){setStatus(T.invalidVpdStep,'err');return;}
+            }
             else if(field==='currentPhase'){ value=Number($('phaseInput').value); }
             else if(field==='floweringStart'){ value=$('flowerInput').value; if(!value){setStatus(T.chooseDate,'err');return;} }
             else if(field==='dryingStart'){ value=$('dryInput').value; if(!value){setStatus(T.chooseDate,'err');return;} }
@@ -9289,6 +9308,10 @@ def app_shell_page():
 def dashboard_page(request: Request):
     if request.query_params.get("embed") != "1":
         return RedirectResponse(url="/app?page=dashboard", status_code=302)
+    token = request.cookies.get("caop_session")
+    session = get_session(token)
+    is_admin = bool(session and (session.get("role") or "") == "admin")
+    grow_profile_action = '<button id="openGrowProfileBtn" type="button" style="display:none;">Adjust</button>' if is_admin else ''
     return """
     <html>
       <head>
@@ -9508,7 +9531,6 @@ def dashboard_page(request: Request):
           .status-row {
             display:flex;
             align-items:stretch;
-            gap:8px;
             margin-bottom:10px;
           }
           #openGrowProfileBtn {
@@ -9516,8 +9538,8 @@ def dashboard_page(request: Request):
             align-items:center;
             justify-content:center;
             flex:0 0 auto;
-            min-height:34px;
-            padding:6px 12px;
+            min-height:26px;
+            padding:4px 10px;
             white-space:nowrap;
           }
           #status {
@@ -9525,7 +9547,8 @@ def dashboard_page(request: Request):
             max-height:3.1em;
             overflow:auto;
             display:flex;
-            align-items:flex-start;
+            align-items:center;
+            gap:8px;
             flex:1 1 auto;
             min-width:0;
             padding:6px 8px;
@@ -9533,6 +9556,7 @@ def dashboard_page(request: Request):
             border-radius:8px;
             background:color-mix(in srgb, var(--card) 88%, transparent);
           }
+          #statusText { min-width:0; }
           #status .status-ok { color:#22c55e; font-weight:700; }
           #status .status-err { color:#ef4444; font-weight:700; }
           /* Current value colors aligned with history line colors */
@@ -9608,8 +9632,7 @@ def dashboard_page(request: Request):
         <!-- language moved to setup -->
         <!-- temperature unit moved to setup -->
         <div class=\"status-row\">
-          <button id=\"openGrowProfileBtn\" type=\"button\" style=\"display:none;\">Adjust</button>
-          <div id=\"status\" class=\"small\">Loading…</div>
+          <div id=\"status\" class=\"small\"><span id=\"statusText\">Loading…</span> __GROW_PROFILE_ACTION__</div>
         </div>
 
         <div class=\"top-cards\">
@@ -10523,17 +10546,18 @@ def dashboard_page(request: Request):
             if (id === 'status') {
               if (typeof window.__statusKnown !== 'boolean') window.__statusKnown = false;
               const esc = (v) => String(v ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+              const statusText = document.getElementById('statusText') || el;
               const s = String(val ?? '').trim();
               if (s) {
                 window.__statusKnown = true;
                 currentStatusOk = false;
-                el.innerHTML = `Status: <span class="status-err">${esc(s)}</span>`;
+                statusText.innerHTML = `Status: <span class="status-err">${esc(s)}</span>`;
               } else if (window.__statusKnown) {
                 currentStatusOk = true;
-                el.innerHTML = `Status: <span class="status-ok">OK</span>`;
+                statusText.innerHTML = `Status: <span class="status-ok">OK</span>`;
               } else {
                 currentStatusOk = false;
-                el.innerHTML = `Status:`;
+                statusText.innerHTML = `Status:`;
               }
               syncGrowProfileAction();
               return;
@@ -13330,4 +13354,4 @@ def dashboard_page(request: Request):
         </script>
       </body>
     </html>
-    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
+    """.replace("__GROW_PROFILE_ACTION__", grow_profile_action).replace("__FAVICON_LINKS__", FAVICON_LINKS)
