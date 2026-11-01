@@ -2,6 +2,22 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.337
+
+### Authenticated GrowTent firmware write API (firmware v0.5.0+)
+- Added per-tent configuration for the controller write API, including enable/disable state, controller address and a write-only 256-bit HMAC secret.
+- Added authenticated partial writes for `targetTemperature`, `targetVPD`, `floweringStart`, `dryingStart` and `currentPhase` via the firmware `PATCH /api/backend/grow-profile` endpoint.
+- Implemented the firmware HMAC-SHA256 contract exactly: compact body serialization once, SHA-256 body hash, raw 32-byte key decoded from 64-character lowercase hex, timestamp, cryptographically secure nonce and canonical request signing.
+- Added strict validation for temperature/VPD ranges, phases, real ISO dates, explicit `null` date deletion and phase/date consistency.
+- Added bounded retries for temporary controller conflicts; every retry receives a fresh timestamp, nonce and HMAC signature.
+- Added post-`202 Accepted` verification against both `stored` and `runtime` values from `/api/settings/grow-targets` and `/api/settings/run-profile`; success is reported only after the controller confirms the requested fields.
+- Added an admin-only Grow Profile editor in Setup with an exact outgoing JSON preview and explicit date-delete controls.
+- Added controller error mapping and safe technical logging without HMAC secrets or signatures.
+- Added `grow_write_audit` records with tent, backend user, changed field names, firmware request ID, HTTP result and verification status.
+- Extended database initialization/backup schema for the new per-tent settings while keeping the HMAC secret redacted from exports.
+- Added automated coverage for the mandatory HMAC test vector, validation/error cases, verification, timeout, fresh retry signing and secret/signature log redaction.
+- Bumped the application version to `v0.337`.
+
 ## v0.336
 
 ### Hide disabled air sensor during dashboard connection failures

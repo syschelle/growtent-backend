@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -17,10 +17,14 @@ class TentPayload(StrictModel):
     shelly_main_user: str | None = Field(default=None, max_length=200)
     shelly_main_password: str | None = Field(default=None, max_length=512)
     shelly_main_password_clear: bool = False
+    backend_write_enabled: bool = False
+    backend_controller_url: str | None = Field(default=None, max_length=2048)
+    backend_hmac_secret: str | None = None
+    backend_hmac_secret_clear: bool = False
     pot_strains: dict[str, str] = Field(default_factory=dict)
     soil_sensors: list[str] = Field(default_factory=list, max_length=3)
 
-    @field_validator("name", "source_url", "rtsp_url", "shelly_main_user", mode="before")
+    @field_validator("name", "source_url", "rtsp_url", "shelly_main_user", "backend_controller_url", mode="before")
     @classmethod
     def strip_optional_strings(cls, value):
         if value is None:
@@ -48,6 +52,22 @@ class TentPayload(StrictModel):
             return ["", "", ""]
         slots = [str(item or "").strip() for item in value[:3]]
         return (slots + ["", "", ""])[:3]
+
+
+class GrowProfilePatch(StrictModel):
+    targetTemperature: float | None = None
+    targetVPD: float | None = None
+    currentPhase: int | None = None
+    floweringStart: str | None = None
+    dryingStart: str | None = None
+
+    @model_validator(mode="after")
+    def validate_patch(self):
+        from services.grow_write_service import validate_patch_values
+
+        payload = self.model_dump(exclude_unset=True)
+        validate_patch_values(payload)
+        return self
 
 
 class StrainPayload(StrictModel):

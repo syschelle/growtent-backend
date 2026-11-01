@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from db.database import get_conn
 from services.air_sensor_service import normalize_air_sensor_host, validate_safe_sensor_host
+from services.grow_write_service import normalize_controller_url, validate_secret_hex
 
 
 def _clean_optional_str(value):
@@ -18,6 +19,24 @@ def _clean_required_str(value):
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _normalise_backend_controller_url(value):
+    if value is None:
+        return None
+    try:
+        return normalize_controller_url(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _validate_backend_secret(value):
+    if value is None:
+        return None
+    try:
+        return validate_secret_hex(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _normalise_pot_strains(value) -> dict:
@@ -87,7 +106,8 @@ def list_tents_raw():
                 SELECT id, name, source_url, rtsp_url,
                        shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date,
-                       pot_strains_json, soil_sensors_json, created_at
+                       pot_strains_json, soil_sensors_json,
+                       backend_write_enabled, backend_controller_url, backend_hmac_secret, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -107,7 +127,10 @@ def list_tents_raw():
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
                 "soil_sensors": _normalise_soil_sensor_hosts(r[9] if len(r) > 9 else None),
-                "created_at": r[10].isoformat(),
+                "backend_write_enabled": bool(r[10]),
+                "backend_controller_url": r[11] or "",
+                "has_backend_hmac_secret": bool(r[12]),
+                "created_at": r[13].isoformat(),
             }
         )
     return out
@@ -119,6 +142,13 @@ def create_tent_raw(payload: dict):
     rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
+    backend_write_enabled = bool(payload.get("backend_write_enabled", False))
+    backend_controller_url_raw = _clean_optional_str(payload.get("backend_controller_url"))
+    backend_controller_url = _normalise_backend_controller_url(backend_controller_url_raw) if backend_controller_url_raw else None
+    backend_hmac_secret_raw = _clean_optional_str(payload.get("backend_hmac_secret"))
+    backend_hmac_secret = _validate_backend_secret(backend_hmac_secret_raw) if backend_hmac_secret_raw else None
+    if backend_write_enabled and (not backend_controller_url or not backend_hmac_secret):
+        raise HTTPException(status_code=400, detail="backend write API requires controller URL and HMAC secret")
     pot_strains_json = _pot_strains_json(payload.get("pot_strains"))
     soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True)
 
@@ -129,12 +159,18 @@ def create_tent_raw(payload: dict):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO tents(name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO tents(
+                    name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
+                    backend_write_enabled, backend_controller_url, backend_hmac_secret,
+                    pot_strains_json, soil_sensors_json
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL,
+                          pot_strains_json, soil_sensors_json, backend_write_enabled, backend_controller_url,
+                          backend_hmac_secret IS NOT NULL, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, backend_write_enabled, backend_controller_url, backend_hmac_secret, pot_strains_json, soil_sensors_json),
             )
             row = cur.fetchone()
             if not row:
@@ -149,7 +185,10 @@ def create_tent_raw(payload: dict):
         "has_shelly_main_password": bool(row[5]),
         "pot_strains": _normalise_pot_strains(row[6]),
         "soil_sensors": _normalise_soil_sensor_hosts(row[7]),
-        "created_at": row[8].isoformat(),
+        "backend_write_enabled": bool(row[8]),
+        "backend_controller_url": row[9] or "",
+        "has_backend_hmac_secret": bool(row[10]),
+        "created_at": row[11].isoformat(),
     }
 
 
@@ -180,6 +219,17 @@ def update_tent_raw(tent_id: int, payload: dict):
     shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
     shelly_password_clear = bool(payload.get("shelly_main_password_clear", False))
     shelly_main_password = shelly_main_password_raw or None
+
+    backend_write_enabled_provided = "backend_write_enabled" in payload
+    backend_write_enabled = bool(payload.get("backend_write_enabled", False))
+    backend_controller_url_provided = "backend_controller_url" in payload
+    backend_controller_url_raw = _clean_optional_str(payload.get("backend_controller_url"))
+    backend_controller_url = _normalise_backend_controller_url(backend_controller_url_raw) if backend_controller_url_raw else None
+    backend_secret_raw = _clean_optional_str(payload.get("backend_hmac_secret")) or ""
+    backend_secret_provided = "backend_hmac_secret" in payload and backend_secret_raw != ""
+    backend_secret_clear = bool(payload.get("backend_hmac_secret_clear", False))
+    backend_hmac_secret = _validate_backend_secret(backend_secret_raw) if backend_secret_provided else None
+
     pot_strains_provided = "pot_strains" in payload
     pot_strains_json = _pot_strains_json(payload.get("pot_strains")) if pot_strains_provided else None
     soil_sensors_provided = "soil_sensors" in payload
@@ -190,6 +240,25 @@ def update_tent_raw(tent_id: int, payload: dict):
 
     with get_conn() as conn:
         with conn.cursor() as cur:
+            cur.execute(
+                "SELECT backend_write_enabled, backend_controller_url, backend_hmac_secret FROM tents WHERE id=%s FOR UPDATE",
+                (tent_id,),
+            )
+            current = cur.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="tent not found")
+
+            effective_enabled = backend_write_enabled if backend_write_enabled_provided else bool(current[0])
+            effective_controller = backend_controller_url if backend_controller_url_provided else (current[1] or None)
+            if backend_secret_clear:
+                effective_secret = None
+            elif backend_secret_provided:
+                effective_secret = backend_hmac_secret
+            else:
+                effective_secret = current[2] or None
+            if effective_enabled and (not effective_controller or not effective_secret):
+                raise HTTPException(status_code=400, detail="backend write API requires controller URL and HMAC secret")
+
             cur.execute(
                 """
                 UPDATE tents
@@ -202,16 +271,30 @@ def update_tent_raw(tent_id: int, payload: dict):
                         WHEN %s THEN %s
                         ELSE shelly_main_password
                     END,
+                    backend_write_enabled=CASE WHEN %s::boolean THEN %s::boolean ELSE backend_write_enabled END,
+                    backend_controller_url=CASE WHEN %s::boolean THEN %s::text ELSE backend_controller_url END,
+                    backend_hmac_secret=CASE
+                        WHEN %s THEN NULL
+                        WHEN %s THEN %s
+                        ELSE backend_hmac_secret
+                    END,
                     pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END,
                     soil_sensors_json=CASE WHEN %s::boolean THEN %s::text ELSE soil_sensors_json END
                 WHERE id=%s
-                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
+                RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL,
+                          pot_strains_json, soil_sensors_json, backend_write_enabled, backend_controller_url,
+                          backend_hmac_secret IS NOT NULL, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id),
+                (
+                    name, source_url, rtsp_url, shelly_main_user,
+                    shelly_password_clear, shelly_password_provided, shelly_main_password,
+                    backend_write_enabled_provided, backend_write_enabled,
+                    backend_controller_url_provided, backend_controller_url,
+                    backend_secret_clear, backend_secret_provided, backend_hmac_secret,
+                    pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id,
+                ),
             )
             row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="tent not found")
 
     return {
         "id": row[0],
@@ -222,8 +305,62 @@ def update_tent_raw(tent_id: int, payload: dict):
         "has_shelly_main_password": bool(row[5]),
         "pot_strains": _normalise_pot_strains(row[6]),
         "soil_sensors": _normalise_soil_sensor_hosts(row[7]),
-        "created_at": row[8].isoformat(),
+        "backend_write_enabled": bool(row[8]),
+        "backend_controller_url": row[9] or "",
+        "has_backend_hmac_secret": bool(row[10]),
+        "created_at": row[11].isoformat(),
     }
+
+def get_tent_write_config_raw(tent_id: int) -> dict:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, source_url, backend_write_enabled, backend_controller_url, backend_hmac_secret
+                FROM tents WHERE id=%s
+                """,
+                (tent_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="tent not found")
+    return {
+        "id": int(row[0]),
+        "name": row[1] or "",
+        "source_url": row[2] or "",
+        "backend_write_enabled": bool(row[3]),
+        "backend_controller_url": row[4] or "",
+        "_backend_hmac_secret": row[5] or "",
+    }
+
+
+def insert_grow_write_audit_raw(
+    *,
+    tent_id: int,
+    tent_name: str,
+    admin_username: str,
+    changed_fields: list[str],
+    firmware_request_id=None,
+    http_status: int | None = None,
+    result_code: str = "",
+    verification_ok: bool = False,
+) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO grow_write_audit(
+                    tent_id, tent_name, admin_username, changed_fields_json, firmware_request_id,
+                    http_status, result_code, verification_ok
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    tent_id, tent_name, admin_username,
+                    json.dumps(list(changed_fields), ensure_ascii=False),
+                    str(firmware_request_id) if firmware_request_id is not None else None,
+                    http_status, str(result_code or "")[:120], bool(verification_ok),
+                ),
+            )
 
 
 def get_irrigation_plan_raw(tent_id: int):

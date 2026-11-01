@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, IrrigationPlanPayload, StrainPayload, TentPayload
+from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, StrainPayload, TentPayload
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.336"
+APP_VERSION = "v0.337"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1293,6 +1293,9 @@ def init_db():
                     irrigation_last_run_date DATE,
                     pot_strains_json TEXT NOT NULL DEFAULT '{"pot1":"","pot2":"","pot3":""}',
                     soil_sensors_json TEXT NOT NULL DEFAULT '[]',
+                    backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    backend_controller_url TEXT,
+                    backend_hmac_secret TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
@@ -1304,6 +1307,26 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_last_run_date DATE;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_strains_json TEXT NOT NULL DEFAULT '{\"pot1\":\"\",\"pot2\":\"\",\"pot3\":\"\"}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS soil_sensors_json TEXT NOT NULL DEFAULT '[]';")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_controller_url TEXT;")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_hmac_secret TEXT;")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS grow_write_audit (
+                    id BIGSERIAL PRIMARY KEY,
+                    tent_id INTEGER REFERENCES tents(id) ON DELETE SET NULL,
+                    tent_name TEXT NOT NULL DEFAULT '',
+                    admin_username TEXT NOT NULL DEFAULT '',
+                    changed_fields_json TEXT NOT NULL DEFAULT '[]',
+                    firmware_request_id TEXT,
+                    http_status INTEGER,
+                    result_code TEXT NOT NULL DEFAULT '',
+                    verification_ok BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_grow_write_audit_tent_created ON grow_write_audit(tent_id, created_at DESC);")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_plan_json;")
             cur.execute("ALTER TABLE tents DROP COLUMN IF EXISTS exhaust_vpd_triggered;")
             cur.execute(
@@ -4529,7 +4552,8 @@ def export_config_backup():
             cur.execute(
                 """
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
-                       irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json, created_at
+                       irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
+                       backend_write_enabled, backend_controller_url, backend_hmac_secret, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -4576,7 +4600,11 @@ def export_config_backup():
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "pot_strains": _normalise_pot_strains(r[8]),
                 "soil_sensors": _normalise_soil_sensor_hosts(r[9]),
-                "created_at": r[10].isoformat() if r[10] else None,
+                "backend_write_enabled": bool(r[10]),
+                "backend_controller_url": r[11] or "",
+                "backend_hmac_secret": None,
+                "has_backend_hmac_secret": bool(r[12]),
+                "created_at": r[13].isoformat() if r[13] else None,
             }
         )
 
@@ -4619,7 +4647,7 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 11,
+        "schema_version": 12,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -4681,8 +4709,8 @@ def import_config_backup(payload: dict):
                     INSERT INTO tents(
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                         irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
-                        created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
+                        backend_write_enabled, backend_controller_url, backend_hmac_secret, created_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
                     """,
                     (
                         int(t.get("id") or 0),
@@ -4695,6 +4723,9 @@ def import_config_backup(payload: dict):
                         t.get("irrigation_last_run_date"),
                         _pot_strains_json(t.get("pot_strains") or t.get("pot_strains_json")),
                         _soil_sensors_json(t.get("soil_sensors") or t.get("soil_sensors_json"), validate_hosts=False),
+                        bool(t.get("backend_write_enabled", False)) and bool(str(t.get("backend_hmac_secret") or "").strip()),
+                        (str(t.get("backend_controller_url") or "").strip() or None),
+                        (str(t.get("backend_hmac_secret") or "").strip() or None),
                         t.get("created_at"),
                     ),
                 )
@@ -6277,6 +6308,20 @@ def setup_page(request: Request):
               <input id=\"tentRtsp\" placeholder=\"RTSP URL (rtsp://...)\" style=\"padding:8px 10px; border-radius:8px; width:min(520px, 90%); margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainUser\" placeholder=\"Shelly Main User (optional)\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainPass\" type=\"password\" placeholder=\"Shelly Main Password (optional)\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-left:6px; margin-top:6px;\" />
+              <div id=\"backendWriteConfigLabel\" style=\"margin-top:12px; opacity:.95; font-weight:700;\">Backend Write API</div>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-top:7px;\">
+                <input type=\"checkbox\" id=\"tentBackendWriteEnabled\" />
+                <span id=\"tentBackendWriteEnabledLabel\">Enable authenticated controller writes</span>
+              </label>
+              <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:7px;\">
+                <input id=\"tentBackendControllerUrl\" placeholder=\"Controller URL/IP (http://192.168.178.58:8080)\" style=\"padding:8px 10px; border-radius:8px; width:min(430px, 90%);\" />
+                <input id=\"tentBackendHmacSecret\" type=\"password\" autocomplete=\"new-password\" placeholder=\"64-char lowercase HMAC secret\" style=\"padding:8px 10px; border-radius:8px; width:min(430px, 90%);\" />
+              </div>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-top:7px;\">
+                <input type=\"checkbox\" id=\"tentBackendHmacSecretClear\" />
+                <span id=\"tentBackendHmacSecretClearLabel\">Remove stored HMAC secret</span>
+              </label>
+              <div id=\"backendWriteHint\" class=\"muted\" style=\"margin-top:6px;\">The GrowTent firmware must allow the TCP source IP it actually sees (with Docker NAT this is commonly the LAN IP of the Docker host). HTTP/8080 is authenticated with HMAC but is not encrypted.</div>
               <div id=\"potStrainsLabel\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Pot strains</div>
               <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;\">
                 <select id=\"tentPot1Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 1 strain</option></select>
@@ -6316,7 +6361,37 @@ def setup_page(request: Request):
                 </div>
                 <div id=\"irPlanMsg\" style=\"margin-top:10px;\"></div>
               </div>
-    
+            </div>
+
+            <div id=\"growProfileModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.72); z-index:1100; align-items:center; justify-content:center; padding:16px;\">
+              <div class=\"card\" style=\"max-width:620px; width:100%; max-height:90vh; overflow:auto;\">
+                <div style=\"display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;\">
+                  <strong id=\"growProfileTitle\">Grow profile write</strong>
+                  <button type=\"button\" id=\"growProfileCloseBtn\">✕</button>
+                </div>
+                <div id=\"growProfileTentLabel\" class=\"small\" style=\"margin-bottom:10px;\">-</div>
+                <div class=\"muted\" id=\"growProfileHint\" style=\"margin-bottom:12px;\">Only changed fields are sent. Clear date values only with the explicit delete checkboxes; empty strings are never sent.</div>
+                <div style=\"display:grid; grid-template-columns:minmax(190px,1fr) minmax(180px,1fr); gap:10px; align-items:center;\">
+                  <label for=\"growTargetTemperature\">Target temperature (°C)</label>
+                  <input id=\"growTargetTemperature\" type=\"number\" min=\"18\" max=\"30\" step=\"0.1\" style=\"padding:8px 10px; border-radius:8px;\" />
+                  <label for=\"growTargetVpd\">Target VPD (kPa)</label>
+                  <input id=\"growTargetVpd\" type=\"number\" min=\"0.5\" max=\"3.5\" step=\"0.01\" style=\"padding:8px 10px; border-radius:8px;\" />
+                  <label for=\"growCurrentPhase\">Current phase</label>
+                  <select id=\"growCurrentPhase\" style=\"padding:8px 10px; border-radius:8px;\"><option value=\"1\">1 – Vegetative</option><option value=\"2\">2 – Flowering</option><option value=\"3\">3 – Drying</option></select>
+                  <label for=\"growFloweringStart\">Flowering start</label>
+                  <div><input id=\"growFloweringStart\" type=\"date\" style=\"padding:8px 10px; border-radius:8px;\" /> <label style=\"white-space:nowrap;\"><input type=\"checkbox\" id=\"growFloweringDelete\" /> delete</label></div>
+                  <label for=\"growDryingStart\">Drying start</label>
+                  <div><input id=\"growDryingStart\" type=\"date\" style=\"padding:8px 10px; border-radius:8px;\" /> <label style=\"white-space:nowrap;\"><input type=\"checkbox\" id=\"growDryingDelete\" /> delete</label></div>
+                </div>
+                <div style=\"margin-top:12px;\"><strong id=\"growProfileOutgoingLabel\">Will be sent</strong></div>
+                <pre id=\"growProfileOutgoing\" style=\"white-space:pre-wrap; word-break:break-word; border:1px solid var(--grid); padding:10px; border-radius:8px; min-height:44px;\">{{}}</pre>
+                <div style=\"display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;\">
+                  <button type=\"button\" id=\"growProfileSaveBtn\">Send and verify</button>
+                  <button type=\"button\" id=\"growProfileCancelBtn\">Cancel</button>
+                </div>
+                <div id=\"growProfileMsg\" style=\"margin-top:10px;\"></div>
+              </div>
+            </div>
 
         </div>
           </main>
@@ -6369,6 +6444,8 @@ def setup_page(request: Request):
           const airSensorMsgEl = document.getElementById('airSensorMsg');
           let pending2faToken = '';
           let currentPlanTentId = 0;
+          let currentGrowProfileTentId = 0;
+          let growProfileOriginal = {};
           let authHasPassword = false;
           let setupTentsCache = [];
           let temperatureAlertUiUnit = (unitSel?.value === 'F') ? 'F' : 'C';
@@ -6475,6 +6552,16 @@ def setup_page(request: Request):
               saveTent: 'Save tent',
               addTent: 'Add tent',
               deleteTent: 'Delete',
+              backendWriteConfig: 'Backend Write API',
+              backendWriteEnabled: 'Enable authenticated controller writes',
+              backendWriteRemoveSecret: 'Remove stored HMAC secret',
+              backendWriteHint: 'The firmware must allow the TCP source IP it actually sees. With Docker NAT this is commonly the LAN IP of the Docker host. HMAC protects authenticity/integrity/replay; HTTP/8080 is not encrypted.',
+              backendWriteStatus: 'Controller write API',
+              growProfile: 'Grow profile',
+              growProfileTitle: 'Grow profile write',
+              growProfileHint: 'Only changed fields are sent. Dates are deleted only with the explicit delete checkboxes; empty strings are never sent.',
+              growProfileOutgoing: 'Will be sent',
+              growProfileSend: 'Send and verify',
               guestUsersTitle: 'Guest users',
               addGuestUser: 'Add guest',
               guestUsersNone: 'No guest users configured.',
@@ -6581,6 +6668,16 @@ def setup_page(request: Request):
               saveTent: 'Zelt speichern',
               addTent: 'Zelt hinzufügen',
               deleteTent: 'Löschen',
+              backendWriteConfig: 'Backend Write API',
+              backendWriteEnabled: 'Authentifizierte Controller-Schreibzugriffe aktivieren',
+              backendWriteRemoveSecret: 'Gespeichertes HMAC-Secret entfernen',
+              backendWriteHint: 'In der Firmware muss die TCP-Quell-IP erlaubt sein, die der Controller tatsächlich sieht. Bei Docker-NAT ist das typischerweise die LAN-IP des Docker-Hosts. HMAC schützt Authentizität, Integrität und Replay; HTTP/8080 ist nicht verschlüsselt.',
+              backendWriteStatus: 'Controller Write API',
+              growProfile: 'Grow-Profil',
+              growProfileTitle: 'Grow-Profil schreiben',
+              growProfileHint: 'Es werden nur geänderte Felder gesendet. Datumswerte werden ausschließlich über die Lösch-Checkboxen als null gelöscht; leere Strings werden nie gesendet.',
+              growProfileOutgoing: 'Wird übertragen',
+              growProfileSend: 'Senden und verifizieren',
               guestUsersTitle: 'Gastbenutzer',
               addGuestUser: 'Gast hinzufügen',
               guestUsersNone: 'Keine Gastbenutzer vorhanden.',
@@ -6630,6 +6727,14 @@ def setup_page(request: Request):
             set('tentsTitle', tSetup('tents'));
             set('potStrainsLabel', tSetup('potStrains'));
             set('soilSensorsSetupLabel', tSetup('soilSensors'));
+            set('backendWriteConfigLabel', tSetup('backendWriteConfig'));
+            set('tentBackendWriteEnabledLabel', tSetup('backendWriteEnabled'));
+            set('tentBackendHmacSecretClearLabel', tSetup('backendWriteRemoveSecret'));
+            set('backendWriteHint', tSetup('backendWriteHint'));
+            set('growProfileTitle', tSetup('growProfileTitle'));
+            set('growProfileHint', tSetup('growProfileHint'));
+            set('growProfileOutgoingLabel', tSetup('growProfileOutgoing'));
+            set('growProfileSaveBtn', tSetup('growProfileSend'));
             set('saveBtn', tSetup('save'));
             refreshPotStrainPlaceholders();
             refreshSoilSensorPlaceholders();
@@ -6891,6 +6996,133 @@ def setup_page(request: Request):
           document.getElementById('irPlanCancelBtn')?.addEventListener('click', closeIrrigationPlanModal);
           document.getElementById('irPlanSaveBtn')?.addEventListener('click', saveIrrigationPlan);
 
+          function closeGrowProfileModal(){
+            const modal = document.getElementById('growProfileModal');
+            if (modal) modal.style.display = 'none';
+            currentGrowProfileTentId = 0;
+            growProfileOriginal = {};
+          }
+
+          function buildGrowProfilePatch(){
+            const patch = {};
+            const tempEl = document.getElementById('growTargetTemperature');
+            const vpdEl = document.getElementById('growTargetVpd');
+            const phaseEl = document.getElementById('growCurrentPhase');
+            const floweringEl = document.getElementById('growFloweringStart');
+            const dryingEl = document.getElementById('growDryingStart');
+            const floweringDelete = !!document.getElementById('growFloweringDelete')?.checked;
+            const dryingDelete = !!document.getElementById('growDryingDelete')?.checked;
+
+            const temp = tempEl?.value === '' ? null : Number(tempEl?.value);
+            const vpd = vpdEl?.value === '' ? null : Number(vpdEl?.value);
+            const phase = phaseEl?.value ? Number(phaseEl.value) : null;
+            const flowering = (floweringEl?.value || '').trim();
+            const drying = (dryingEl?.value || '').trim();
+
+            if (temp !== null && Number.isFinite(temp) && Number(temp) !== Number(growProfileOriginal.targetTemperature)) patch.targetTemperature = temp;
+            if (vpd !== null && Number.isFinite(vpd) && Number(vpd) !== Number(growProfileOriginal.targetVPD)) patch.targetVPD = vpd;
+            if (phase !== null && Number.isInteger(phase) && Number(phase) !== Number(growProfileOriginal.currentPhase)) patch.currentPhase = phase;
+            if (floweringDelete) patch.floweringStart = null;
+            else if (flowering && flowering !== String(growProfileOriginal.floweringStart || '')) patch.floweringStart = flowering;
+            if (dryingDelete) patch.dryingStart = null;
+            else if (drying && drying !== String(growProfileOriginal.dryingStart || '')) patch.dryingStart = drying;
+            return patch;
+          }
+
+          function refreshGrowProfileOutgoing(){
+            const pre = document.getElementById('growProfileOutgoing');
+            if (pre) pre.textContent = JSON.stringify(buildGrowProfilePatch(), null, 2);
+            const floweringEl = document.getElementById('growFloweringStart');
+            const dryingEl = document.getElementById('growDryingStart');
+            if (floweringEl) floweringEl.disabled = !!document.getElementById('growFloweringDelete')?.checked;
+            if (dryingEl) dryingEl.disabled = !!document.getElementById('growDryingDelete')?.checked;
+          }
+
+          async function openGrowProfileModal(tent){
+            const modal = document.getElementById('growProfileModal');
+            const label = document.getElementById('growProfileTentLabel');
+            const msg = document.getElementById('growProfileMsg');
+            if (!modal) return;
+            currentGrowProfileTentId = Number(tent?.id || 0);
+            growProfileOriginal = {};
+            if (label) label.textContent = `#${tent.id} ${tent.name} · ${tent.backend_controller_url || '-'}`;
+            if (msg) msg.textContent = (langSel?.value === 'de') ? 'Lade Controllerzustand…' : 'Loading controller state…';
+            modal.style.display = 'flex';
+            try {
+              const res = await fetch(`/tents/${currentGrowProfileTentId}/grow-profile`, { cache:'no-store' });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                const detail = body?.detail;
+                if (msg) msg.textContent = (detail && typeof detail === 'object' ? detail.message : detail) || `HTTP ${res.status}`;
+                return;
+              }
+              const state = body?.state?.runtime || body?.state?.stored || {};
+              growProfileOriginal = { ...state };
+              const setValue = (id, value) => { const el = document.getElementById(id); if (el) el.value = value ?? ''; };
+              setValue('growTargetTemperature', state.targetTemperature);
+              setValue('growTargetVpd', state.targetVPD);
+              setValue('growCurrentPhase', state.currentPhase || 1);
+              setValue('growFloweringStart', state.floweringStart || '');
+              setValue('growDryingStart', state.dryingStart || '');
+              const fd = document.getElementById('growFloweringDelete'); if (fd) fd.checked = false;
+              const dd = document.getElementById('growDryingDelete'); if (dd) dd.checked = false;
+              if (msg) msg.textContent = (langSel?.value === 'de') ? 'Controllerzustand geladen.' : 'Controller state loaded.';
+              refreshGrowProfileOutgoing();
+            } catch {
+              if (msg) msg.textContent = (langSel?.value === 'de') ? 'Controllerzustand konnte nicht geladen werden.' : 'Failed to load controller state.';
+            }
+          }
+
+          async function saveGrowProfile(){
+            const msg = document.getElementById('growProfileMsg');
+            if (!currentGrowProfileTentId) return;
+            const patch = buildGrowProfilePatch();
+            if (!Object.keys(patch).length) {
+              if (msg) msg.textContent = (langSel?.value === 'de') ? 'Keine Änderungen ausgewählt.' : 'No changes selected.';
+              return;
+            }
+            const preview = JSON.stringify(patch, null, 2);
+            const question = (langSel?.value === 'de')
+              ? `Diese Werte an den Controller senden und anschließend verifizieren?\n\n${preview}`
+              : `Send these values to the controller and verify them afterwards?\n\n${preview}`;
+            if (!confirm(question)) return;
+            if (msg) msg.textContent = (langSel?.value === 'de') ? 'Sende und verifiziere…' : 'Sending and verifying…';
+            try {
+              const res = await fetch(`/tents/${currentGrowProfileTentId}/grow-profile`, {
+                method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch)
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                const detail = body?.detail;
+                const text = (detail && typeof detail === 'object' ? detail.message : detail) || `HTTP ${res.status}`;
+                if (msg) msg.textContent = text;
+                return;
+              }
+              growProfileOriginal = { ...(body?.state?.runtime || growProfileOriginal) };
+              if (msg) msg.textContent = (langSel?.value === 'de')
+                ? `Erfolgreich verifiziert${body?.requestId != null ? ` (Request ${body.requestId})` : ''}.`
+                : `Successfully verified${body?.requestId != null ? ` (request ${body.requestId})` : ''}.`;
+              const fd = document.getElementById('growFloweringDelete'); if (fd) fd.checked = false;
+              const dd = document.getElementById('growDryingDelete'); if (dd) dd.checked = false;
+              const state = body?.state?.runtime || {};
+              const setValue = (id, value) => { const el = document.getElementById(id); if (el) el.value = value ?? ''; };
+              setValue('growTargetTemperature', state.targetTemperature);
+              setValue('growTargetVpd', state.targetVPD);
+              setValue('growCurrentPhase', state.currentPhase || 1);
+              setValue('growFloweringStart', state.floweringStart || '');
+              setValue('growDryingStart', state.dryingStart || '');
+              refreshGrowProfileOutgoing();
+            } catch {
+              if (msg) msg.textContent = (langSel?.value === 'de') ? 'Schreibvorgang fehlgeschlagen.' : 'Write failed.';
+            }
+          }
+
+          ['growTargetTemperature','growTargetVpd','growCurrentPhase','growFloweringStart','growDryingStart','growFloweringDelete','growDryingDelete']
+            .forEach(id => document.getElementById(id)?.addEventListener('input', refreshGrowProfileOutgoing));
+          document.getElementById('growProfileCloseBtn')?.addEventListener('click', closeGrowProfileModal);
+          document.getElementById('growProfileCancelBtn')?.addEventListener('click', closeGrowProfileModal);
+          document.getElementById('growProfileSaveBtn')?.addEventListener('click', saveGrowProfile);
+
           async function loadTents(){
             const list = document.getElementById('tentList');
             if (!list) return;
@@ -6918,9 +7150,11 @@ def setup_page(request: Request):
                   <span style="opacity:.85">${tSetup('potStrains')}: ${potTxt}</span><br>
                   <span style="opacity:.85">${tSetup('soilSensors')}: ${soilTxt}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
+                  <span style="opacity:.85">${tSetup('backendWriteStatus')}: ${t.backend_write_enabled ? ((t.backend_controller_url || '-') + (t.has_backend_hmac_secret ? ' · HMAC set' : ' · HMAC missing')) : '-'}</span><br>
                   <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">${tSetup('editTent')}</button>
                   <button data-plan-tent="${t.id}" style="margin-top:6px; margin-left:6px;">${tSetup('irrigationPlan')}</button>
+                  <button data-grow-profile-tent="${t.id}" ${t.backend_write_enabled ? '' : 'disabled'} style="margin-top:6px; margin-left:6px;">${tSetup('growProfile')}</button>
                   <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('deleteTent')}</button>
                 </div>
               `;
@@ -6937,6 +7171,11 @@ def setup_page(request: Request):
                   document.getElementById('tentMainUser').value = tent.shelly_main_user || '';
                   document.getElementById('tentMainPass').value = '';
                   document.getElementById('tentMainPass').placeholder = tent.has_shelly_main_password ? 'Stored - leave blank to keep' : 'Optional Shelly password';
+                  document.getElementById('tentBackendWriteEnabled').checked = !!tent.backend_write_enabled;
+                  document.getElementById('tentBackendControllerUrl').value = tent.backend_controller_url || '';
+                  document.getElementById('tentBackendHmacSecret').value = '';
+                  document.getElementById('tentBackendHmacSecret').placeholder = tent.has_backend_hmac_secret ? 'Stored - leave blank to keep' : '64-char lowercase HMAC secret';
+                  document.getElementById('tentBackendHmacSecretClear').checked = false;
                   fillPotStrainSelects(tent.pot_strains || {});
                   fillSoilSensorInputs(tent.soil_sensors || []);
                   document.getElementById('addTentBtn').setAttribute('data-edit-id', String(id));
@@ -6949,6 +7188,14 @@ def setup_page(request: Request):
                   const tent = tents.find(x => x.id === id);
                   if (!tent) return;
                   openIrrigationPlanModal(tent);
+                });
+              });
+              list.querySelectorAll('button[data-grow-profile-tent]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                  const id = Number(btn.getAttribute('data-grow-profile-tent'));
+                  const tent = tents.find(x => x.id === id);
+                  if (!tent || !tent.backend_write_enabled) return;
+                  openGrowProfileModal(tent);
                 });
               });
 
@@ -7719,6 +7966,10 @@ def setup_page(request: Request):
             const rtsp_url = (document.getElementById('tentRtsp')?.value || '').trim();
             const shelly_main_user = (document.getElementById('tentMainUser')?.value || '').trim();
             const shelly_main_password = (document.getElementById('tentMainPass')?.value || '').trim();
+            const backend_write_enabled = !!document.getElementById('tentBackendWriteEnabled')?.checked;
+            const backend_controller_url = (document.getElementById('tentBackendControllerUrl')?.value || '').trim();
+            const backend_hmac_secret = (document.getElementById('tentBackendHmacSecret')?.value || '').trim();
+            const backend_hmac_secret_clear = !!document.getElementById('tentBackendHmacSecretClear')?.checked;
             const pot_strains = readPotStrainsFromForm();
             const soil_sensors = readSoilSensorsFromForm();
             const hasSoilSensors = soil_sensors.some(Boolean);
@@ -7727,6 +7978,9 @@ def setup_page(request: Request):
             let effectiveSourceUrl = source_url;
             let effectiveRtspUrl = rtsp_url;
             let effectiveShellyMainUser = shelly_main_user;
+            let effectiveBackendWriteEnabled = backend_write_enabled;
+            let effectiveBackendControllerUrl = backend_controller_url;
+            let effectiveBackendHmacSecretClear = backend_hmac_secret_clear;
             let effectivePotStrains = pot_strains;
 
             if ((!effectiveName || !effectiveSourceUrl) && hasSoilSensors) {
@@ -7739,6 +7993,9 @@ def setup_page(request: Request):
                 effectiveSourceUrl = effectiveSourceUrl || String(fallbackTent.source_url || '').trim();
                 effectiveRtspUrl = effectiveRtspUrl || String(fallbackTent.rtsp_url || '').trim();
                 effectiveShellyMainUser = effectiveShellyMainUser || String(fallbackTent.shelly_main_user || '').trim();
+                effectiveBackendWriteEnabled = !!fallbackTent.backend_write_enabled;
+                effectiveBackendControllerUrl = effectiveBackendControllerUrl || String(fallbackTent.backend_controller_url || '').trim();
+                effectiveBackendHmacSecretClear = false;
                 effectivePotStrains = {
                   ...(fallbackTent.pot_strains || {}),
                   ...pot_strains,
@@ -7768,6 +8025,10 @@ def setup_page(request: Request):
                   rtsp_url: effectiveRtspUrl,
                   shelly_main_user: effectiveShellyMainUser,
                   shelly_main_password,
+                  backend_write_enabled: effectiveBackendWriteEnabled,
+                  backend_controller_url: effectiveBackendControllerUrl,
+                  backend_hmac_secret,
+                  backend_hmac_secret_clear: effectiveBackendHmacSecretClear,
                   pot_strains: effectivePotStrains,
                   soil_sensors,
                 })
@@ -7785,6 +8046,10 @@ def setup_page(request: Request):
               document.getElementById('tentRtsp').value = '';
               document.getElementById('tentMainUser').value = '';
               document.getElementById('tentMainPass').value = '';
+              document.getElementById('tentBackendWriteEnabled').checked = false;
+              document.getElementById('tentBackendControllerUrl').value = '';
+              document.getElementById('tentBackendHmacSecret').value = '';
+              document.getElementById('tentBackendHmacSecretClear').checked = false;
               clearPotStrainForm();
               clearSoilSensorForm();
               btn.removeAttribute('data-edit-id');

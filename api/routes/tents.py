@@ -1,11 +1,19 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import app as legacy
 from services.tent_service import TentService
 from core.dependencies import get_tent_service
-from models.schemas import IrrigationPlanPayload, StrainPayload, TentPayload
+from models.schemas import GrowProfilePatch, IrrigationPlanPayload, StrainPayload, TentPayload
 
 router = APIRouter()
+
+
+def _admin_username(request: Request) -> str:
+    token = request.cookies.get("caop_session")
+    session = legacy.get_session(token)
+    if not session or (session.get("role") or "") != "admin":
+        raise HTTPException(status_code=403, detail="admin required")
+    return str(session.get("username") or "admin")
 
 
 @router.get('/tents')
@@ -26,6 +34,18 @@ def update_tent(tent_id: int, payload: TentPayload, service: TentService = Depen
 @router.delete('/tents/{tent_id}')
 def delete_tent(tent_id: int, service: TentService = Depends(get_tent_service)):
     return service.delete_tent(tent_id)
+
+
+@router.get('/tents/{tent_id}/grow-profile')
+def get_grow_profile(tent_id: int, request: Request, service: TentService = Depends(get_tent_service)):
+    _admin_username(request)
+    return service.get_grow_profile(tent_id)
+
+
+@router.patch('/tents/{tent_id}/grow-profile')
+def update_grow_profile(tent_id: int, payload: GrowProfilePatch, request: Request, service: TentService = Depends(get_tent_service)):
+    username = _admin_username(request)
+    return service.update_grow_profile(tent_id, payload, username)
 
 
 @router.get('/strains')
