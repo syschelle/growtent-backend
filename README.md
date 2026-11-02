@@ -49,6 +49,7 @@ Main features:
 - direct Shelly reads for fresher power and switch-state display
 - optional Sensor.Community/Luftdaten DNMS-compatible live air sensor display
 - up to three dedicated ESP8266 soil moisture sensor IPs per tent
+- optional per-tent Growlight power-drop warning via Pushover with configurable Watt threshold; normal light-off transitions are ignored
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
@@ -210,7 +211,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.345
+ghcr.io/syschelle/growtent-backend-api:v0.346
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -302,8 +303,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.345 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.345 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.346 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.346 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -881,7 +882,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.345 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.346 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

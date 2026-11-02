@@ -30,6 +30,16 @@ def _normalise_backend_controller_url(value):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+def _validate_growlight_power_drop(value, default=20.0):
+    try:
+        result = float(default if value is None else value)
+    except Exception:
+        raise HTTPException(status_code=400, detail="growlight power-drop threshold must be numeric")
+    if result < 1.0 or result > 1000.0:
+        raise HTTPException(status_code=400, detail="growlight power-drop threshold must be between 1 and 1000 W")
+    return result
+
+
 def _validate_backend_secret(value):
     if value is None:
         return None
@@ -107,7 +117,8 @@ def list_tents_raw():
                        shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date,
                        pot_strains_json, soil_sensors_json,
-                       backend_write_enabled, backend_controller_url, backend_hmac_secret, created_at
+                       backend_write_enabled, backend_controller_url, backend_hmac_secret,
+                       growlight_power_alert_enabled, growlight_power_drop_w, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -130,7 +141,9 @@ def list_tents_raw():
                 "backend_write_enabled": bool(r[10]),
                 "backend_controller_url": r[11] or "",
                 "has_backend_hmac_secret": bool(r[12]),
-                "created_at": r[13].isoformat(),
+                "growlight_power_alert_enabled": bool(r[13]),
+                "growlight_power_drop_w": float(r[14] if r[14] is not None else 20.0),
+                "created_at": r[15].isoformat(),
             }
         )
     return out
@@ -149,6 +162,8 @@ def create_tent_raw(payload: dict):
     backend_hmac_secret = _validate_backend_secret(backend_hmac_secret_raw) if backend_hmac_secret_raw else None
     if backend_write_enabled and (not backend_controller_url or not backend_hmac_secret):
         raise HTTPException(status_code=400, detail="backend write API requires controller URL and HMAC secret")
+    growlight_power_alert_enabled = bool(payload.get("growlight_power_alert_enabled", False))
+    growlight_power_drop_w = _validate_growlight_power_drop(payload.get("growlight_power_drop_w", 20.0))
     pot_strains_json = _pot_strains_json(payload.get("pot_strains"))
     soil_sensors_json = _soil_sensors_json(payload.get("soil_sensors"), validate_hosts=True)
 
@@ -162,15 +177,16 @@ def create_tent_raw(payload: dict):
                 INSERT INTO tents(
                     name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                     backend_write_enabled, backend_controller_url, backend_hmac_secret,
+                    growlight_power_alert_enabled, growlight_power_drop_w,
                     pot_strains_json, soil_sensors_json
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
                 RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL,
                           pot_strains_json, soil_sensors_json, backend_write_enabled, backend_controller_url,
-                          backend_hmac_secret IS NOT NULL, created_at
+                          backend_hmac_secret IS NOT NULL, growlight_power_alert_enabled, growlight_power_drop_w, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, backend_write_enabled, backend_controller_url, backend_hmac_secret, pot_strains_json, soil_sensors_json),
+                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, backend_write_enabled, backend_controller_url, backend_hmac_secret, growlight_power_alert_enabled, growlight_power_drop_w, pot_strains_json, soil_sensors_json),
             )
             row = cur.fetchone()
             if not row:
@@ -188,7 +204,9 @@ def create_tent_raw(payload: dict):
         "backend_write_enabled": bool(row[8]),
         "backend_controller_url": row[9] or "",
         "has_backend_hmac_secret": bool(row[10]),
-        "created_at": row[11].isoformat(),
+        "growlight_power_alert_enabled": bool(row[11]),
+        "growlight_power_drop_w": float(row[12] if row[12] is not None else 20.0),
+        "created_at": row[13].isoformat(),
     }
 
 
@@ -230,6 +248,11 @@ def update_tent_raw(tent_id: int, payload: dict):
     backend_secret_clear = bool(payload.get("backend_hmac_secret_clear", False))
     backend_hmac_secret = _validate_backend_secret(backend_secret_raw) if backend_secret_provided else None
 
+    growlight_power_alert_enabled_provided = "growlight_power_alert_enabled" in payload
+    growlight_power_alert_enabled = bool(payload.get("growlight_power_alert_enabled", False))
+    growlight_power_drop_w_provided = "growlight_power_drop_w" in payload
+    growlight_power_drop_w = _validate_growlight_power_drop(payload.get("growlight_power_drop_w", 20.0)) if growlight_power_drop_w_provided else 20.0
+
     pot_strains_provided = "pot_strains" in payload
     pot_strains_json = _pot_strains_json(payload.get("pot_strains")) if pot_strains_provided else None
     soil_sensors_provided = "soil_sensors" in payload
@@ -241,7 +264,7 @@ def update_tent_raw(tent_id: int, payload: dict):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT backend_write_enabled, backend_controller_url, backend_hmac_secret FROM tents WHERE id=%s FOR UPDATE",
+                "SELECT backend_write_enabled, backend_controller_url, backend_hmac_secret, growlight_power_alert_enabled, growlight_power_drop_w FROM tents WHERE id=%s FOR UPDATE",
                 (tent_id,),
             )
             current = cur.fetchone()
@@ -278,12 +301,14 @@ def update_tent_raw(tent_id: int, payload: dict):
                         WHEN %s THEN %s
                         ELSE backend_hmac_secret
                     END,
+                    growlight_power_alert_enabled=CASE WHEN %s::boolean THEN %s::boolean ELSE growlight_power_alert_enabled END,
+                    growlight_power_drop_w=CASE WHEN %s::boolean THEN %s::double precision ELSE growlight_power_drop_w END,
                     pot_strains_json=CASE WHEN %s::boolean THEN %s::text ELSE pot_strains_json END,
                     soil_sensors_json=CASE WHEN %s::boolean THEN %s::text ELSE soil_sensors_json END
                 WHERE id=%s
                 RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL,
                           pot_strains_json, soil_sensors_json, backend_write_enabled, backend_controller_url,
-                          backend_hmac_secret IS NOT NULL, created_at
+                          backend_hmac_secret IS NOT NULL, growlight_power_alert_enabled, growlight_power_drop_w, created_at
                 """,
                 (
                     name, source_url, rtsp_url, shelly_main_user,
@@ -291,6 +316,8 @@ def update_tent_raw(tent_id: int, payload: dict):
                     backend_write_enabled_provided, backend_write_enabled,
                     backend_controller_url_provided, backend_controller_url,
                     backend_secret_clear, backend_secret_provided, backend_hmac_secret,
+                    growlight_power_alert_enabled_provided, growlight_power_alert_enabled,
+                    growlight_power_drop_w_provided, growlight_power_drop_w,
                     pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id,
                 ),
             )
@@ -308,7 +335,9 @@ def update_tent_raw(tent_id: int, payload: dict):
         "backend_write_enabled": bool(row[8]),
         "backend_controller_url": row[9] or "",
         "has_backend_hmac_secret": bool(row[10]),
-        "created_at": row[11].isoformat(),
+        "growlight_power_alert_enabled": bool(row[11]),
+        "growlight_power_drop_w": float(row[12] if row[12] is not None else 20.0),
+        "created_at": row[13].isoformat(),
     }
 
 def get_tent_write_config_raw(tent_id: int) -> dict:

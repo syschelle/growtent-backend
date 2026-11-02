@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.345"
+APP_VERSION = "v0.346"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1299,6 +1299,8 @@ def init_db():
                     backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                     backend_controller_url TEXT,
                     backend_hmac_secret TEXT,
+                    growlight_power_alert_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    growlight_power_drop_w DOUBLE PRECISION NOT NULL DEFAULT 20.0,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
@@ -1313,6 +1315,8 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_controller_url TEXT;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_hmac_secret TEXT;")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS growlight_power_alert_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS growlight_power_drop_w DOUBLE PRECISION NOT NULL DEFAULT 20.0;")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS grow_write_audit (
@@ -1824,6 +1828,13 @@ def _to_float(v):
         return None
 
 
+def _normalise_growlight_power_drop_w(value, default: float = 20.0) -> float:
+    parsed = _to_float(value)
+    if parsed is None or not math.isfinite(parsed):
+        parsed = float(default)
+    return max(1.0, min(1000.0, float(parsed)))
+
+
 def _calc_vpd_kpa(temp_c: float | None, leaf_offset_c: float | None, humidity_pct: float | None):
     if temp_c is None or humidity_pct is None:
         return None
@@ -2126,7 +2137,7 @@ def _stored_shelly_main_password(tent: dict | None) -> str:
 def list_tent_sources():
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json FROM tents ORDER BY id")
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json, growlight_power_alert_enabled, growlight_power_drop_w FROM tents ORDER BY id")
             rows = cur.fetchall()
             return [
                 {
@@ -2140,6 +2151,8 @@ def list_tent_sources():
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                     "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
                     "soil_sensors": _normalise_soil_sensor_hosts(r[9] if len(r) > 9 else None),
+                    "growlight_power_alert_enabled": bool(r[10]) if len(r) > 10 else False,
+                    "growlight_power_drop_w": float(r[11] if len(r) > 11 and r[11] is not None else 20.0),
                 }
                 for r in rows
             ]
@@ -3200,6 +3213,96 @@ def _send_grouped_flood_alerts(alerts: list[dict]) -> bool:
     return True
 
 
+
+def _growlight_power_sample(payload: dict | None) -> tuple[bool, float | None]:
+    data = payload or {}
+    is_on = _boolish(data.get("cur.shelly.light.isOn"))
+    watt = _to_float(data.get("cur.shelly.light.Watt"))
+    if watt is None or not math.isfinite(watt) or watt < 0:
+        watt = None
+    return bool(is_on), watt
+
+
+def _growlight_power_drop_candidate(payload: dict | None, threshold_w: float, state: dict | None) -> tuple[dict | None, dict]:
+    """Evaluate one Growlight sample without causing an alert on a normal light-off transition.
+
+    A rapid drop is defined as a drop larger than ``threshold_w`` between two
+    consecutive successful backend polls while the light reports ON in both
+    samples.  After one alert, the detector rearms when the light is switched
+    off or power recovers to within half the configured drop threshold of the
+    pre-drop reference level.
+    """
+    try:
+        threshold = float(threshold_w)
+    except Exception:
+        threshold = 20.0
+    if not math.isfinite(threshold) or threshold < 1.0:
+        threshold = 20.0
+
+    current_on, current_watt = _growlight_power_sample(payload)
+    src = dict(state or {})
+    previous_on = bool(src.get("growlight_power_last_on", False))
+    previous_watt = _to_float(src.get("growlight_power_last_watt"))
+    if previous_watt is not None and (not math.isfinite(previous_watt) or previous_watt < 0):
+        previous_watt = None
+    alert_active = bool(src.get("growlight_power_alert_active", False))
+    reference_watt = _to_float(src.get("growlight_power_reference_watt"))
+
+    next_state = {
+        "growlight_power_last_on": current_on,
+        "growlight_power_last_watt": current_watt,
+        "growlight_power_alert_active": alert_active,
+        "growlight_power_reference_watt": reference_watt,
+    }
+
+    if not current_on:
+        next_state.update({
+            "growlight_power_last_watt": None,
+            "growlight_power_alert_active": False,
+            "growlight_power_reference_watt": None,
+        })
+        return None, next_state
+
+    if current_watt is None:
+        # Do not compare across a missing/invalid Watt sample.
+        next_state["growlight_power_last_watt"] = None
+        return None, next_state
+
+    if alert_active:
+        if reference_watt is not None and current_watt >= max(0.0, reference_watt - (threshold / 2.0)):
+            next_state["growlight_power_alert_active"] = False
+            next_state["growlight_power_reference_watt"] = None
+        return None, next_state
+
+    if previous_on and previous_watt is not None:
+        drop_w = previous_watt - current_watt
+        if drop_w > threshold:
+            # Preserve the high sample until notification delivery succeeds so
+            # a transient Pushover failure can be retried on the next poll.
+            next_state["growlight_power_last_watt"] = previous_watt
+            return {
+                "before_w": previous_watt,
+                "after_w": current_watt,
+                "drop_w": drop_w,
+                "threshold_w": threshold,
+            }, next_state
+
+    return None, next_state
+
+
+def _send_growlight_power_drop_alert(tent_label: str, candidate: dict) -> bool:
+    before_w = float(candidate.get("before_w") or 0.0)
+    after_w = float(candidate.get("after_w") or 0.0)
+    drop_w = float(candidate.get("drop_w") or 0.0)
+    threshold_w = float(candidate.get("threshold_w") or 20.0)
+    message = (
+        f"{tent_label}: Growlight ist eingeschaltet, aber die Leistung ist zwischen zwei Messungen "
+        f"von {before_w:.1f} W auf {after_w:.1f} W gefallen "
+        f"(-{drop_w:.1f} W; Warnschwelle > {threshold_w:g} W). Bitte Beleuchtung prüfen."
+    )
+    return _send_pushover("CanopyOps: Growlight-Leistungsabfall", message, priority=0)
+
+
 def poll_loop():
     loops = 0
     while True:
@@ -3238,6 +3341,26 @@ def poll_loop():
                         _track_watering_run_from_payload(tent["id"], payload)
 
                         label = _tent_label_for_notify(tent, payload)
+                        st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
+
+                        # Optional Growlight power-drop warning. It uses the Watt value already
+                        # present in /api/state, so it adds no extra Shelly/controller request.
+                        if bool(tent.get("growlight_power_alert_enabled", False)):
+                            threshold_w = _normalise_growlight_power_drop_w(tent.get("growlight_power_drop_w"), 20.0)
+                            power_candidate, power_state = _growlight_power_drop_candidate(payload, threshold_w, st)
+                            st.update(power_state)
+                            if power_candidate and _send_growlight_power_drop_alert(label, power_candidate):
+                                st["growlight_power_alert_active"] = True
+                                st["growlight_power_reference_watt"] = float(power_candidate["before_w"])
+                                st["growlight_power_last_watt"] = float(power_candidate["after_w"])
+                        else:
+                            st.update({
+                                "growlight_power_last_on": False,
+                                "growlight_power_last_watt": None,
+                                "growlight_power_alert_active": False,
+                                "growlight_power_reference_watt": None,
+                            })
+                        POLL_NOTIFY_STATE[tent["id"]] = st
 
                         # Low soil-moisture Pushover: one notification per sensor and calendar day.
                         # Drying phase, disconnected/stale sensors and recovery messages are intentionally ignored.
@@ -3291,7 +3414,6 @@ def poll_loop():
                                 })
 
                         # status reset on successful fetch
-                        st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
                         was_offline = (st.get("online") is False)
                         was_offline_notified = bool(st.get("offline_notified"))
                         offline_since_prev = st.get("offline_since")
@@ -3387,6 +3509,14 @@ def poll_loop():
                         print(f"[poller] tent #{tent['id']} ({tent['source_url']}) failed: {tent_err}")
                         now = datetime.now(timezone.utc)
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
+                        # Break the Growlight comparison chain across failed polls/offline time.
+                        # A reconnect must establish a fresh ON/Watt baseline first.
+                        st.update({
+                            "growlight_power_last_on": False,
+                            "growlight_power_last_watt": None,
+                            "growlight_power_alert_active": False,
+                            "growlight_power_reference_watt": None,
+                        })
 
                         # mark first offline timestamp
                         if st.get("online") is not False or not st.get("offline_since"):
@@ -4556,7 +4686,8 @@ def export_config_backup():
                 """
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
-                       backend_write_enabled, backend_controller_url, backend_hmac_secret, created_at
+                       backend_write_enabled, backend_controller_url, backend_hmac_secret,
+                       growlight_power_alert_enabled, growlight_power_drop_w, created_at
                 FROM tents
                 ORDER BY id
                 """
@@ -4607,7 +4738,9 @@ def export_config_backup():
                 "backend_controller_url": r[11] or "",
                 "backend_hmac_secret": None,
                 "has_backend_hmac_secret": bool(r[12]),
-                "created_at": r[13].isoformat() if r[13] else None,
+                "growlight_power_alert_enabled": bool(r[13]),
+                "growlight_power_drop_w": float(r[14] if r[14] is not None else 20.0),
+                "created_at": r[15].isoformat() if r[15] else None,
             }
         )
 
@@ -4650,7 +4783,7 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 12,
+        "schema_version": 13,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -4712,8 +4845,9 @@ def import_config_backup(payload: dict):
                     INSERT INTO tents(
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                         irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
-                        backend_write_enabled, backend_controller_url, backend_hmac_secret, created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
+                        backend_write_enabled, backend_controller_url, backend_hmac_secret,
+                        growlight_power_alert_enabled, growlight_power_drop_w, created_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
                     """,
                     (
                         int(t.get("id") or 0),
@@ -4729,6 +4863,8 @@ def import_config_backup(payload: dict):
                         bool(t.get("backend_write_enabled", False)) and bool(str(t.get("backend_hmac_secret") or "").strip()),
                         (str(t.get("backend_controller_url") or "").strip() or None),
                         (str(t.get("backend_hmac_secret") or "").strip() or None),
+                        bool(t.get("growlight_power_alert_enabled", False)),
+                        _normalise_growlight_power_drop_w(t.get("growlight_power_drop_w"), 20.0),
                         t.get("created_at"),
                     ),
                 )
@@ -6311,6 +6447,17 @@ def setup_page(request: Request):
               <input id=\"tentRtsp\" placeholder=\"RTSP URL (rtsp://...)\" style=\"padding:8px 10px; border-radius:8px; width:min(520px, 90%); margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainUser\" placeholder=\"Shelly Main User (optional)\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainPass\" type=\"password\" placeholder=\"Shelly Main Password (optional)\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-left:6px; margin-top:6px;\" />
+              <div id=\"growlightPowerAlertConfigLabel\" style=\"margin-top:12px; opacity:.95; font-weight:700;\">Growlight power warning</div>
+              <label style=\"display:flex; align-items:center; gap:8px; margin-top:7px;\">
+                <input type=\"checkbox\" id=\"tentGrowlightPowerAlertEnabled\" />
+                <span id=\"tentGrowlightPowerAlertEnabledLabel\">Enable Growlight power-drop warning</span>
+              </label>
+              <div style=\"display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:7px;\">
+                <span id=\"tentGrowlightPowerDropLabel\">Warn when power drops by more than</span>
+                <input id=\"tentGrowlightPowerDropW\" type=\"number\" min=\"1\" max=\"1000\" step=\"1\" value=\"20\" style=\"padding:8px 10px; border-radius:8px; width:110px;\" />
+                <span>W</span>
+              </div>
+              <div id=\"growlightPowerAlertHint\" class=\"muted\" style=\"margin-top:6px;\">Compares consecutive backend polls while the Growlight remains ON. Normal switch-off does not trigger a warning. One alert per drop episode; it rearms after power recovers or the light turns off. Uses the existing Pushover configuration.</div>
               <div id=\"backendWriteConfigLabel\" style=\"margin-top:12px; opacity:.95; font-weight:700;\">Backend Write API</div>
               <label style=\"display:flex; align-items:center; gap:8px; margin-top:7px;\">
                 <input type=\"checkbox\" id=\"tentBackendWriteEnabled\" />
@@ -6525,6 +6672,11 @@ def setup_page(request: Request):
               saveTent: 'Save tent',
               addTent: 'Add tent',
               deleteTent: 'Delete',
+              growlightPowerAlertConfig: 'Growlight power warning',
+              growlightPowerAlertEnabled: 'Enable Growlight power-drop warning',
+              growlightPowerDrop: 'Warn when power drops by more than',
+              growlightPowerAlertHint: 'Compares consecutive backend polls while the Growlight remains ON. Normal switch-off does not trigger a warning. One alert per drop episode; it rearms after power recovers or the light turns off. Uses the existing Pushover configuration.',
+              growlightPowerAlertStatus: 'Growlight power warning',
               backendWriteConfig: 'Backend Write API',
               backendWriteEnabled: 'Enable authenticated controller writes',
               backendWriteRemoveSecret: 'Remove stored HMAC secret',
@@ -6636,6 +6788,11 @@ def setup_page(request: Request):
               saveTent: 'Zelt speichern',
               addTent: 'Zelt hinzufügen',
               deleteTent: 'Löschen',
+              growlightPowerAlertConfig: 'Growlight-Leistungswarnung',
+              growlightPowerAlertEnabled: 'Warnung bei schnellem Growlight-Leistungsabfall aktivieren',
+              growlightPowerDrop: 'Warnen, wenn die Leistung um mehr als',
+              growlightPowerAlertHint: 'Vergleicht aufeinanderfolgende Backend-Abfragen, solange das Growlight eingeschaltet bleibt. Normales Ausschalten löst keine Warnung aus. Eine Meldung pro Abfall-Ereignis; nach Leistungserholung oder Licht-Aus wird wieder scharfgeschaltet. Nutzt die bestehende Pushover-Konfiguration.',
+              growlightPowerAlertStatus: 'Growlight-Leistungswarnung',
               backendWriteConfig: 'Backend Write API',
               backendWriteEnabled: 'Authentifizierte Controller-Schreibzugriffe aktivieren',
               backendWriteRemoveSecret: 'Gespeichertes HMAC-Secret entfernen',
@@ -6690,6 +6847,10 @@ def setup_page(request: Request):
             set('tentsTitle', tSetup('tents'));
             set('potStrainsLabel', tSetup('potStrains'));
             set('soilSensorsSetupLabel', tSetup('soilSensors'));
+            set('growlightPowerAlertConfigLabel', tSetup('growlightPowerAlertConfig'));
+            set('tentGrowlightPowerAlertEnabledLabel', tSetup('growlightPowerAlertEnabled'));
+            set('tentGrowlightPowerDropLabel', tSetup('growlightPowerDrop'));
+            set('growlightPowerAlertHint', tSetup('growlightPowerAlertHint'));
             set('backendWriteConfigLabel', tSetup('backendWriteConfig'));
             set('tentBackendWriteEnabledLabel', tSetup('backendWriteEnabled'));
             set('tentBackendHmacSecretClearLabel', tSetup('backendWriteRemoveSecret'));
@@ -6982,6 +7143,7 @@ def setup_page(request: Request):
                   <span style="opacity:.85">${tSetup('potStrains')}: ${potTxt}</span><br>
                   <span style="opacity:.85">${tSetup('soilSensors')}: ${soilTxt}</span><br>
                   <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
+                  <span style="opacity:.85">${tSetup('growlightPowerAlertStatus')}: ${t.growlight_power_alert_enabled ? ('&gt; ' + Number(t.growlight_power_drop_w || 20) + ' W') : '-'}</span><br>
                   <span style="opacity:.85">${tSetup('backendWriteStatus')}: ${t.backend_write_enabled ? ((t.backend_controller_url || '-') + (t.has_backend_hmac_secret ? ' · HMAC set' : ' · HMAC missing')) : '-'}</span><br>
                   <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
                   <button data-edit-tent="${t.id}" style="margin-top:6px;">${tSetup('editTent')}</button>
@@ -7002,6 +7164,8 @@ def setup_page(request: Request):
                   document.getElementById('tentMainUser').value = tent.shelly_main_user || '';
                   document.getElementById('tentMainPass').value = '';
                   document.getElementById('tentMainPass').placeholder = tent.has_shelly_main_password ? 'Stored - leave blank to keep' : 'Optional Shelly password';
+                  document.getElementById('tentGrowlightPowerAlertEnabled').checked = !!tent.growlight_power_alert_enabled;
+                  document.getElementById('tentGrowlightPowerDropW').value = Number(tent.growlight_power_drop_w || 20);
                   document.getElementById('tentBackendWriteEnabled').checked = !!tent.backend_write_enabled;
                   document.getElementById('tentBackendControllerUrl').value = tent.backend_controller_url || '';
                   document.getElementById('tentBackendHmacSecret').value = '';
@@ -7788,6 +7952,12 @@ def setup_page(request: Request):
             const rtsp_url = (document.getElementById('tentRtsp')?.value || '').trim();
             const shelly_main_user = (document.getElementById('tentMainUser')?.value || '').trim();
             const shelly_main_password = (document.getElementById('tentMainPass')?.value || '').trim();
+            const growlight_power_alert_enabled = !!document.getElementById('tentGrowlightPowerAlertEnabled')?.checked;
+            const growlight_power_drop_w = Number(document.getElementById('tentGrowlightPowerDropW')?.value || 20);
+            if (!Number.isFinite(growlight_power_drop_w) || growlight_power_drop_w < 1 || growlight_power_drop_w > 1000) {
+              tentMsg.textContent = langSel?.value === 'de' ? 'Growlight-Warnschwelle muss zwischen 1 und 1000 W liegen.' : 'Growlight warning threshold must be between 1 and 1000 W.';
+              return;
+            }
             const backend_write_enabled = !!document.getElementById('tentBackendWriteEnabled')?.checked;
             const backend_controller_url = (document.getElementById('tentBackendControllerUrl')?.value || '').trim();
             const backend_hmac_secret = (document.getElementById('tentBackendHmacSecret')?.value || '').trim();
@@ -7800,6 +7970,8 @@ def setup_page(request: Request):
             let effectiveSourceUrl = source_url;
             let effectiveRtspUrl = rtsp_url;
             let effectiveShellyMainUser = shelly_main_user;
+            let effectiveGrowlightPowerAlertEnabled = growlight_power_alert_enabled;
+            let effectiveGrowlightPowerDropW = growlight_power_drop_w;
             let effectiveBackendWriteEnabled = backend_write_enabled;
             let effectiveBackendControllerUrl = backend_controller_url;
             let effectiveBackendHmacSecretClear = backend_hmac_secret_clear;
@@ -7815,6 +7987,8 @@ def setup_page(request: Request):
                 effectiveSourceUrl = effectiveSourceUrl || String(fallbackTent.source_url || '').trim();
                 effectiveRtspUrl = effectiveRtspUrl || String(fallbackTent.rtsp_url || '').trim();
                 effectiveShellyMainUser = effectiveShellyMainUser || String(fallbackTent.shelly_main_user || '').trim();
+                effectiveGrowlightPowerAlertEnabled = !!fallbackTent.growlight_power_alert_enabled;
+                effectiveGrowlightPowerDropW = Number(fallbackTent.growlight_power_drop_w || 20);
                 effectiveBackendWriteEnabled = !!fallbackTent.backend_write_enabled;
                 effectiveBackendControllerUrl = effectiveBackendControllerUrl || String(fallbackTent.backend_controller_url || '').trim();
                 effectiveBackendHmacSecretClear = false;
@@ -7847,6 +8021,8 @@ def setup_page(request: Request):
                   rtsp_url: effectiveRtspUrl,
                   shelly_main_user: effectiveShellyMainUser,
                   shelly_main_password,
+                  growlight_power_alert_enabled: effectiveGrowlightPowerAlertEnabled,
+                  growlight_power_drop_w: effectiveGrowlightPowerDropW,
                   backend_write_enabled: effectiveBackendWriteEnabled,
                   backend_controller_url: effectiveBackendControllerUrl,
                   backend_hmac_secret,
@@ -7868,6 +8044,8 @@ def setup_page(request: Request):
               document.getElementById('tentRtsp').value = '';
               document.getElementById('tentMainUser').value = '';
               document.getElementById('tentMainPass').value = '';
+              document.getElementById('tentGrowlightPowerAlertEnabled').checked = false;
+              document.getElementById('tentGrowlightPowerDropW').value = '20';
               document.getElementById('tentBackendWriteEnabled').checked = false;
               document.getElementById('tentBackendControllerUrl').value = '';
               document.getElementById('tentBackendHmacSecret').value = '';

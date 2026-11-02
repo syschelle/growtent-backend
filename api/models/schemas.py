@@ -21,6 +21,8 @@ class TentPayload(StrictModel):
     backend_controller_url: str | None = Field(default=None, max_length=2048)
     backend_hmac_secret: str | None = None
     backend_hmac_secret_clear: bool = False
+    growlight_power_alert_enabled: bool = False
+    growlight_power_drop_w: float = Field(default=20.0, ge=1.0, le=1000.0)
     pot_strains: dict[str, str] = Field(default_factory=dict)
     soil_sensors: list[str] = Field(default_factory=list, max_length=3)
 

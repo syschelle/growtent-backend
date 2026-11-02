@@ -2,6 +2,21 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.346
+
+### Optional Growlight power-drop warning
+- Added an optional per-tent Growlight power warning in Setup.
+- The configurable drop threshold defaults to `20 W` and accepts `1–1000 W`.
+- The detector compares consecutive successful backend polls only while the Growlight reports ON in both samples; normal switch-off never triggers the warning.
+- A drop must be strictly greater than the configured threshold (`20.0 W` does not alert at a `20 W` threshold; `20.1 W` does).
+- Alerts are sent through the existing Pushover configuration and include tent name, previous Watt value, current Watt value, detected drop and configured threshold.
+- One notification is sent per drop episode; the detector rearms after the light turns off or power recovers close to the pre-drop reference level.
+- Failed/offline polls break the comparison chain to prevent false alerts after reconnects.
+- Uses the existing `cur.shelly.light.isOn` and `cur.shelly.light.Watt` values from `/api/state`; no additional Shelly/controller polling was added.
+- Added automatic database columns and backup schema v13 support for the per-tent warning configuration.
+- Full automated test suite: `111 passed`; Setup JavaScript syntax check passed.
+- Bumped the application version to `v0.346`.
+
 ## v0.345
 
 ### Mobile hint viewport positioning
