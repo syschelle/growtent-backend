@@ -2,6 +2,16 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.347
+
+### HMAC hint explains the Adjust interface
+- Extended the bilingual HMAC dashboard hint to explain the purpose of the authenticated controller write interface.
+- The hint now states that **Adjust / Anpassen** can change selected grow values directly on the GrowTent controller.
+- Kept the existing explanation of HMAC request signing, integrity/origin verification, and the fact that HTTP transport is not encrypted.
+- No HMAC, Grow Profile, authorization, or controller write behavior changed.
+- Full automated test suite remains covered by the dashboard hint regression tests.
+- Bumped the application version to `v0.347`.
+
 ## v0.346
 
 ### Optional Growlight power-drop warning

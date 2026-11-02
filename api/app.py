@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.346"
+APP_VERSION = "v0.347"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -10221,7 +10221,7 @@ def dashboard_page(request: Request):
               shellyFan: 'Fan',
               shellyExhaust: 'Exhaust',
               growPhase: 'Grow Phase',
-              hmacHint: 'HMAC stands for Hash-based Message Authentication Code. The backend and GrowTent controller share a secret key. Write requests are signed so the controller can verify that they are unchanged and come from the authorized backend. HMAC does not encrypt the HTTP connection.',
+              hmacHint: 'The Adjust button can change selected grow values directly on the GrowTent controller. These write requests use HMAC (Hash-based Message Authentication Code): the backend and controller share a secret key used to sign every request. This lets the controller verify that the request is unchanged and comes from the authorized backend. HMAC does not encrypt the HTTP connection.',
               editGrowProfile: 'Adjust',
               growLoadFailed: 'Failed to load controller state.',
               growNotConfigured: 'Backend Write API is not fully configured for this tent.',
@@ -10396,7 +10396,7 @@ def dashboard_page(request: Request):
               shellyFan: 'Lüfter',
               shellyExhaust: 'Abluft',
               growPhase: 'Growphase',
-              hmacHint: 'HMAC steht für Hash-based Message Authentication Code. Backend und GrowTent-Controller teilen einen geheimen Schlüssel. Schreibzugriffe werden damit signiert, sodass der Controller prüfen kann, ob sie unverändert und vom berechtigten Backend stammen. HMAC verschlüsselt die HTTP-Verbindung nicht.',
+              hmacHint: 'Über „Anpassen“ können ausgewählte Grow-Werte direkt im GrowTent-Controller geändert werden. Diese Schreibzugriffe nutzen HMAC (Hash-based Message Authentication Code): Backend und Controller teilen einen geheimen Schlüssel, mit dem jede Anfrage signiert wird. So kann der Controller prüfen, dass die Anfrage unverändert und vom berechtigten Backend stammt. HMAC verschlüsselt die HTTP-Verbindung nicht.',
               editGrowProfile: 'Anpassen',
               growLoadFailed: 'Controllerzustand konnte nicht geladen werden.',
               growNotConfigured: 'Die Backend Write API ist für dieses Zelt noch nicht vollständig konfiguriert.',

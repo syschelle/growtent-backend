@@ -153,8 +153,8 @@ def test_dashboard_shows_green_hmac_badge_in_grow_phase_card_when_write_api_is_c
 
 def test_hmac_badge_uses_same_bilingual_info_popover_pattern_as_temperature_and_vpd():
     dashboard = _dashboard_source()
-    assert "hmacHint: 'HMAC stands for Hash-based Message Authentication Code." in dashboard
-    assert "hmacHint: 'HMAC steht für Hash-based Message Authentication Code." in dashboard
+    assert "hmacHint: 'The Adjust button can change selected grow values directly on the GrowTent controller." in dashboard
+    assert "hmacHint: 'Über „Anpassen“ können ausgewählte Grow-Werte direkt im GrowTent-Controller geändert werden." in dashboard
     assert 'id=\\"hmacMeaningHint\\"' in dashboard
     assert "const hmacMeaningEl = document.getElementById('hmacMeaningHint');" in dashboard
     assert "showInfoPopover(hmacMeaningEl, hint)" in dashboard
