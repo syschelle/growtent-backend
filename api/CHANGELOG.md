@@ -2,6 +2,25 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.349
+
+### 24-hour ESP heap CSV export
+- Added an administrator-only **Download 24h CSV / 24h CSV herunterladen** action directly to the ESP Heap history card for each tent.
+- The download contains all available, successful ESP polls within the last 24 hours, including UTC timestamps, uptime, free heap, minimum free heap, largest contiguous free block, total heap size, and the largest/free ratio.
+- Reads existing `tent_state` JSONB history with no additional ESP polling, new database tables, or extra controller requests. Missing history yields a header-only CSV; sensor-invalid samples with valid heap metrics are retained.
+- Protected the download endpoint in both the legacy and production (`main:app`) routes with explicit administrator authorization. No credentials or unrelated telemetry are exported.
+- Regression coverage includes authenticated/guest export behavior, UTC CSV fields, missing metrics, router mapping, and admin-only UI rendering. Full suite: **128 passed**.
+- Bumped the application version to `v0.349`.
+
+## v0.348
+
+### Heap warning deduplication
+- Prevented repeated Pushover heap warnings for the same ongoing low-memory episode, even after the 60-minute cooldown.
+- The monitor continues checking every poll; a new warning is possible only after stable recovery rearms the detector, still subject to the existing cooldown.
+- Preserved the configured heap thresholds and the existing recovery notification.
+- Added tests reproducing the two reported ESP heap values and the warning/recovery state transitions.
+- Bumped the application version to `v0.348`.
+
 ## v0.347
 
 ### HMAC hint explains the Adjust interface

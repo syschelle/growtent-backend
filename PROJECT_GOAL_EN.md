@@ -28,6 +28,7 @@ The platform consolidates multiple tents into one interface and combines live st
 
 ## Core Features
 - Multi-tent dashboard with live values, history charts, and relative update times
+- Admin-only CSV export of the last 24 hours of per-tent ESP heap telemetry (includes uptime, free/min heap, largest free block, and fragmentation ratio)
 - Shelly device cards with toggles, ON/OFF schedule display, and energy/cost values
 - Direct aggregate Shelly read (`direct-all`) for UI freshness
 - Total-consumption history based on Shelly main data (instead of ESP32 fallback)

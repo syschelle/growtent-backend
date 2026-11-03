@@ -88,6 +88,12 @@ def update_irrigation_plan(tent_id: int, payload: IrrigationPlanPayload, service
     return service.update_irrigation_plan(tent_id, payload)
 
 
+@router.get('/tents/{tent_id}/heap/export.csv')
+def export_heap_24h_csv(tent_id: int, request: Request):
+    # Delegated helper performs its own mandatory admin-session check.
+    return legacy.export_heap_24h_csv(tent_id, request)
+
+
 @router.get('/tents/{tent_id}/latest')
 def latest_state(tent_id: int, request: Request, service: TentService = Depends(get_tent_service)):
     return service.latest(tent_id, request)

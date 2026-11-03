@@ -211,7 +211,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.347
+ghcr.io/syschelle/growtent-backend-api:v0.349
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -303,8 +303,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.347 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.347 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.349 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.349 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -601,6 +601,16 @@ If camera preview is unavailable:
 
 ---
 
+## ESP Heap history: 24-hour diagnostic export
+
+For heap/fragmentation investigations, open the **dashboard of the affected tent** and scroll to **ESP Heap history / ESP-Heap Verlauf**. Administrators see **Download 24h CSV / 24h CSV herunterladen** beside the chart title. The action works on mobile as well as desktop and is independent of the currently selected chart range.
+
+The downloaded file `growtent-heap-tent-<id>-24h-<UTC>.csv` contains all available successful controller polls in the **preceding 24 hours**. Each line includes the UTC capture timestamp, ESP uptime in seconds (useful for detecting reboots), free heap, minimum free heap, largest free block, total heap size (all in bytes), and the largest-free-block/free-heap ratio. Missing values remain blank; gaps in polling remain visible as timestamp gaps. These are unfiltered observations from PostgreSQL, not chart-smoothed values. Existing `tent_state` retention is 7 days by default, so this export requires **no new firmware, controller polling, or migration**. Data from before telemetry collection started cannot be reconstructed.
+
+The download endpoint is `GET /tents/{tent_id}/heap/export.csv` and requires an authenticated administrator session, even when general dashboard authentication is disabled. The CSV contains no HMAC secrets, Shelly credentials, or unrelated sensor values. Download each affected tent separately and share those files for a side-by-side heap trend analysis.
+
+---
+
 ## Data storage, retention, backup, and restore
 
 PostgreSQL stores application configuration, history, pot strain assignments, and the strain library. The bundled `data/strains.csv` is used as an initial seed only when the database strain table is empty.
@@ -882,7 +892,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.347 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.349 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

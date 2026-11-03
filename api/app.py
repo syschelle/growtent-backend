@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.347"
+APP_VERSION = "v0.349"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -2818,6 +2818,27 @@ def _heap_warning_reason(payload: dict):
 
 
 
+def _heap_warning_ready_to_send(state: dict, consecutive_samples: int, now: datetime) -> bool:
+    """Notify once per low-heap episode, not once per cooldown interval.
+
+    The controller must first recover for HEAP_RECOVER_CONSECUTIVE_SAMPLES
+    to rearm an active episode. Keep the existing cooldown between separate
+    episodes so a briefly fluctuating sensor cannot flood Pushover.
+    """
+    if bool(state.get("heap_warn_active")):
+        return False
+    if consecutive_samples < max(1, HEAP_WARN_CONSECUTIVE_SAMPLES):
+        return False
+    last_sent = state.get("heap_warn_sent_at")
+    if last_sent:
+        try:
+            previous = datetime.fromisoformat(str(last_sent).replace("Z", "+00:00"))
+            return (now - previous).total_seconds() >= max(0, HEAP_WARN_COOLDOWN_SECONDS)
+        except (TypeError, ValueError):
+            pass
+    return True
+
+
 def _grow_phase_is_drying(payload: dict | None) -> bool:
     data = payload or {}
     for key in ("settings.grow.currentPhase", "settings.currentPhase", "grow.currentPhase", "curPhase"):
@@ -3448,16 +3469,7 @@ def poll_loop():
                             st["heap_warn_count"] = heap_count
                             st["heap_ok_count"] = heap_ok_count
                             now = datetime.now(timezone.utc)
-                            last_sent = st.get("heap_warn_sent_at")
-                            allow_send = True
-                            if last_sent:
-                                try:
-                                    prev = datetime.fromisoformat(str(last_sent).replace('Z', '+00:00'))
-                                    allow_send = (now - prev).total_seconds() >= max(0, HEAP_WARN_COOLDOWN_SECONDS)
-                                except Exception:
-                                    allow_send = True
-
-                            if heap_count >= max(1, HEAP_WARN_CONSECUTIVE_SAMPLES) and allow_send:
+                            if _heap_warning_ready_to_send(st, heap_count, now):
                                 free_b = heap_metrics.get("free")
                                 min_b = heap_metrics.get("min")
                                 largest_b = heap_metrics.get("largest")
@@ -5440,6 +5452,103 @@ def _despike_series(values: list, rel_jump: float, abs_jump: float):
         out.append(n)
         prev = n
     return out
+
+
+# The 24-hour ESP heap export reads the already persisted successful polls.
+# It deliberately does not use history_state(): that endpoint filters invalid
+# climate samples and may discard useful heap readings during sensor trouble.
+HEAP_EXPORT_FIELDS = (
+    "timestamp_utc",
+    "uptime_seconds",
+    "free_heap_bytes",
+    "min_free_heap_bytes",
+    "largest_free_block_bytes",
+    "heap_size_bytes",
+    "largest_over_free_ratio",
+)
+
+
+def _heap_export_csv(rows) -> str:
+    """Produce unfiltered, UTC-timestamped heap samples as standard CSV."""
+    out = io.StringIO(newline="")
+    writer = csv.writer(out, lineterminator="\r\n")
+    writer.writerow(HEAP_EXPORT_FIELDS)
+    for captured_at, uptime, free, minimum, largest, total in rows:
+        numeric = [_to_float(v) for v in (uptime, free, minimum, largest, total)]
+        uptime_s, free_b, min_b, largest_b, total_b = numeric
+        # Include samples with at least one valid heap metric, even when climate
+        # sensor readings are missing. Reject non-finite and negative heap values.
+        heap_metrics = (free_b, min_b, largest_b, total_b)
+        if not any(v is not None and v >= 0 for v in heap_metrics):
+            continue
+        def byte_count(v):
+            return int(v) if v is not None and v >= 0 else ""
+        ratio = (
+            round(largest_b / free_b, 5)
+            if free_b is not None and free_b > 0 and largest_b is not None and largest_b >= 0
+            else ""
+        )
+        # The DB stores timestamptz; normalize for diagnostic comparisons.
+        ts = captured_at
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        timestamp_utc = ts.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        writer.writerow((
+            timestamp_utc,
+            int(uptime_s) if uptime_s is not None and uptime_s >= 0 else "",
+            byte_count(free_b),
+            byte_count(min_b),
+            byte_count(largest_b),
+            byte_count(total_b),
+            ratio,
+        ))
+    return out.getvalue()
+
+
+@app.get("/tents/{tent_id}/heap/export.csv")
+def export_heap_24h_csv(tent_id: int, request: Request):
+    """Admin-only download of the last 24h of existing ESP heap poll data."""
+    # Require an actual administrator session, even if auth is globally disabled.
+    session = get_session(request.cookies.get("caop_session"))
+    if not session or session.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="admin required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM tents WHERE id = %s", (tent_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="tent not found")
+            # Project just the fields needed for diagnosis rather than loading
+            # every sensor/Shelly value from potentially thousands of JSONB rows.
+            cur.execute(
+                """
+                SELECT captured_at,
+                       payload->>'sys.uptimeS',
+                       payload->>'sys.freeHeap',
+                       payload->>'sys.minFreeHeap',
+                       payload->>'sys.largestFreeHeapBlock',
+                       payload->>'sys.heapSize'
+                FROM tent_state
+                WHERE tent_id = %s
+                  AND captured_at >= NOW() - INTERVAL '24 hours'
+                  AND captured_at <= NOW()
+                ORDER BY captured_at ASC, id ASC
+                """,
+                (tent_id,),
+            )
+            rows = cur.fetchall()
+
+    filename = f"growtent-heap-tent-{tent_id}-24h-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.csv"
+    content = _heap_export_csv(rows)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/tents/{tent_id}/history")
@@ -9490,6 +9599,7 @@ def dashboard_page(request: Request):
     session = get_session(token)
     is_admin = bool(session and (session.get("role") or "") == "admin")
     grow_profile_action = '<button id="openGrowProfileBtn" type="button" style="display:none;">Adjust</button>' if is_admin else ''
+    heap_export_action = '<button id="heapExportBtn" type="button">Download 24h CSV</button>' if is_admin else ''
     return """
     <html>
       <head>
@@ -9529,6 +9639,8 @@ def dashboard_page(request: Request):
           .stream-card { width: min(100%, 500px); max-width: 500px; }
           .phase-card { display:flex; flex-direction:column; justify-content:space-between; min-height:280px; }
           .phase-heading-row { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+          .heap-heading-row { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+          #heapExportBtn { width:auto !important; flex:0 0 auto; white-space:nowrap; padding:6px 10px; font-size:.85rem; }
           .phase-title { font-size:.85rem; color:var(--muted); margin-bottom:6px; }
           .hmac-badge { display:none; align-items:center; gap:5px; flex:0 0 auto; color:#22c55e; font-weight:800; font-size:.92rem; line-height:1; padding-top:1px; }
           .hmac-badge .hmac-hint { cursor:help; opacity:.92; font-weight:600; }
@@ -10008,7 +10120,10 @@ def dashboard_page(request: Request):
         </div>
 
         <div class=\"card history-card\">
-          <div class=\"label\" id=\"lblHeapHistory\"><span id=\"lblHeapHistoryText\">ESP Heap history</span> <span id=\"heapHistoryHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
+          <div class=\"heap-heading-row\">
+            <div class=\"label\" id=\"lblHeapHistory\"><span id=\"lblHeapHistoryText\">ESP Heap history</span> <span id=\"heapHistoryHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
+            __HEAP_EXPORT_ACTION__
+          </div>
           <canvas id=\"heapChart\"></canvas>
         </div>
 
@@ -10159,6 +10274,7 @@ def dashboard_page(request: Request):
               exhaustHistory: 'Exhaust history',
               exhaustConsumption: 'Exhaust',
               heapHistory: 'ESP Heap history',
+              heapExport24h: 'Download 24h CSV',
               heapFree: 'Free heap',
               heapMin: 'Min free heap',
               heapLargest: 'Largest free block',
@@ -10334,6 +10450,7 @@ def dashboard_page(request: Request):
               exhaustHistory: 'Abluftverlauf',
               exhaustConsumption: 'Abluft',
               heapHistory: 'ESP-Heap Verlauf',
+              heapExport24h: '24h CSV herunterladen',
               heapFree: 'Freier Heap',
               heapMin: 'Min. freier Heap',
               heapLargest: 'Größter freier Block',
@@ -10670,6 +10787,7 @@ def dashboard_page(request: Request):
             txt('lblExhaustWHistory', tr('exhaustHistory'));
             txt('lblSoilMoistureHistory', tr('soilMoistureHistory'));
             txt('lblHeapHistoryText', tr('heapHistory'));
+            txt('heapExportBtn', tr('heapExport24h'));
             const heapHistoryHintEl = document.getElementById('heapHistoryHint');
             if (heapHistoryHintEl) {
               const hint = tr('heapHistoryHint');
@@ -13511,6 +13629,12 @@ def dashboard_page(request: Request):
             growProfileBtnEl.addEventListener('click', openGrowProfilePage);
           }
 
+          // Diagnostic export: attachment download, no extra ESP polling.
+          document.getElementById('heapExportBtn')?.addEventListener('click', () => {
+            if (isGuestMode || currentUserRole !== 'admin' || !currentTentId) return;
+            window.location.href = `/tents/${encodeURIComponent(String(currentTentId))}/heap/export.csv`;
+          });
+
           const exportBtnEl = document.getElementById('exportCsvBtn');
           if (exportBtnEl) {
             exportBtnEl.addEventListener('click', () => {
@@ -13587,4 +13711,4 @@ def dashboard_page(request: Request):
         </script>
       </body>
     </html>
-    """.replace("__GROW_PROFILE_ACTION__", grow_profile_action).replace("__FAVICON_LINKS__", FAVICON_LINKS)
+    """.replace("__GROW_PROFILE_ACTION__", grow_profile_action).replace("__HEAP_EXPORT_ACTION__", heap_export_action).replace("__FAVICON_LINKS__", FAVICON_LINKS)
