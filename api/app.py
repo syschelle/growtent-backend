@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.349"
+APP_VERSION = "v0.350"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9071,6 +9071,11 @@ def grow_profile_page(request: Request):
           .status.ok { color:var(--ok); }
           .status.err { color:var(--err); }
           .notice { display:none; }
+          body.modal-editor { background:transparent; }
+          body.modal-editor .content { max-width:none; padding:4px; }
+          body.modal-editor .head { display:none; }
+          body.modal-editor .card { box-shadow:none; margin-bottom:9px; padding:12px; }
+          body.modal-editor .status { margin-top:0; }
           @media (max-width:640px) {
             .content { padding:10px; }
             .head { align-items:center; }
@@ -9151,6 +9156,15 @@ def grow_profile_page(request: Request):
         </main>
         <script>
           const qs = new URLSearchParams(window.location.search);
+          if (qs.get('modal') === '1') {
+            document.body.classList.add('modal-editor');
+            document.addEventListener('keydown', (event) => {
+              if (event.key === 'Escape' && window.parent !== window) {
+                event.preventDefault();
+                window.parent.postMessage({type:'grow-profile-modal-close'}, window.location.origin);
+              }
+            });
+          }
           const tentId = Number(qs.get('tent') || '0');
           const lang = (localStorage.getItem('gt_lang') || 'de') === 'en' ? 'en' : 'de';
           let original = {};
@@ -9599,6 +9613,23 @@ def dashboard_page(request: Request):
     session = get_session(token)
     is_admin = bool(session and (session.get("role") or "") == "admin")
     grow_profile_action = '<button id="openGrowProfileBtn" type="button" style="display:none;">Adjust</button>' if is_admin else ''
+    # The modal and its iframe are rendered only for authenticated administrators.
+    # Guest HTML must not expose the Grow Profile editor entry or its container.
+    grow_profile_modal = '''
+        <div id="dbGrowProfileModal" class="grow-profile-modal" role="dialog" aria-modal="true"
+             aria-labelledby="dbGrowProfileTitle" aria-hidden="true" style="display:none;">
+          <div class="grow-profile-modal-card card">
+            <div class="grow-profile-modal-header">
+              <div class="grow-profile-modal-headings">
+                <strong id="dbGrowProfileTitle">Grow profile</strong>
+                <span id="dbGrowProfileTentName" class="small"></span>
+              </div>
+              <button id="dbGrowProfileCloseBtn" type="button" aria-label="Close" title="Close">✕</button>
+            </div>
+            <iframe id="dbGrowProfileFrame" title="Grow profile" src="about:blank"></iframe>
+          </div>
+        </div>
+    ''' if is_admin else ''
     heap_export_action = '<button id="heapExportBtn" type="button">Download 24h CSV</button>' if is_admin else ''
     return """
     <html>
@@ -9854,6 +9885,33 @@ def dashboard_page(request: Request):
           #statusText { min-width:0; }
           #status .status-ok { color:#22c55e; font-weight:700; }
           #status .status-err { color:#ef4444; font-weight:700; }
+          /* Same overlay pattern as the irrigation-plan dialog. */
+          .grow-profile-modal {
+            position:fixed; inset:0; z-index:1400;
+            align-items:center; justify-content:center;
+            padding:14px; background:rgba(2,6,23,.72);
+          }
+          .grow-profile-modal-card {
+            display:flex; flex-direction:column; min-height:0;
+            width:min(760px,100%); max-height:calc(100dvh - 28px);
+            height:min(820px,calc(100dvh - 28px));
+            padding:12px; margin:0; border:1px solid var(--grid);
+          }
+          .grow-profile-modal-header {
+            display:flex; align-items:center; justify-content:space-between;
+            gap:12px; padding:0 2px 10px;
+          }
+          .grow-profile-modal-headings { display:flex; align-items:baseline; gap:10px; min-width:0; flex-wrap:wrap; }
+          .grow-profile-modal-headings strong { font-size:1.1rem; }
+          #dbGrowProfileCloseBtn { flex:0 0 auto; width:auto !important; min-width:40px; min-height:40px; font-size:1.05rem; }
+          #dbGrowProfileFrame {
+            display:block; width:100%; flex:1 1 auto; min-height:0;
+            border:0; border-radius:9px; background:transparent;
+          }
+          @media (max-width:640px) {
+            .grow-profile-modal { padding:6px; align-items:stretch; }
+            .grow-profile-modal-card { width:100%; height:calc(100dvh - 12px); max-height:calc(100dvh - 12px); padding:9px; }
+          }
           /* Current value colors aligned with history line colors */
           #temp { color:#22d3ee; }
           #hum { color:#a78bfa; }
@@ -10140,6 +10198,8 @@ def dashboard_page(request: Request):
           </div>
         </div>
 
+        __GROW_PROFILE_MODAL__
+
         <div id=\"dbIrPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1200; align-items:center; justify-content:center; padding:16px;\">
           <div class=\"card\" style=\"max-width:520px; width:100%; margin-bottom:0;\">
             <div style=\"display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;\">
@@ -10338,6 +10398,8 @@ def dashboard_page(request: Request):
               shellyExhaust: 'Exhaust',
               growPhase: 'Grow Phase',
               hmacHint: 'The Adjust button can change selected grow values directly on the GrowTent controller. These write requests use HMAC (Hash-based Message Authentication Code): the backend and controller share a secret key used to sign every request. This lets the controller verify that the request is unchanged and comes from the authorized backend. HMAC does not encrypt the HTTP connection.',
+              growProfileTitle: 'Grow profile',
+              close: 'Close',
               editGrowProfile: 'Adjust',
               growLoadFailed: 'Failed to load controller state.',
               growNotConfigured: 'Backend Write API is not fully configured for this tent.',
@@ -10514,6 +10576,8 @@ def dashboard_page(request: Request):
               shellyExhaust: 'Abluft',
               growPhase: 'Growphase',
               hmacHint: 'Über „Anpassen“ können ausgewählte Grow-Werte direkt im GrowTent-Controller geändert werden. Diese Schreibzugriffe nutzen HMAC (Hash-based Message Authentication Code): Backend und Controller teilen einen geheimen Schlüssel, mit dem jede Anfrage signiert wird. So kann der Controller prüfen, dass die Anfrage unverändert und vom berechtigten Backend stammt. HMAC verschlüsselt die HTTP-Verbindung nicht.',
+              growProfileTitle: 'Grow-Profil',
+              close: 'Schließen',
               editGrowProfile: 'Anpassen',
               growLoadFailed: 'Controllerzustand konnte nicht geladen werden.',
               growNotConfigured: 'Die Backend Write API ist für dieses Zelt noch nicht vollständig konfiguriert.',
@@ -10650,18 +10714,48 @@ def dashboard_page(request: Request):
             btn.title = visible ? tr('editGrowProfile') : '';
           }
 
+          let growProfileModalLastFocus = null;
+
+          function closeGrowProfileModal(){
+            const modal = document.getElementById('dbGrowProfileModal');
+            const frame = document.getElementById('dbGrowProfileFrame');
+            if (!modal || modal.style.display === 'none') return;
+            modal.style.display = 'none';
+            modal.setAttribute('aria-hidden', 'true');
+            if (frame) frame.src = 'about:blank';
+            document.body.style.overflow = '';
+            if (growProfileModalLastFocus?.isConnected) growProfileModalLastFocus.focus();
+            growProfileModalLastFocus = null;
+            // Keep the existing dashboard and camera alive. Refresh readings only.
+            loadLatest().catch(() => {});
+          }
+
           function openGrowProfilePage(){
             if (currentUserRole !== 'admin' || !currentTentId || !currentEspOnline || !currentStatusOk) return;
             const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
             if (!ready) return;
-            const url = `/app?page=grow-profile&tent=${encodeURIComponent(String(currentTentId))}`;
-            if (isEmbed && window.parent && window.parent !== window) window.parent.location.href = url;
-            else window.location.href = url;
+            const modal = document.getElementById('dbGrowProfileModal');
+            const frame = document.getElementById('dbGrowProfileFrame');
+            if (!modal || !frame) return;
+            growProfileModalLastFocus = document.activeElement;
+            const title = document.getElementById('dbGrowProfileTentName');
+            if (title) title.textContent = currentTentMeta?.name || `#${currentTentId}`;
+            modal.style.display = 'flex';
+            modal.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+            frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}`;
+            document.getElementById('dbGrowProfileCloseBtn')?.focus();
           }
 
           function applyI18n(){
             txt('titleMain', tr('title'));
             txt('openGrowProfileBtn', tr('editGrowProfile'));
+            txt('dbGrowProfileTitle', tr('growProfileTitle'));
+            const closeGrowProfileBtn = document.getElementById('dbGrowProfileCloseBtn');
+            if (closeGrowProfileBtn) {
+              closeGrowProfileBtn.title = tr('close');
+              closeGrowProfileBtn.setAttribute('aria-label', tr('close'));
+            }
             txt('sourceText', '');
             txt('navTitle', tr('nav'));
             txt('navStrains', tr('strains'));
@@ -13628,6 +13722,20 @@ def dashboard_page(request: Request):
           if (growProfileBtnEl) {
             growProfileBtnEl.addEventListener('click', openGrowProfilePage);
           }
+          document.getElementById('dbGrowProfileCloseBtn')?.addEventListener('click', closeGrowProfileModal);
+          window.addEventListener('message', (event) => {
+            const frame = document.getElementById('dbGrowProfileFrame');
+            if (event.origin === window.location.origin && event.source === frame?.contentWindow &&
+                event.data?.type === 'grow-profile-modal-close') closeGrowProfileModal();
+          });
+          document.getElementById('dbGrowProfileModal')?.addEventListener('click', (event) => {
+            if (event.target?.id === 'dbGrowProfileModal') closeGrowProfileModal();
+          });
+          document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && document.getElementById('dbGrowProfileModal')?.style.display === 'flex') {
+              event.preventDefault(); closeGrowProfileModal();
+            }
+          });
 
           // Diagnostic export: attachment download, no extra ESP polling.
           document.getElementById('heapExportBtn')?.addEventListener('click', () => {
@@ -13711,4 +13819,4 @@ def dashboard_page(request: Request):
         </script>
       </body>
     </html>
-    """.replace("__GROW_PROFILE_ACTION__", grow_profile_action).replace("__HEAP_EXPORT_ACTION__", heap_export_action).replace("__FAVICON_LINKS__", FAVICON_LINKS)
+    """.replace("__GROW_PROFILE_ACTION__", grow_profile_action).replace("__GROW_PROFILE_MODAL__", grow_profile_modal).replace("__HEAP_EXPORT_ACTION__", heap_export_action).replace("__FAVICON_LINKS__", FAVICON_LINKS)

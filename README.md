@@ -13,6 +13,7 @@ The project is intended for controller firmware/API versions compatible with the
 - [What this backend provides](#what-this-backend-provides)
 - [Architecture](#architecture)
 - [Network and security model](#network-and-security-model)
+- [Grow Profile adjustments (administrator)](#grow-profile-adjustments-administrator)
 - [Irrigation hardware: normal water pumps](#irrigation-hardware-normal-water-pumps)
 - [Compose files](#compose-files)
 - [Environment and secrets](#environment-and-secrets)
@@ -107,6 +108,18 @@ http://<server-ip>:8088/health
 ```
 
 The API polls configured controllers, stores readings, serves the web UI, and forwards selected actions to the controller. PostgreSQL is used for persistent configuration and time-series history. go2rtc is used only as an internal helper for camera preview/stream handling.
+
+---
+
+## Grow Profile adjustments (administrator)
+
+On the selected tent dashboard, the **Adjust / Anpassen** action within the status tile opens a modal over the current dashboard, like the Irrigation Plan editor. CanopyOps navigation and the camera view remain in context; closing the dialog returns to the same tent.
+
+The action is visible only to administrators while the controller is online (`Status: OK`) and the per-tent Backend Write API is fully configured in Setup (enabled, controller URL and HMAC secret). Each Grow Profile setting has its own **Send** action. Temperature uses 0.5 °C increments and target VPD 0.1 kPa; flowering and drying dates can only be explicitly deleted via JSON `null`.
+
+The backend signs writes using HMAC-SHA256 and confirms both stored and runtime controller values before showing success. Guests cannot see the action or modal and receive HTTP 403 for the Grow Profile editor and write API. No extra controller polling runs while the modal is closed.
+
+Existing deep links to `/app?page=grow-profile&tent=<id>` continue to work for administrators, but the dashboard action itself stays within the selected dashboard.
 
 ---
 
@@ -211,7 +224,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.349
+ghcr.io/syschelle/growtent-backend-api:v0.350
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -303,8 +316,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.349 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.349 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.350 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.350 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -892,7 +905,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.349 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.350 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available

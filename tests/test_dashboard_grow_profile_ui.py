@@ -22,7 +22,7 @@ def _setup_source() -> str:
     return source[:source.index('@app.get("/grow-profile", response_class=HTMLResponse)')]
 
 
-def test_grow_profile_editor_is_detached_from_dashboard_and_setup():
+def test_grow_profile_editor_opens_as_dashboard_modal_and_stays_out_of_setup():
     source = _source()
     dashboard = _dashboard_source()
     setup = _setup_source()
@@ -31,6 +31,8 @@ def test_grow_profile_editor_is_detached_from_dashboard_and_setup():
     assert 'id=\\"growProfileInline\\"' not in dashboard
     assert 'openGrowProfileBtn' in dashboard
     assert 'function openGrowProfilePage()' in dashboard
+    assert 'dbGrowProfileModal' in dashboard
+    assert '__GROW_PROFILE_MODAL__' in dashboard
     assert 'data-grow-profile-tent' not in setup
     assert 'id=\\"tentBackendWriteEnabled\\"' in setup
     assert 'id=\\"tentBackendControllerUrl\\"' in setup
@@ -38,12 +40,52 @@ def test_grow_profile_editor_is_detached_from_dashboard_and_setup():
     assert 'data-send="targetTemperature"' in page
 
 
-def test_shell_opens_grow_profile_as_separate_embedded_page():
+def test_dashboard_opens_grow_profile_as_modal_like_irrigation_plan():
     source = _source()
-    assert "page === 'grow-profile' && tent" in source
-    assert "src = `/grow-profile?embed=1&tent=${encodeURIComponent(tent)}`" in source
     dashboard = _dashboard_source()
-    assert "`/app?page=grow-profile&tent=${encodeURIComponent(String(currentTentId))}`" in dashboard
+    assert "page === 'grow-profile' && tent" in source  # legacy deep links keep working
+    assert "src = `/grow-profile?embed=1&tent=${encodeURIComponent(tent)}`" in source
+    assert 'id="dbGrowProfileModal" class="grow-profile-modal"' in dashboard
+    assert 'id="dbGrowProfileFrame" title="Grow profile"' in dashboard
+    assert 'dbIrPlanModal' in dashboard  # existing watering plan dialog retained
+    assert 'role="dialog" aria-modal="true"' in dashboard
+    assert "modal.style.display = 'flex';" in dashboard
+    assert 'function closeGrowProfileModal()' in dashboard
+    assert "frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}`;" in dashboard
+    assert 'window.parent.location.href = url' not in dashboard[dashboard.index('function openGrowProfilePage()'):dashboard.index('function applyI18n()')]
+    assert "frame.src = 'about:blank';" in dashboard
+    assert "loadLatest().catch(() => {});" in dashboard
+
+
+def test_modal_has_mobile_height_and_compact_editor_without_standalone_header():
+    dashboard = _dashboard_source()
+    page = _grow_profile_page_source()
+    assert '.grow-profile-modal-card' in dashboard
+    assert 'height:calc(100dvh - 12px)' in dashboard
+    assert 'max-height:calc(100dvh - 12px)' in dashboard
+    assert 'body.modal-editor .head { display:none; }' in page
+    assert "qs.get('modal') === '1'" in page
+
+
+def test_modal_is_server_side_admin_only_while_grow_profile_route_remains_protected():
+    dashboard = _dashboard_source()
+    page = _grow_profile_page_source()
+    assert "grow_profile_modal = '''" in dashboard
+    assert "''' if is_admin else ''" in dashboard
+    assert '.replace("__GROW_PROFILE_MODAL__", grow_profile_modal)' in dashboard
+    assert 'if not session or (session.get("role") or "") != "admin":' in page
+    assert 'raise HTTPException(status_code=403, detail="admin required")' in page
+
+
+def test_modal_closes_with_button_escape_and_backdrop_and_keeps_dashboard():
+    dashboard = _dashboard_source()
+    assert "dbGrowProfileCloseBtn')?.addEventListener('click', closeGrowProfileModal)" in dashboard
+    assert "event.target?.id === 'dbGrowProfileModal'" in dashboard
+    assert "event.key === 'Escape'" in dashboard
+    assert "document.body.style.overflow = 'hidden';" in dashboard
+    assert "modal.setAttribute('aria-hidden', 'true')" in dashboard
+    assert "modal.setAttribute('aria-hidden', 'false')" in dashboard
+
 
 
 def test_simple_page_is_one_value_then_send_without_json_preview_controls():

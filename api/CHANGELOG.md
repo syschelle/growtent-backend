@@ -2,6 +2,17 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.350
+
+### Grow Profile editor as dashboard modal
+- Replaced dashboard `Adjust / Anpassen` navigation with a responsive overlay dialog using the existing irrigation-plan modal interaction pattern.
+- Embedded the existing single-value Grow Profile editor within the modal, while hiding standalone page chrome in modal mode.
+- Kept the selected dashboard and camera stream active; refreshes telemetry when closing the dialog.
+- Preserved all existing HMAC validation, admin-only rendering/endpoint permissions, 0.5 °C / 0.1 kPa steps, and explicit `null` date deletions.
+- Kept legacy Grow Profile deep links working for bookmarks.
+- Added modal layout, runtime rendering, and guest route regression tests; full suite 135 passed.
+- Bumped application version to `v0.350`.
+
 ## v0.349
 
 ### 24-hour ESP heap CSV export
