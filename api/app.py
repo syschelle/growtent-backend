@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.351"
+APP_VERSION = "v0.352"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9096,8 +9096,12 @@ def grow_profile_page(request: Request):
             .content { padding:10px; }
             .head { align-items:center; }
             h1 { font-size:1.3rem; }
-            .edit-row, .date-row { grid-template-columns:1fr; }
-            button { width:100%; }
+            body:not(.modal-editor) .edit-row,
+            body:not(.modal-editor) .date-row { grid-template-columns:1fr; }
+            body:not(.modal-editor) button { width:100%; }
+          }
+          /* Embedded dialog switches to stacked rows only when space is genuinely narrow. */
+          @media (max-width:530px) {
             body.modal-editor .card {
               grid-template-columns:minmax(0,1fr) auto;
               column-gap:8px; row-gap:6px; padding:9px;
@@ -9944,7 +9948,7 @@ def dashboard_page(request: Request):
           }
           .grow-profile-modal-card {
             display:flex; flex-direction:column; min-height:0;
-            width:min(720px,100%); max-height:calc(100dvh - 28px);
+            width:min(560px,100%); max-height:calc(100dvh - 28px);
             height:auto; overflow:hidden;
             padding:11px; margin:0; border:1px solid var(--grid);
           }
@@ -9962,7 +9966,7 @@ def dashboard_page(request: Request):
           }
           @media (max-width:640px) {
             .grow-profile-modal { padding:6px; align-items:center; }
-            .grow-profile-modal-card { width:100%; height:auto; max-height:calc(100dvh - 12px); padding:9px; }
+            .grow-profile-modal-card { width:min(560px,100%); height:auto; max-height:calc(100dvh - 12px); padding:9px; }
             #dbGrowProfileFrame { max-height:calc(100dvh - 88px); }
           }
           /* Current value colors aligned with history line colors */

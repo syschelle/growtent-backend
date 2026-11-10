@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.352
+
+### Narrower Grow Profile modal
+
+- Reduced Grow Profile dialog maximum width to 560 px on desktop.
+- Adjusted embedded form breakpoint so the two-column compact desktop layout is retained at the new width.
+- Mobile uses available width and preserves touch targets, date actions, and responsive height.
+- No controller protocol, database, or firmware changes.
+
 ## v0.351
 
 ### Compact Grow Profile dialog

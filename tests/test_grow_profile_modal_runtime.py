@@ -96,3 +96,18 @@ def test_compact_mobile_layout_preserves_send_and_delete_actions_without_full_wi
     for field in ('targetTemperature', 'targetVPD', 'currentPhase', 'floweringStart', 'dryingStart'):
         assert f'data-send="{field}"' in page
     assert "sendPatch({[btn.dataset.delete]:null},btn);" in page
+
+
+def test_narrow_modal_keeps_desktop_rows_without_breaking_phone_layout():
+    dashboard = _render_functions('admin')['dashboard_page'](_request())
+    editor = _render_functions('admin')['grow_profile_page'](_request())
+    assert 'width:min(560px,100%); max-height:calc(100dvh - 28px);' in dashboard
+    assert '.grow-profile-modal-card { width:min(560px,100%); height:auto;' in dashboard
+    assert 'width:min(720px,100%)' not in dashboard
+    # The iframe is narrower than 640px on desktop. Use a lower breakpoint so
+    # it does not inadvertently render every setting in two rows.
+    assert '@media (max-width:530px)' in editor
+    assert 'body.modal-editor .card {' in editor
+    assert 'grid-template-columns:minmax(135px,.8fr) minmax(0,1.7fr);' in editor
+    assert 'body.modal-editor .date-row { grid-template-columns:1fr 1fr; }' in editor
+    assert 'body.modal-editor .date-row input { grid-column:1 / -1; }' in editor

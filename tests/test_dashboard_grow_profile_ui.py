@@ -103,8 +103,8 @@ def test_simple_page_is_one_value_then_send_without_json_preview_controls():
 def test_simple_page_is_mobile_responsive():
     page = _grow_profile_page_source()
     assert '@media (max-width:640px)' in page
-    assert '.edit-row, .date-row { grid-template-columns:1fr; }' in page
-    assert 'button { width:100%; }' in page
+    assert 'body:not(.modal-editor) .date-row { grid-template-columns:1fr; }' in page
+    assert 'body:not(.modal-editor) button { width:100%; }' in page
 
 
 def test_detached_page_uses_existing_admin_protected_routes_and_dashboard_gate():
