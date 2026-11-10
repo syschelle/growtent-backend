@@ -2,6 +2,15 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.351
+
+### Compact Grow Profile dialog
+
+- Reduced modal card spacing and used aligned, compact setting rows.
+- Improved narrow-screen controls while keeping all five fields and explicit date deletion.
+- Dialog height now follows content via a same-origin iframe size message, capped by the viewport.
+- Preserved standalone layout, admin-only access and the HMAC write contract.
+
 ## v0.350
 
 ### Grow Profile editor as dashboard modal

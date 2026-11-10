@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.350"
+APP_VERSION = "v0.351"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9072,16 +9072,52 @@ def grow_profile_page(request: Request):
           .status.err { color:var(--err); }
           .notice { display:none; }
           body.modal-editor { background:transparent; }
-          body.modal-editor .content { max-width:none; padding:4px; }
+          /* Only the embedded modal is condensed; bookmarked standalone pages stay unchanged. */
+          body.modal-editor .content { max-width:none; padding:2px; }
           body.modal-editor .head { display:none; }
-          body.modal-editor .card { box-shadow:none; margin-bottom:9px; padding:12px; }
-          body.modal-editor .status { margin-top:0; }
+          body.modal-editor #editor { display:grid; gap:7px; }
+          body.modal-editor .card {
+            display:grid;
+            grid-template-columns:minmax(135px,.8fr) minmax(0,1.7fr);
+            grid-template-rows:auto auto;
+            align-items:center;
+            column-gap:12px; row-gap:2px;
+            box-shadow:none; margin:0; padding:9px 11px;
+          }
+          body.modal-editor .label { grid-column:1; grid-row:1; margin:0; font-size:.82rem; }
+          body.modal-editor .current { grid-column:1; grid-row:2; margin:0; font-size:.85rem; }
+          body.modal-editor .edit-row { grid-column:2; grid-row:1 / span 2; min-width:0; gap:6px; }
+          body.modal-editor input, body.modal-editor select { min-height:36px; padding:6px 9px; font-size:.93rem; }
+          body.modal-editor button { min-height:36px; padding:6px 10px; font-size:.87rem; white-space:nowrap; }
+          body.modal-editor .status { min-height:0; margin:0 0 7px; }
+          body.modal-editor .status:empty { display:none; }
+          body.modal-editor .notice { display:none; margin:0; }
           @media (max-width:640px) {
             .content { padding:10px; }
             .head { align-items:center; }
             h1 { font-size:1.3rem; }
             .edit-row, .date-row { grid-template-columns:1fr; }
             button { width:100%; }
+            body.modal-editor .card {
+              grid-template-columns:minmax(0,1fr) auto;
+              column-gap:8px; row-gap:6px; padding:9px;
+            }
+            body.modal-editor .label { grid-column:1; grid-row:1; }
+            body.modal-editor .current { grid-column:2; grid-row:1; text-align:right; }
+            body.modal-editor .edit-row {
+              grid-column:1 / -1; grid-row:2;
+              grid-template-columns:minmax(0,1fr) auto;
+            }
+            body.modal-editor .edit-row button { width:auto; }
+            body.modal-editor input, body.modal-editor select, body.modal-editor button { min-height:40px; }
+            body.modal-editor .date-row {
+              grid-template-columns:minmax(0,1fr) auto auto;
+            }
+          }
+          @media (max-width:420px) {
+            body.modal-editor .date-row { grid-template-columns:1fr 1fr; }
+            body.modal-editor .date-row input { grid-column:1 / -1; }
+            body.modal-editor .date-row button { width:100%; }
           }
         </style>
       </head>
@@ -9164,6 +9200,21 @@ def grow_profile_page(request: Request):
                 window.parent.postMessage({type:'grow-profile-modal-close'}, window.location.origin);
               }
             });
+          }
+          // Keep the parent dialog as tall as its actual contents, not the full screen.
+          if (document.body.classList.contains('modal-editor') && window.parent !== window) {
+            const content = document.querySelector('.content');
+            const reportHeight = () => {
+              if (!content) return;
+              window.parent.postMessage({
+                type:'grow-profile-modal-height',
+                height:Math.ceil(content.getBoundingClientRect().height) + 4
+              }, window.location.origin);
+            };
+            if (window.ResizeObserver && content) new ResizeObserver(reportHeight).observe(content);
+            window.addEventListener('load', reportHeight);
+            window.addEventListener('resize', reportHeight);
+            requestAnimationFrame(reportHeight);
           }
           const tentId = Number(qs.get('tent') || '0');
           const lang = (localStorage.getItem('gt_lang') || 'de') === 'en' ? 'en' : 'de';
@@ -9893,9 +9944,9 @@ def dashboard_page(request: Request):
           }
           .grow-profile-modal-card {
             display:flex; flex-direction:column; min-height:0;
-            width:min(760px,100%); max-height:calc(100dvh - 28px);
-            height:min(820px,calc(100dvh - 28px));
-            padding:12px; margin:0; border:1px solid var(--grid);
+            width:min(720px,100%); max-height:calc(100dvh - 28px);
+            height:auto; overflow:hidden;
+            padding:11px; margin:0; border:1px solid var(--grid);
           }
           .grow-profile-modal-header {
             display:flex; align-items:center; justify-content:space-between;
@@ -9905,12 +9956,14 @@ def dashboard_page(request: Request):
           .grow-profile-modal-headings strong { font-size:1.1rem; }
           #dbGrowProfileCloseBtn { flex:0 0 auto; width:auto !important; min-width:40px; min-height:40px; font-size:1.05rem; }
           #dbGrowProfileFrame {
-            display:block; width:100%; flex:1 1 auto; min-height:0;
+            display:block; width:100%; flex:0 1 auto; min-height:0;
+            height:390px; max-height:calc(100dvh - 108px);
             border:0; border-radius:9px; background:transparent;
           }
           @media (max-width:640px) {
-            .grow-profile-modal { padding:6px; align-items:stretch; }
-            .grow-profile-modal-card { width:100%; height:calc(100dvh - 12px); max-height:calc(100dvh - 12px); padding:9px; }
+            .grow-profile-modal { padding:6px; align-items:center; }
+            .grow-profile-modal-card { width:100%; height:auto; max-height:calc(100dvh - 12px); padding:9px; }
+            #dbGrowProfileFrame { max-height:calc(100dvh - 88px); }
           }
           /* Current value colors aligned with history line colors */
           #temp { color:#22d3ee; }
@@ -10722,7 +10775,7 @@ def dashboard_page(request: Request):
             if (!modal || modal.style.display === 'none') return;
             modal.style.display = 'none';
             modal.setAttribute('aria-hidden', 'true');
-            if (frame) frame.src = 'about:blank';
+            if (frame) { frame.src = 'about:blank'; frame.style.height = ''; }
             document.body.style.overflow = '';
             if (growProfileModalLastFocus?.isConnected) growProfileModalLastFocus.focus();
             growProfileModalLastFocus = null;
@@ -13725,8 +13778,17 @@ def dashboard_page(request: Request):
           document.getElementById('dbGrowProfileCloseBtn')?.addEventListener('click', closeGrowProfileModal);
           window.addEventListener('message', (event) => {
             const frame = document.getElementById('dbGrowProfileFrame');
-            if (event.origin === window.location.origin && event.source === frame?.contentWindow &&
-                event.data?.type === 'grow-profile-modal-close') closeGrowProfileModal();
+            if (event.origin !== window.location.origin || event.source !== frame?.contentWindow) return;
+            if (event.data?.type === 'grow-profile-modal-close') {
+              closeGrowProfileModal();
+            } else if (event.data?.type === 'grow-profile-modal-height' &&
+                       document.getElementById('dbGrowProfileModal')?.style.display === 'flex') {
+              const height = Number(event.data.height);
+              if (Number.isFinite(height) && height > 0 && height < 5000) {
+                // CSS max-height limits this further on narrow/short viewports.
+                frame.style.height = `${Math.max(100, Math.ceil(height))}px`;
+              }
+            }
           });
           document.getElementById('dbGrowProfileModal')?.addEventListener('click', (event) => {
             if (event.target?.id === 'dbGrowProfileModal') closeGrowProfileModal();
