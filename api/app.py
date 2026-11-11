@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.352"
+APP_VERSION = "v0.353"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9061,13 +9061,19 @@ def grow_profile_page(request: Request):
           .card { background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
           .label { font-size:.86rem; color:var(--muted); margin-bottom:5px; font-weight:700; }
           .current { font-size:1rem; margin-bottom:10px; }
-          .edit-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px; align-items:center; }
-          .date-row { grid-template-columns:minmax(0,1fr) auto auto; }
+          .edit-row { display:grid; grid-template-columns:minmax(0,1fr); gap:9px; align-items:center; }
+          .date-row { grid-template-columns:minmax(0,1fr) auto; }
           input, select { width:100%; min-height:42px; border:1px solid var(--grid); border-radius:9px; background:var(--bg); color:var(--text); padding:9px 10px; font-size:1rem; }
           button { min-height:42px; border:1px solid rgba(14,165,233,.45); border-radius:9px; background:linear-gradient(180deg,rgba(14,165,233,.24),rgba(2,132,199,.18)); color:var(--text); padding:9px 14px; font-weight:700; cursor:pointer; }
           button.delete { border-color:rgba(239,68,68,.55); background:rgba(239,68,68,.12); }
           button:disabled { opacity:.55; cursor:not-allowed; }
           .status { min-height:1.3em; margin:4px 0 12px; font-size:.9rem; }
+          .save-row { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; padding-top:7px; }
+          .save-row .hint { color:var(--muted); font-size:.85rem; flex:1 1 auto; }
+          #saveProfileBtn { background:linear-gradient(180deg,rgba(14,165,233,.42),rgba(2,132,199,.26)); }
+          #saveProfileBtn:disabled { background:var(--card); color:var(--muted); border-color:var(--grid); opacity:.8; }
+          .pending-delete { border-color:rgba(239,68,68,.75) !important; }
+          .pending-delete-label { color:var(--err); font-weight:700; }
           .status.ok { color:var(--ok); }
           .status.err { color:var(--err); }
           .notice { display:none; }
@@ -9092,13 +9098,16 @@ def grow_profile_page(request: Request):
           body.modal-editor .status { min-height:0; margin:0 0 7px; }
           body.modal-editor .status:empty { display:none; }
           body.modal-editor .notice { display:none; margin:0; }
+          body.modal-editor .save-row { padding:7px 1px 1px; }
+          body.modal-editor .save-row button { min-height:40px; }
           @media (max-width:640px) {
             .content { padding:10px; }
             .head { align-items:center; }
             h1 { font-size:1.3rem; }
-            body:not(.modal-editor) .edit-row,
-            body:not(.modal-editor) .date-row { grid-template-columns:1fr; }
-            body:not(.modal-editor) button { width:100%; }
+            body:not(.modal-editor) .edit-row { grid-template-columns:1fr; }
+            body:not(.modal-editor) .date-row { grid-template-columns:minmax(0,1fr) auto; }
+            body:not(.modal-editor) .save-row button { width:100%; }
+            body:not(.modal-editor) .save-row .hint { flex-basis:100%; }
           }
           /* Embedded dialog switches to stacked rows only when space is genuinely narrow. */
           @media (max-width:530px) {
@@ -9110,18 +9119,19 @@ def grow_profile_page(request: Request):
             body.modal-editor .current { grid-column:2; grid-row:1; text-align:right; }
             body.modal-editor .edit-row {
               grid-column:1 / -1; grid-row:2;
-              grid-template-columns:minmax(0,1fr) auto;
+              grid-template-columns:minmax(0,1fr);
             }
             body.modal-editor .edit-row button { width:auto; }
             body.modal-editor input, body.modal-editor select, body.modal-editor button { min-height:40px; }
             body.modal-editor .date-row {
-              grid-template-columns:minmax(0,1fr) auto auto;
+              grid-template-columns:minmax(0,1fr) auto;
             }
           }
           @media (max-width:420px) {
-            body.modal-editor .date-row { grid-template-columns:1fr 1fr; }
-            body.modal-editor .date-row input { grid-column:1 / -1; }
-            body.modal-editor .date-row button { width:100%; }
+            body.modal-editor .date-row { grid-template-columns:minmax(0,1fr) auto; }
+            body.modal-editor .save-row { align-items:stretch; }
+            body.modal-editor .save-row .hint { flex-basis:100%; }
+            body.modal-editor #saveProfileBtn { width:100%; }
           }
         </style>
       </head>
@@ -9147,7 +9157,6 @@ def grow_profile_page(request: Request):
               <div class="current"><span id="currentLabelTemp">Aktuell:</span> <strong id="tempCurrent">-</strong> °C</div>
               <div class="edit-row">
                 <input id="tempInput" type="number" min="18" max="30" step="0.5" inputmode="decimal" />
-                <button type="button" data-send="targetTemperature" id="tempSend">Senden</button>
               </div>
             </section>
 
@@ -9156,7 +9165,6 @@ def grow_profile_page(request: Request):
               <div class="current"><span id="currentLabelVpd">Aktuell:</span> <strong id="vpdCurrent">-</strong> kPa</div>
               <div class="edit-row">
                 <input id="vpdInput" type="number" min="0.5" max="3.5" step="0.1" inputmode="decimal" />
-                <button type="button" data-send="targetVPD" id="vpdSend">Senden</button>
               </div>
             </section>
 
@@ -9169,7 +9177,6 @@ def grow_profile_page(request: Request):
                   <option value="2">2 – Blüte</option>
                   <option value="3">3 – Trocknung</option>
                 </select>
-                <button type="button" data-send="currentPhase" id="phaseSend">Senden</button>
               </div>
             </section>
 
@@ -9178,7 +9185,6 @@ def grow_profile_page(request: Request):
               <div class="current"><span id="currentLabelFlower">Aktuell:</span> <strong id="flowerCurrent">-</strong></div>
               <div class="edit-row date-row">
                 <input id="flowerInput" type="date" />
-                <button type="button" data-send="floweringStart" id="flowerSend">Senden</button>
                 <button type="button" class="delete" data-delete="floweringStart" id="flowerDelete">Löschen</button>
               </div>
             </section>
@@ -9188,10 +9194,13 @@ def grow_profile_page(request: Request):
               <div class="current"><span id="currentLabelDry">Aktuell:</span> <strong id="dryCurrent">-</strong></div>
               <div class="edit-row date-row">
                 <input id="dryInput" type="date" />
-                <button type="button" data-send="dryingStart" id="drySend">Senden</button>
                 <button type="button" class="delete" data-delete="dryingStart" id="dryDelete">Löschen</button>
               </div>
             </section>
+            <div class="save-row">
+              <span id="pendingChanges" class="hint" aria-live="polite"></span>
+              <button type="button" id="saveProfileBtn" disabled>Änderungen speichern</button>
+            </div>
           </div>
         </main>
         <script>
@@ -9226,14 +9235,14 @@ def grow_profile_page(request: Request):
           const T = {
             de: {
               title:'Grow-Profil', back:'← Dashboard', current:'Aktuell:', temp:'Solltemperatur', vpd:'Soll-VPD', phase:'Phase', flower:'Blütestart', dry:'Trocknungsstart',
-              send:'Senden', del:'Löschen', loading:'Werte werden geladen …', loaded:'', sending:'Wird gesendet …', saved:'Gespeichert und vom Controller bestätigt.',
+              save:'Änderungen speichern', del:'Löschen', undo:'Rückgängig', noChanges:'Keine Änderungen', changeCount:'Änderungen:', deleteMarked:'Zum Löschen vorgemerkt – erst beim Speichern wird der Wert gelöscht.', dateDeleteExplicit:'Ein vorhandenes Datum nur über „Löschen“ entfernen.', loading:'Werte werden geladen …', loaded:'', sending:'Wird gesendet …', saved:'Gespeichert und vom Controller bestätigt.',
               denied:'Nur Administratoren dürfen Grow-Einstellungen ändern.', notReady:'Die Backend Write API ist für dieses Zelt noch nicht vollständig eingerichtet. Bitte zuerst unter Setup die Controller-Adresse und das HMAC-Secret konfigurieren.',
               chooseDate:'Bitte zuerst ein Datum auswählen.', invalidValue:'Bitte einen gültigen Wert eingeben.', invalidTempStep:'Solltemperatur nur in 0,5-°C-Schritten von 18,0 bis 30,0 °C einstellen.', invalidVpdStep:'Soll-VPD nur in 0,1-kPa-Schritten von 0,5 bis 3,5 kPa einstellen.', deleteConfirm:'Diesen Datumswert wirklich löschen?',
               p1:'Wachstum', p2:'Blüte', p3:'Trocknung', loadFailed:'Werte konnten nicht geladen werden.'
             },
             en: {
               title:'Grow profile', back:'← Dashboard', current:'Current:', temp:'Target temperature', vpd:'Target VPD', phase:'Phase', flower:'Flowering start', dry:'Drying start',
-              send:'Send', del:'Delete', loading:'Loading values …', loaded:'', sending:'Sending …', saved:'Saved and confirmed by the controller.',
+              save:'Save changes', del:'Delete', undo:'Undo', noChanges:'No changes', changeCount:'Changes:', deleteMarked:'Marked for deletion – the value is only deleted when you save.', dateDeleteExplicit:'Use Delete to remove an existing date.', loading:'Loading values …', loaded:'', sending:'Sending …', saved:'Saved and confirmed by the controller.',
               denied:'Only administrators may change grow settings.', notReady:'The Backend Write API is not fully configured for this tent. Configure the controller address and HMAC secret in Setup first.',
               chooseDate:'Select a date first.', invalidValue:'Enter a valid value.', invalidTempStep:'Set target temperature only in 0.5 °C steps from 18.0 to 30.0 °C.', invalidVpdStep:'Set target VPD only in 0.1 kPa steps from 0.5 to 3.5 kPa.', deleteConfirm:'Delete this date value?',
               p1:'Vegetative', p2:'Flowering', p3:'Drying', loadFailed:'Values could not be loaded.'
@@ -9255,7 +9264,8 @@ def grow_profile_page(request: Request):
             setText('pageTitle',T.title); setText('backBtn',T.back);
             setText('tempLabel',T.temp); setText('vpdLabel',T.vpd); setText('phaseLabel',T.phase); setText('flowerLabel',T.flower); setText('dryLabel',T.dry);
             ['Temp','Vpd','Phase','Flower','Dry'].forEach(x=>setText(`currentLabel${x}`,T.current));
-            ['tempSend','vpdSend','phaseSend','flowerSend','drySend'].forEach(x=>setText(x,T.send));
+            setText('saveProfileBtn',T.save);
+            setText('pendingChanges',T.noChanges);
             ['flowerDelete','dryDelete'].forEach(x=>setText(x,T.del));
             $('phaseInput').options[0].text=`1 – ${T.p1}`; $('phaseInput').options[1].text=`2 – ${T.p2}`; $('phaseInput').options[2].text=`3 – ${T.p3}`;
           }
@@ -9264,19 +9274,39 @@ def grow_profile_page(request: Request):
             if(detail && typeof detail==='object') return detail.message || detail.code || fallback;
             return detail || body?.error || fallback;
           }
-          function setBusy(busy, except=null){
-            document.querySelectorAll('#editor button').forEach(btn=>{ btn.disabled=busy; });
-            if(except && busy) except.disabled=true;
+          let busy=false;
+          let profileLoaded=false;
+          const pendingDeletes=new Set();
+          const dateInputs={floweringStart:'flowerInput',dryingStart:'dryInput'};
+          const dateButtons={floweringStart:'flowerDelete',dryingStart:'dryDelete'};
+          function syncDateActions(){
+            for(const [field,buttonId] of Object.entries(dateButtons)){
+              const btn=$(buttonId);
+              const marked=pendingDeletes.has(field);
+              btn.textContent=marked?T.undo:T.del;
+              btn.classList.toggle('pending-delete',marked);
+              btn.disabled=busy||(!marked&&!original?.[field]);
+              $(dateInputs[field]).classList.toggle('pending-delete',marked);
+            }
+          }
+          function setBusy(next){
+            busy=next;
+            document.querySelectorAll('#editor input, #editor select').forEach(el=>{el.disabled=busy;});
+            syncDateActions();
+            updateChanges();
           }
           function fill(state){
             original={...(state||{})};
+            pendingDeletes.clear();
+            profileLoaded=true;
             const temp=Number(state?.targetTemperature), vpd=Number(state?.targetVPD), phase=Number(state?.currentPhase||1);
             setText('tempCurrent',Number.isFinite(temp)?temp.toFixed(1):'-'); $('tempInput').value=Number.isFinite(temp)?temp:'';
             setText('vpdCurrent',Number.isFinite(vpd)?vpd.toFixed(1):'-'); $('vpdInput').value=Number.isFinite(vpd)?vpd:'';
             setText('phaseCurrent',phaseText(phase)); $('phaseInput').value=String([1,2,3].includes(phase)?phase:1);
             setText('flowerCurrent',formatDate(state?.floweringStart)); $('flowerInput').value=state?.floweringStart||'';
             setText('dryCurrent',formatDate(state?.dryingStart)); $('dryInput').value=state?.dryingStart||'';
-            $('flowerDelete').disabled=!state?.floweringStart; $('dryDelete').disabled=!state?.dryingStart;
+            syncDateActions();
+            updateChanges();
           }
           async function loadProfile(){
             setStatus(T.loading);
@@ -9288,42 +9318,108 @@ def grow_profile_page(request: Request):
               setStatus(T.loaded,'ok');
             }catch(err){ setStatus(err?.message||T.loadFailed,'err'); }
           }
-          async function sendPatch(patch, btn){
-            setBusy(true,btn); setStatus(T.sending);
-            try{
-              const res=await fetch(`/tents/${tentId}/grow-profile`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
-              const body=await res.json().catch(()=>({}));
-              if(!res.ok) throw new Error(detailText(body,`HTTP ${res.status}`));
-              fill(body?.state?.runtime||body?.state?.stored||original);
-              setStatus(T.saved,'ok');
-            }catch(err){ setStatus(err?.message||'Error','err'); }
-            finally{ setBusy(false); $('flowerDelete').disabled=!original?.floweringStart; $('dryDelete').disabled=!original?.dryingStart; }
-          }
           function matchesStep(value, step, base){
             const units=(value-base)/step;
             return Math.abs(units-Math.round(units)) < 1e-9;
           }
-          document.querySelectorAll('[data-send]').forEach(btn=>btn.addEventListener('click',()=>{
-            const field=btn.dataset.send; let value;
-            if(field==='targetTemperature'){
-              const raw=$('tempInput').value; value=Number(raw);
-              if(raw===''||!Number.isFinite(value)){setStatus(T.invalidValue,'err');return;}
-              if(value<18||value>30||!matchesStep(value,0.5,18)){setStatus(T.invalidTempStep,'err');return;}
+          // Construct a true partial PATCH: unmodified fields never leave the browser.
+          // A date is deleted only by an explicit click on its Delete action (JSON null).
+          function buildPatch(){
+            const patch={};
+            if(!profileLoaded) return {patch,error:''};
+            const tempRaw=$('tempInput').value;
+            if(tempRaw==='') return {patch,error:T.invalidValue};
+            const temp=Number(tempRaw);
+            if(temp!==Number(original.targetTemperature)){
+              if(!Number.isFinite(temp)||temp<18||temp>30||!matchesStep(temp,0.5,18))
+                return {patch,error:T.invalidTempStep};
+              patch.targetTemperature=temp;
             }
-            else if(field==='targetVPD'){
-              const raw=$('vpdInput').value; value=Number(raw);
-              if(raw===''||!Number.isFinite(value)){setStatus(T.invalidValue,'err');return;}
-              if(value<0.5||value>3.5||!matchesStep(value,0.1,0.5)){setStatus(T.invalidVpdStep,'err');return;}
+            const vpdRaw=$('vpdInput').value;
+            if(vpdRaw==='') return {patch,error:T.invalidValue};
+            const vpd=Number(vpdRaw);
+            if(vpd!==Number(original.targetVPD)){
+              if(!Number.isFinite(vpd)||vpd<0.5||vpd>3.5||!matchesStep(vpd,0.1,0.5))
+                return {patch,error:T.invalidVpdStep};
+              patch.targetVPD=vpd;
             }
-            else if(field==='currentPhase'){ value=Number($('phaseInput').value); }
-            else if(field==='floweringStart'){ value=$('flowerInput').value; if(!value){setStatus(T.chooseDate,'err');return;} }
-            else if(field==='dryingStart'){ value=$('dryInput').value; if(!value){setStatus(T.chooseDate,'err');return;} }
-            sendPatch({[field]:value},btn);
-          }));
+            const phase=Number($('phaseInput').value);
+            if(![1,2,3].includes(phase)) return {patch,error:T.invalidValue};
+            if(phase!==Number(original.currentPhase)) patch.currentPhase=phase;
+            for(const [field,inputId] of Object.entries(dateInputs)){
+              const before=original[field]||'';
+              const value=$(inputId).value;
+              if(pendingDeletes.has(field)){
+                if(before) patch[field]=null;
+              }else if(!value && before){
+                return {patch,error:T.dateDeleteExplicit};
+              }else if(value!==before){
+                if(!value) return {patch,error:T.chooseDate};
+                patch[field]=value;
+              }
+            }
+            return {patch,error:''};
+          }
+          function updateChanges(){
+            const result=buildPatch();
+            const count=Object.keys(result.patch).length;
+            setText('pendingChanges',profileLoaded?(result.error|| (count?`${T.changeCount} ${count}`:T.noChanges)):T.noChanges);
+            $('pendingChanges').classList.toggle('pending-delete-label',!!result.error);
+            $('saveProfileBtn').disabled=busy||!profileLoaded||count===0||!!result.error;
+            return result;
+          }
+          async function sendPatch(patch){
+            setBusy(true); setStatus(T.sending);
+            try{
+              const res=await fetch(`/tents/${tentId}/grow-profile`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+              const body=await res.json().catch(()=>({}));
+              if(!res.ok) throw new Error(detailText(body,`HTTP ${res.status}`));
+              const fallback={...original,...patch};
+              for(const field of Object.keys(dateInputs)) if(fallback[field]===null) fallback[field]='';
+              fill(body?.state?.runtime||body?.state?.stored||fallback);
+              setStatus(T.saved,'ok');
+            }catch(err){ setStatus(err?.message||'Error','err'); }
+            finally{ setBusy(false); }
+          }
+          document.querySelectorAll('#editor input, #editor select').forEach(input=>{
+            const changed=()=>{
+              const field=Object.keys(dateInputs).find(f=>dateInputs[f]===input.id);
+              if(field && input.value && pendingDeletes.has(field)){
+                pendingDeletes.delete(field);
+                syncDateActions();
+              }
+              updateChanges();
+            };
+            input.addEventListener('input',changed);
+            input.addEventListener('change',changed);
+            if(input.tagName==='INPUT') input.addEventListener('keydown',(event)=>{
+              if(event.key==='Enter'){
+                event.preventDefault();
+                $('saveProfileBtn').click();
+              }
+            });
+          });
           document.querySelectorAll('[data-delete]').forEach(btn=>btn.addEventListener('click',()=>{
-            if(!window.confirm(T.deleteConfirm)) return;
-            sendPatch({[btn.dataset.delete]:null},btn);
+            if(busy||!profileLoaded) return;
+            const field=btn.dataset.delete;
+            if(pendingDeletes.has(field)){
+              pendingDeletes.delete(field);
+              $(dateInputs[field]).value=original[field]||'';
+            }else{
+              pendingDeletes.add(field);
+              $(dateInputs[field]).value='';
+              setStatus(T.deleteMarked);
+            }
+            syncDateActions();
+            updateChanges();
           }));
+          $('saveProfileBtn').addEventListener('click',()=>{
+            if(busy||!profileLoaded) return;
+            const {patch,error}=buildPatch();
+            if(error){setStatus(error,'err');return;}
+            if(Object.keys(patch).length===0) return;
+            sendPatch(patch);
+          });
           $('backBtn').addEventListener('click',ev=>{ ev.preventDefault(); const url=`/app?page=dashboard&tent=${encodeURIComponent(String(tentId))}`; if(window.parent&&window.parent!==window) window.parent.location.href=url; else window.location.href=url; });
           (async()=>{
             applyI18n();

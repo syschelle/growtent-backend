@@ -56,16 +56,19 @@ def test_guest_or_anonymous_html_has_no_adjust_button_or_modal_and_cannot_open_p
     assert exc.value.status_code == 403
 
 
-def test_admin_modal_editor_is_compact_and_keeps_single_field_patch_behavior():
+def test_admin_modal_editor_is_compact_and_sends_only_modified_fields():
     html = _render_functions('admin')['grow_profile_page'](_request())
     assert "qs.get('modal') === '1'" in html
     assert 'body.modal-editor .head { display:none; }' in html
-    assert 'data-send="targetTemperature"' in html
-    assert 'data-send="targetVPD"' in html
+    assert 'id="saveProfileBtn"' in html
+    assert 'data-send=' not in html
     assert 'data-delete="floweringStart"' in html
     assert 'data-delete="dryingStart"' in html
-    assert "sendPatch({[field]:value},btn);" in html
-    assert "sendPatch({[btn.dataset.delete]:null},btn);" in html
+    assert 'function buildPatch()' in html
+    assert 'patch.targetTemperature=temp;' in html
+    assert 'patch.targetVPD=vpd;' in html
+    assert 'patch[field]=null;' in html
+    assert 'sendPatch(patch);' in html
     assert "body:JSON.stringify(patch)" in html
     assert "postMessage({type:'grow-profile-modal-close'}, window.location.origin)" in html
 
@@ -85,17 +88,17 @@ def test_compact_modal_uses_content_height_and_retains_viewport_scroll_limit():
     assert "frame.style.height = `${Math.max(100, Math.ceil(height))}px`;" in dashboard
 
 
-def test_compact_mobile_layout_preserves_send_and_delete_actions_without_full_width_rows():
+def test_compact_mobile_layout_preserves_single_save_and_delete_actions():
     page = _render_functions('admin')['grow_profile_page'](_request())
     assert "body.modal-editor .edit-row button { width:auto; }" in page
-    assert "body.modal-editor .date-row { grid-template-columns:1fr 1fr; }" in page
-    assert "body.modal-editor .date-row input { grid-column:1 / -1; }" in page
+    assert "body.modal-editor .date-row { grid-template-columns:minmax(0,1fr) auto; }" in page
+    assert 'body.modal-editor #saveProfileBtn { width:100%; }' in page
     assert 'min-height:36px;' in page
     assert 'body.modal-editor .notice { display:none; margin:0; }' in page
     assert 'body.modal-editor input, body.modal-editor select, body.modal-editor button { min-height:40px; }' in page
-    for field in ('targetTemperature', 'targetVPD', 'currentPhase', 'floweringStart', 'dryingStart'):
-        assert f'data-send="{field}"' in page
-    assert "sendPatch({[btn.dataset.delete]:null},btn);" in page
+    assert page.count('id="saveProfileBtn"') == 1
+    assert 'data-send=' not in page
+    assert 'pendingDeletes.add(field);' in page
 
 
 def test_narrow_modal_keeps_desktop_rows_without_breaking_phone_layout():
@@ -109,5 +112,5 @@ def test_narrow_modal_keeps_desktop_rows_without_breaking_phone_layout():
     assert '@media (max-width:530px)' in editor
     assert 'body.modal-editor .card {' in editor
     assert 'grid-template-columns:minmax(135px,.8fr) minmax(0,1.7fr);' in editor
-    assert 'body.modal-editor .date-row { grid-template-columns:1fr 1fr; }' in editor
-    assert 'body.modal-editor .date-row input { grid-column:1 / -1; }' in editor
+    assert 'body.modal-editor .date-row { grid-template-columns:minmax(0,1fr) auto; }' in editor
+    assert 'body.modal-editor #saveProfileBtn { width:100%; }' in editor

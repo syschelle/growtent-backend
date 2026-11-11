@@ -2,6 +2,18 @@
 
 Entries are maintained in project language (English/German as needed).
 
+## v0.353
+
+### Single save action for Grow Profile
+
+- Replaced five separate Send buttons with a single **Save changes** button in the Grow Profile modal and standalone editor.
+- The save action is enabled only when valid changes are present; unchanged fields are excluded from the authenticated partial PATCH.
+- Multiple edits, including phase and date updates, are submitted together to avoid unnecessary intermediate controller states.
+- Date Delete now marks the value for removal and can be undone before saving; only the final save transmits JSON `null`.
+- Retained 0.5 °C / 0.1 kPa UI increments, bilingual labels, admin-only access, HMAC signing and stored/runtime verification.
+- No database or firmware changes.
+- Full test suite: 142 passed. Browser interaction checks passed at desktop and mobile widths.
+
 ## v0.352
 
 ### Narrower Grow Profile modal
