@@ -23,7 +23,8 @@ def test_rendered_irrigation_scripts_parse_and_include_revision_and_manual_ident
     scripts=[]
     for name in ('setup_page','dashboard_page'):
         html=render(name)
-        scripts+=re.findall(r'<script\b[^>]*>(.*?)</script>',html,re.S)
+        for rendered in (html, html.replace('<script', '<SCRIPT').replace('</script>', '</SCRIPT>')):
+            scripts+=re.findall(r'<script\b[^>]*>(.*?)</script>',rendered,re.S | re.IGNORECASE)
         assert 'expected_revision:' in html and 'Stand veraltet' in html
         assert 'Transfer previous backend plan' in html
         assert 'if(saveButton) saveButton.disabled = !!j.stale' in html
