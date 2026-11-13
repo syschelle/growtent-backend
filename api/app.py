@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.355"
+APP_VERSION = "v0.356"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7006,6 +7006,12 @@ def setup_page(request: Request):
             const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
             const messages={
               controller_unreachable:['ESP nicht erreichbar. Stand prüfen.','ESP unreachable. Verify the current state.'],
+              unverified_source_ip_not_allowed:['ESP meldet eine nicht erlaubte Backend-IP (Antwort nicht signiert). Freigegebene Quell-IP prüfen.','ESP reports a disallowed backend IP (unsigned response). Check the allowed source IP.'],
+              unverified_bad_signature:['ESP meldet eine ungültige HMAC-Signatur (Antwort nicht signiert). Schlüssel prüfen.','ESP reports an invalid HMAC signature (unsigned response). Check the key.'],
+              unverified_time_not_synchronized:['ESP meldet eine fehlende Zeitsynchronisierung (Antwort nicht signiert).','ESP reports an unsynchronized clock (unsigned response).'],
+              unverified_nonce_cache_full:['ESP-Authentifizierung ausgelastet (Antwort nicht signiert). Erneuten Abgleich abwarten.','ESP authentication cache is full (unsigned response). Wait for the next refresh.'],
+              unverified_backend_write_disabled:['ESP meldet deaktivierten Backend-Zugriff (Antwort nicht signiert).','ESP reports disabled backend access (unsigned response).'],
+
               firmware_upgrade_required:['ESP-Firmware v0.5.10 oder neuer erforderlich.','ESP firmware v0.5.10 or newer is required.'],
               revision_conflict:['Plan wurde am ESP geändert. Neu laden und Änderungen erneut prüfen.','The ESP plan changed. Reload and review your changes.'],
               invalid_response_authentication:['HMAC-Antwort ungültig. Schlüssel und Uhrzeit prüfen.','Invalid HMAC response. Check key and clocks.'],
@@ -7033,6 +7039,19 @@ def setup_page(request: Request):
             return parts.join(' · ');
           }
 
+          function irrigationSyncMessage(summary){
+            const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
+            let text=summary.stale?(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.'):irrigationStatusText(summary.status);
+            if(summary.last_success_at){
+              const date=new Date(summary.last_success_at);
+              if(!Number.isNaN(date.getTime()))text+=' · '+(de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
+            }
+            if(summary.error)text+=' · '+irrigationMessage(summary.error)+' ['+summary.error+']';
+            if(summary.event_sync_error)text+=' · '+(de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error;
+            if(summary.refresh_pending)text+=' · '+(de?'Abgleich läuft':'Refresh in progress');
+            return text;
+          }
+
           async function openIrrigationPlanModal(tent){
             const modal = document.getElementById('irPlanModal');
             const msg = document.getElementById('irPlanMsg');
@@ -7050,6 +7069,7 @@ def setup_page(request: Request):
             irPlanRevision = null;
             const saveButton = document.getElementById('irPlanSaveBtn');
             if(saveButton) saveButton.disabled = true;
+            [enabledEl,everyEl,offsetEl,lastRunDateEl].forEach(el=>el.disabled=true);
 
             const generation=++irPlanGeneration;
             const requestedTent=currentPlanTentId;
@@ -7061,6 +7081,7 @@ def setup_page(request: Request):
               if(!res.ok || !j?.plan || !Number.isInteger(j?.revision)) throw new Error(j?.error || 'controller_unavailable');
               irPlanRevision = j.stale ? null : j.revision;
               if(saveButton) saveButton.disabled = !!j.stale;
+              [enabledEl,everyEl,offsetEl,lastRunDateEl].forEach(el=>el.disabled=!!j.stale);
               const p = j.plan;
               enabledEl.checked = !!p.enabled;
               everyEl.value = Number(p.every_n_days || 1);
@@ -7081,7 +7102,11 @@ def setup_page(request: Request):
                 msg?.insertAdjacentElement('afterend',transfer);
               }
 
-              if(msg)msg.textContent=j.stale?((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Stand veraltet – ESP nicht bestätigt. ':'Stale state – ESP not confirmed. ')+(j.last_success_at||''):irrigationStatusText(j.status)+(j.last_run_date?` · ${j.last_run_date}`:'');
+              if(msg)msg.textContent=irrigationSyncMessage(j);
+              // Retry only a disabled/unconfirmed form; confirmed user edits are never refreshed away.
+              if(j.stale)setTimeout(()=>{
+                if(modal.style.display!=='none'&&generation===irPlanGeneration&&requestedTent===currentPlanTentId)openIrrigationPlanModal(tent);
+              },j.error==='irrigation_busy'?2000:15000);
             } catch (error) {
               if(generation!==irPlanGeneration||requestedTent!==currentPlanTentId)return;
               enabledEl.checked = false;
@@ -7089,6 +7114,7 @@ def setup_page(request: Request):
               offsetEl.value = 0;
               lastRunDateEl.value = '';
               if (msg) msg.textContent = irrigationMessage(error.message);
+              setTimeout(()=>{if(modal.style.display!=='none'&&generation===irPlanGeneration&&requestedTent===currentPlanTentId)openIrrigationPlanModal(tent);},15000);
             }
           }
 
@@ -11668,6 +11694,12 @@ def dashboard_page(request: Request):
             const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
             const messages={
               controller_unreachable:['ESP nicht erreichbar. Stand prüfen.','ESP unreachable. Verify the current state.'],
+              unverified_source_ip_not_allowed:['ESP meldet eine nicht erlaubte Backend-IP (Antwort nicht signiert). Freigegebene Quell-IP prüfen.','ESP reports a disallowed backend IP (unsigned response). Check the allowed source IP.'],
+              unverified_bad_signature:['ESP meldet eine ungültige HMAC-Signatur (Antwort nicht signiert). Schlüssel prüfen.','ESP reports an invalid HMAC signature (unsigned response). Check the key.'],
+              unverified_time_not_synchronized:['ESP meldet eine fehlende Zeitsynchronisierung (Antwort nicht signiert).','ESP reports an unsynchronized clock (unsigned response).'],
+              unverified_nonce_cache_full:['ESP-Authentifizierung ausgelastet (Antwort nicht signiert). Erneuten Abgleich abwarten.','ESP authentication cache is full (unsigned response). Wait for the next refresh.'],
+              unverified_backend_write_disabled:['ESP meldet deaktivierten Backend-Zugriff (Antwort nicht signiert).','ESP reports disabled backend access (unsigned response).'],
+
               firmware_upgrade_required:['ESP-Firmware v0.5.10 oder neuer erforderlich.','ESP firmware v0.5.10 or newer is required.'],
               revision_conflict:['Plan wurde am ESP geändert. Neu laden und Änderungen erneut prüfen.','The ESP plan changed. Reload and review your changes.'],
               invalid_response_authentication:['HMAC-Antwort ungültig. Schlüssel und Uhrzeit prüfen.','Invalid HMAC response. Check key and clocks.'],
@@ -11695,6 +11727,19 @@ def dashboard_page(request: Request):
             return parts.join(' · ');
           }
 
+          function irrigationSyncMessage(summary){
+            const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
+            let text=summary.stale?(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.'):irrigationStatusText(summary.status);
+            if(summary.last_success_at){
+              const date=new Date(summary.last_success_at);
+              if(!Number.isNaN(date.getTime()))text+=' · '+(de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
+            }
+            if(summary.error)text+=' · '+irrigationMessage(summary.error)+' ['+summary.error+']';
+            if(summary.event_sync_error)text+=' · '+(de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error;
+            if(summary.refresh_pending)text+=' · '+(de?'Abgleich läuft':'Refresh in progress');
+            return text;
+          }
+
           async function openDashboardIrPlanModal(){
             const modal = document.getElementById('dbIrPlanModal');
             const msg = document.getElementById('dbIrPlanMsg');
@@ -11711,6 +11756,7 @@ def dashboard_page(request: Request):
             dbIrPlanRevision = null;
             const saveButton = document.getElementById('dbIrPlanSaveBtn');
             if(saveButton) saveButton.disabled = true;
+            [enabledEl,everyEl,offsetEl,lastRunDateEl].forEach(el=>el.disabled=true);
 
             const generation=++dbIrPlanGeneration;
             const requestedTent=currentTentId;
@@ -11722,6 +11768,7 @@ def dashboard_page(request: Request):
               if(!res.ok || !j?.plan || !Number.isInteger(j?.revision)) throw new Error(j?.error || 'controller_unavailable');
               dbIrPlanRevision = j.stale ? null : j.revision;
               if(saveButton) saveButton.disabled = !!j.stale;
+              [enabledEl,everyEl,offsetEl,lastRunDateEl].forEach(el=>el.disabled=!!j.stale);
               const p = j.plan;
               enabledEl.checked = !!p.enabled;
               everyEl.value = Number(p.every_n_days || 1);
@@ -11742,7 +11789,11 @@ def dashboard_page(request: Request):
                 msg?.insertAdjacentElement('afterend',transfer);
               }
 
-              if(msg)msg.textContent=j.stale?((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Stand veraltet – ESP nicht bestätigt. ':'Stale state – ESP not confirmed. ')+(j.last_success_at||''):irrigationStatusText(j.status)+(j.last_run_date?` · ${j.last_run_date}`:'');
+              if(msg)msg.textContent=irrigationSyncMessage(j);
+              // Retry only a disabled/unconfirmed form; confirmed user edits are never refreshed away.
+              if(j.stale)setTimeout(()=>{
+                if(modal.style.display!=='none'&&generation===dbIrPlanGeneration&&requestedTent===currentTentId)openDashboardIrPlanModal();
+              },j.error==='irrigation_busy'?2000:15000);
             } catch (error) {
               if(generation!==dbIrPlanGeneration||requestedTent!==currentTentId)return;
               enabledEl.checked = false;
@@ -11750,6 +11801,7 @@ def dashboard_page(request: Request):
               offsetEl.value = 0;
               lastRunDateEl.value = '';
               if (msg) msg.textContent = irrigationMessage(error.message);
+              setTimeout(()=>{if(modal.style.display!=='none'&&generation===dbIrPlanGeneration&&requestedTent===currentTentId)openDashboardIrPlanModal();},15000);
             }
           }
 

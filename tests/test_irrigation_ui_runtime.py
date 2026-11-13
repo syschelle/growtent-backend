@@ -78,3 +78,22 @@ def test_rendered_irrigation_scripts_parse_and_include_revision_and_manual_ident
     assert 'command_id:commandId' in dashboard
     assert 'crypto.getRandomValues' in dashboard
     assert 'retry_same_command' in dashboard
+
+def test_sync_message_converts_utc_to_berlin_and_keeps_event_errors_distinct():
+    html=render('dashboard_page')
+    start=html.index('          function irrigationSyncMessage(')
+    end=html.index('          async function openDashboardIrPlanModal(',start)
+    code=html[start:end]
+    js='''const vm=require('node:vm'),assert=require('node:assert/strict');
+const code=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const context=vm.createContext({localStorage:{getItem:()=> 'de'},document:{documentElement:{lang:'de'}},Date,irrigationStatusText:()=> 'ESP',irrigationMessage:code=>'Error '+code});
+vm.runInContext(code,context);
+context.summary={stale:true,last_success_at:'2026-11-13T16:21:03.916222+00:00',error:'controller_unreachable'};
+let text=vm.runInContext('irrigationSyncMessage(summary)',context);
+assert.ok(text.includes('17:21:03'));assert.ok(!text.includes('T16:21'));
+assert.ok(text.includes('[controller_unreachable]'));
+context.summary={stale:false,event_sync_error:'event_sequence_gap',status:{}};
+text=vm.runInContext('irrigationSyncMessage(summary)',context);
+assert.ok(text.includes('event_sequence_gap'));assert.ok(!text.includes('Stand veraltet'));
+'''
+    subprocess.run(['node','-e',js],input=json.dumps(code),text=True,check=True)

@@ -119,6 +119,7 @@ class MemoryStore:
     def cache(self,tent,state=None,error=None):
         if state is not None:self.snapshot_value.update(state=copy.deepcopy(state),checked_at=datetime.fromtimestamp(NOW,timezone.utc),error=None)
         else:self.snapshot_value['error']=error
+    def event_error(self,tent,error=None):self.snapshot_value['event_error']=error
     def claim_poll(self,tent):return True
     def resolve_commands(self,*args):pass
     def ingest(self,tent,url,stream,events,notify):
@@ -225,3 +226,36 @@ def test_mutation_models_require_revision_and_explicit_manual_identity():
     with pytest.raises(ValidationError):IrrigationPlanPayload(expected_revision=1,every_n_days=2.5)
     with pytest.raises(ValidationError):ManualIrrigationPayload(command_id='bad')
     assert IrrigationPlanPayload(expected_revision=0,enabled=True,every_n_days=366,offset_after_light_on_min=0).every_n_days==366
+
+def test_event_failure_does_not_make_confirmed_plan_stale_or_uneditable():
+    service,store,client=service_fixture()
+    def fail_events(*args):raise IrrigationError('event_sequence_gap')
+    client.request=fail_events
+    assert service.sync(1)=='event_sequence_gap'
+    summary=service.get(1)
+    assert summary['stale'] is False and summary['error'] is None
+    assert summary['event_sync_error']=='event_sequence_gap'
+    assert service.update(1,{'expected_revision':3,'enabled':True,'every_n_days':3,'offset_after_light_on_min':60,'last_run_date':'2026-11-12'})['verified']
+
+
+def test_busy_refresh_uses_recent_confirmed_revision_but_not_old_or_failed_cache():
+    service,store,client=service_fixture();service.get(1)
+    from contextlib import contextmanager
+    @contextmanager
+    def busy(*args):yield False
+    store.lock=busy
+    store.snapshot_value['checked_at']=datetime.fromtimestamp(NOW-40,timezone.utc)
+    summary=service.get(1)
+    assert not summary['stale'] and summary['refresh_pending']
+    store.snapshot_value['checked_at']=datetime.fromtimestamp(NOW-120,timezone.utc)
+    assert service.get(1)['stale']
+    store.snapshot_value['checked_at']=datetime.fromtimestamp(NOW-40,timezone.utc)
+    store.snapshot_value['error']='controller_unreachable'
+    assert service.get(1)['stale']
+
+
+@pytest.mark.parametrize('method',['GET','POST'])
+def test_unsigned_auth_diagnostic_never_becomes_authenticated_success(method):
+    client=client_for(lambda request:httpx.Response(403,json={'ok':False,'error':'source_ip_not_allowed'}))
+    with pytest.raises(IrrigationError,match='unverified_source_ip_not_allowed') as error:client.request(method,PLAN,{} if method=='POST' else None)
+    assert error.value.uncertain==(method=='POST')

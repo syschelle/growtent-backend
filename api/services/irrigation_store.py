@@ -32,6 +32,7 @@ def create_tables(cur):
         tent_id INTEGER NOT NULL REFERENCES tents(id) ON DELETE CASCADE, command_id TEXT NOT NULL,
         controller_url TEXT NOT NULL, expires_at BIGINT NOT NULL, status TEXT NOT NULL,
         PRIMARY KEY(tent_id,command_id));''')
+    cur.execute("ALTER TABLE irrigation_controller_state ADD COLUMN IF NOT EXISTS event_error_code TEXT")
 
 class IrrigationStore:
     @contextmanager
@@ -54,13 +55,13 @@ class IrrigationStore:
                 legacy={'plan':json.loads(row[0] or '{}'),'last_run_date':row[1].isoformat() if row[1] else None}
                 cur.execute('''INSERT INTO irrigation_controller_state(tent_id,controller_url,legacy_plan)
                     VALUES(%s,%s,%s::jsonb) ON CONFLICT(tent_id) DO NOTHING''',(tent_id,url,json.dumps(legacy)))
-                cur.execute('SELECT controller_url,state,legacy_plan,checked_at,error_code,attempted_at FROM irrigation_controller_state WHERE tent_id=%s',(tent_id,))
+                cur.execute('SELECT controller_url,state,legacy_plan,checked_at,error_code,attempted_at,event_error_code FROM irrigation_controller_state WHERE tent_id=%s',(tent_id,))
                 current=cur.fetchone()
                 if current[0]!=url:
                     # Never use a previous physical controller's state/commands for a new host.
-                    cur.execute('UPDATE irrigation_controller_state SET controller_url=%s,state=NULL,checked_at=NULL,polled_at=NULL,error_code=NULL,legacy_plan=%s::jsonb WHERE tent_id=%s',(url,json.dumps(legacy),tent_id))
+                    cur.execute('UPDATE irrigation_controller_state SET controller_url=%s,state=NULL,checked_at=NULL,polled_at=NULL,attempted_at=NULL,error_code=NULL,event_error_code=NULL,legacy_plan=%s::jsonb WHERE tent_id=%s',(url,json.dumps(legacy),tent_id))
                     return {'state':None,'legacy':legacy,'checked_at':None,'error':None}
-                return {'state':current[1],'legacy':current[2],'checked_at':current[3],'error':current[4],'attempted_at':current[5]}
+                return {'state':current[1],'legacy':current[2],'checked_at':current[3],'error':current[4],'attempted_at':current[5],'event_error':current[6]}
 
     def cache(self,tent_id,state=None,error=None):
         with get_conn() as conn:
@@ -71,6 +72,11 @@ class IrrigationStore:
                     cur.execute('UPDATE irrigation_controller_state SET state=%s::jsonb,checked_at=NOW(),attempted_at=NOW(),error_code=NULL WHERE tent_id=%s',(json.dumps(state),tent_id))
                     plan={k:state[k] for k in ('enabled','every_n_days','offset_after_light_on_min')}
                     cur.execute('UPDATE tents SET irrigation_plan_json=%s,irrigation_last_run_date=%s WHERE id=%s',(json.dumps(plan),state.get('last_run_date'),tent_id))
+
+    def event_error(self,tent_id,error=None):
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute('UPDATE irrigation_controller_state SET event_error_code=%s WHERE tent_id=%s',(error,tent_id))
 
     def command(self,tent_id,url,command_id,expires):
         with get_conn() as conn:

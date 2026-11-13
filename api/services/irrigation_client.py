@@ -42,6 +42,14 @@ class IrrigationClient:
         raw = response.content
         if len(raw) > 32768:
             raise IrrigationError('controller_response_too_large', uncertain=method=='POST')
+        # Unsigned rejections are diagnostics only. They never authenticate state
+        # or prove that a POST did not execute; ambiguous manual IDs are retained.
+        if response.status_code >= 400 and not response.headers.get('X-GrowTent-Signature'):
+            try: rejected=json.loads(raw)
+            except (ValueError,UnicodeError): rejected={}
+            diagnostic=rejected.get('error') if isinstance(rejected,dict) else None
+            if diagnostic in {'backend_write_disabled','source_ip_not_allowed','backend_secret_not_configured','time_not_synchronized','irrigation_storage_unavailable','restart_or_ota_pending','missing_auth_headers','invalid_auth_headers_or_timestamp','bad_signature','nonce_cache_full','replayed_nonce','irrigation_busy'}:
+                raise IrrigationError('unverified_'+diagnostic,uncertain=method=='POST')
         ts = response.headers.get('X-GrowTent-Timestamp', '')
         rn = response.headers.get('X-GrowTent-Nonce', '')
         sig = response.headers.get('X-GrowTent-Signature', '')
