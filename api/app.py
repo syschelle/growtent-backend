@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.356"
+APP_VERSION = "v0.357"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -7041,15 +7041,16 @@ def setup_page(request: Request):
 
           function irrigationSyncMessage(summary){
             const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
-            let text=summary.stale?(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.'):irrigationStatusText(summary.status);
+            const parts=[];
+            if(summary.stale)parts.push(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.');
             if(summary.last_success_at){
               const date=new Date(summary.last_success_at);
-              if(!Number.isNaN(date.getTime()))text+=' · '+(de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
+              if(!Number.isNaN(date.getTime()))parts.push((de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'}));
             }
-            if(summary.error)text+=' · '+irrigationMessage(summary.error)+' ['+summary.error+']';
-            if(summary.event_sync_error)text+=' · '+(de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error;
-            if(summary.refresh_pending)text+=' · '+(de?'Abgleich läuft':'Refresh in progress');
-            return text;
+            if(summary.error)parts.push(irrigationMessage(summary.error)+' ['+summary.error+']');
+            if(summary.event_sync_error)parts.push((de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error);
+            if(summary.refresh_pending)parts.push(de?'Abgleich läuft':'Refresh in progress');
+            return parts.join(' · ');
           }
 
           async function openIrrigationPlanModal(tent){
@@ -11729,15 +11730,16 @@ def dashboard_page(request: Request):
 
           function irrigationSyncMessage(summary){
             const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
-            let text=summary.stale?(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.'):irrigationStatusText(summary.status);
+            const parts=[];
+            if(summary.stale)parts.push(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.');
             if(summary.last_success_at){
               const date=new Date(summary.last_success_at);
-              if(!Number.isNaN(date.getTime()))text+=' · '+(de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'});
+              if(!Number.isNaN(date.getTime()))parts.push((de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'}));
             }
-            if(summary.error)text+=' · '+irrigationMessage(summary.error)+' ['+summary.error+']';
-            if(summary.event_sync_error)text+=' · '+(de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error;
-            if(summary.refresh_pending)text+=' · '+(de?'Abgleich läuft':'Refresh in progress');
-            return text;
+            if(summary.error)parts.push(irrigationMessage(summary.error)+' ['+summary.error+']');
+            if(summary.event_sync_error)parts.push((de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error);
+            if(summary.refresh_pending)parts.push(de?'Abgleich läuft':'Refresh in progress');
+            return parts.join(' · ');
           }
 
           async function openDashboardIrPlanModal(){
