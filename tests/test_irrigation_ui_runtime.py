@@ -92,6 +92,12 @@ context.summary={stale:true,last_success_at:'2026-11-13T16:21:03.916222+00:00',e
 let text=vm.runInContext('irrigationSyncMessage(summary)',context);
 assert.ok(text.includes('17:21:03'));assert.ok(!text.includes('T16:21'));
 assert.ok(text.includes('[controller_unreachable]'));
+context.summary={stale:false,last_success_at:'2026-11-13T16:21:03.916222+00:00',status:{queued_events:0}};
+text=vm.runInContext('irrigationSyncMessage(summary)',context);
+assert.ok(text.startsWith('Letztes Update: '));
+assert.ok(!text.includes('Ereignispuffer')&&!text.includes('ESP'));
+assert.ok(!text.includes('MEZ')&&!text.includes('CET')&&!text.includes('GMT'));
+
 context.summary={stale:false,event_sync_error:'event_sequence_gap',status:{}};
 text=vm.runInContext('irrigationSyncMessage(summary)',context);
 assert.ok(text.includes('event_sequence_gap'));assert.ok(!text.includes('Stand veraltet'));
