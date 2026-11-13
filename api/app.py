@@ -7045,7 +7045,7 @@ def setup_page(request: Request):
             if(summary.stale)parts.push(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.');
             if(summary.last_success_at){
               const date=new Date(summary.last_success_at);
-              if(!Number.isNaN(date.getTime()))parts.push((de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'}));
+              if(!Number.isNaN(date.getTime()))parts.push((de?'Letztes Update: ':'Last update: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}));
             }
             if(summary.error)parts.push(irrigationMessage(summary.error)+' ['+summary.error+']');
             if(summary.event_sync_error)parts.push((de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error);
@@ -11734,7 +11734,7 @@ def dashboard_page(request: Request):
             if(summary.stale)parts.push(de?'Stand veraltet – ESP nicht bestätigt.':'Stale state – ESP not confirmed.');
             if(summary.last_success_at){
               const date=new Date(summary.last_success_at);
-              if(!Number.isNaN(date.getTime()))parts.push((de?'Letzter Abgleich: ':'Last confirmation: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',timeZoneName:'short'}));
+              if(!Number.isNaN(date.getTime()))parts.push((de?'Letztes Update: ':'Last update: ')+date.toLocaleString(de?'de-DE':'en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}));
             }
             if(summary.error)parts.push(irrigationMessage(summary.error)+' ['+summary.error+']');
             if(summary.event_sync_error)parts.push((de?'Ereignis-Abgleich: ':'Event synchronization: ')+summary.event_sync_error);

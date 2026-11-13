@@ -2,7 +2,7 @@
 
 ## Changes
 
-- Show only Last confirmation with its localized timestamp in the healthy irrigation-plan dialog.
+- Show only Last update with its localized timestamp without a timezone abbreviation in the healthy irrigation-plan dialog.
 - Remove the ESP label and routine event-buffer details from this line in both Setup and Dashboard.
 - Retain stale/error/event-sync diagnostics when action is needed.
 
