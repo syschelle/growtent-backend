@@ -78,6 +78,10 @@ class IrrigationClient:
             try:
                 if date.fromisoformat(last).isoformat()!=last: raise ValueError()
             except (ValueError,TypeError): raise IrrigationError('invalid_controller_state')
+        if 'next_run_at' in state and state['next_run_at'] is not None and (type(state['next_run_at']) is not int or not 1609459200<=state['next_run_at']<=4102444800):
+            raise IrrigationError('invalid_controller_state')
+        if 'next_run_status' in state and not isinstance(state['next_run_status'],str):
+            raise IrrigationError('invalid_controller_state')
         commands=state.get('manual_commands')
         if not isinstance(commands,list) or len(commands)>16 or any(not isinstance(c,dict) or not isinstance(c.get('command_id'),str) or c.get('status') not in ('accepted','completed','aborted') for c in commands):
             raise IrrigationError('invalid_controller_state')

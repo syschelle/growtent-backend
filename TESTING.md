@@ -1,4 +1,4 @@
-# Testing — v0.354
+# Testing — v0.355
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -16,3 +16,7 @@ Firmware policy/editor/layout/parser tests and full board builds run in the comp
 - Interrupt ESP/backend power around command persistence, GPIO start, ingestion commit and ACK; verify no repeated start.
 - Simulate backend/push-provider outages, delayed event timestamps, buffer pressure and failed notification retry.
 - Verify deployment and explicit rollback order. No hardware or live Pushover test is implied by CI.
+
+## v0.355 display
+
+UI label tests exercise the production formatter with future, stale, expired, disabled, Drying and missing/older-firmware data. Service tests verify signed next-run metadata is passed through without recomputation. Live-device display/timing checks remain open.
