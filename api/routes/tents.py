@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 import app as legacy
 from services.tent_service import TentService
 from core.dependencies import get_tent_service
-from models.schemas import GrowProfilePatch, IrrigationPlanPayload, StrainPayload, TentPayload
+from models.schemas import GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload
 
 router = APIRouter()
 
@@ -146,8 +146,8 @@ def toggle_relay(tent_id: int, relay_idx: int, service: TentService = Depends(ge
 
 
 @router.post('/tents/{tent_id}/actions/startWatering')
-def start_watering(tent_id: int, service: TentService = Depends(get_tent_service)):
-    return service.start_watering(tent_id)
+def start_watering(tent_id: int, payload: ManualIrrigationPayload, service: TentService = Depends(get_tent_service)):
+    return service.start_watering(tent_id,payload)
 
 
 @router.post('/tents/{tent_id}/actions/pump/{pump_idx}/trigger10s')

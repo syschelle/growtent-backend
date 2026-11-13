@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.353
+ghcr.io/syschelle/growtent-backend-api:v0.354
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.353 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.353 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.354 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.354 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.353 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.354 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1063,3 +1063,9 @@ Grow environments combine water, electricity, pumps, heaters, lights, and automa
 - never rely only on software for critical safety shutoffs
 - test manually before enabling unattended operation
 - verify fail-safe behavior for pumps, lights, fans, and heaters
+
+## ESP-owned irrigation (v0.354)
+
+The ESP is the only automatic irrigation scheduler. The backend edits its plan over HMAC, retains manual start controls, and sends Pushover notifications from durably ingested ESP events. Install matching firmware v0.5.10 first. Open the plan dialog, verify existing ESP settings or explicitly load/review the previous backend snapshot, then save. Offline values are marked stale and cannot be saved as confirmed.
+
+See [release notes](RELEASE_NOTES_v0.354.md), [testing](TESTING.md) and [security](SECURITY.md) for migration, delivery semantics and remaining hardware checks.

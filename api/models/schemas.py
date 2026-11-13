@@ -113,10 +113,15 @@ class StrainPayload(StrictModel):
 
 
 class IrrigationPlanPayload(StrictModel):
-    enabled: bool = False
-    every_n_days: int = Field(default=1, ge=1, le=365)
-    offset_after_light_on_min: int = Field(default=0, ge=0, le=24 * 60)
+    expected_revision: int = Field(ge=0, le=4294967295, strict=True)
+    enabled: bool = Field(strict=True)
+    every_n_days: int = Field(ge=1, le=366, strict=True)
+    offset_after_light_on_min: int = Field(ge=0, le=24 * 60, strict=True)
     last_run_date: date | None = None
+
+
+class ManualIrrigationPayload(StrictModel):
+    command_id: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
 class ExhaustVpdPlanPayload(StrictModel):

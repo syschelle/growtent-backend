@@ -122,10 +122,10 @@ class TentService:
                 )
 
     def get_irrigation_plan(self, tent_id: int):
-        return crud.get_irrigation_plan_raw(tent_id)
+        return legacy.get_irrigation_plan(tent_id)
 
     def update_irrigation_plan(self, tent_id: int, payload: IrrigationPlanPayload):
-        return crud.update_irrigation_plan_raw(payload=payload.model_dump(exclude_unset=True), tent_id=tent_id)
+        return legacy.update_irrigation_plan(tent_id,payload)
 
     def get_exhaust_vpd_plan(self, tent_id: int):
         return crud.get_exhaust_vpd_plan_raw(tent_id)
@@ -163,8 +163,8 @@ class TentService:
     def toggle_relay(self, tent_id: int, relay_idx: int):
         return legacy.toggle_relay(tent_id, relay_idx)
 
-    def start_watering(self, tent_id: int):
-        return legacy.start_watering(tent_id)
+    def start_watering(self, tent_id: int, payload):
+        return legacy.start_watering(tent_id,payload)
 
     def trigger_pump(self, tent_id: int, pump_idx: int):
         return legacy.trigger_pump_10s(tent_id, pump_idx)

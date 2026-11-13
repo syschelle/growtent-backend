@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, StrainPayload, TentPayload
+from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.353"
+APP_VERSION = "v0.354"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1310,6 +1310,8 @@ def init_db():
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS shelly_main_password TEXT;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_plan_json TEXT NOT NULL DEFAULT '{\"enabled\":false,\"every_n_days\":1,\"offset_after_light_on_min\":0}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS irrigation_last_run_date DATE;")
+            from services.irrigation_store import create_tables
+            create_tables(cur)
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_strains_json TEXT NOT NULL DEFAULT '{\"pot1\":\"\",\"pot2\":\"\",\"pot3\":\"\"}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS soil_sensors_json TEXT NOT NULL DEFAULT '[]';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
@@ -2700,88 +2702,13 @@ def _find_light_on_today_dt(tent_id: int):
 
 
 def _try_run_irrigation_schedule(tent: dict, payload: dict):
-    plan = tent.get("irrigation_plan") or {}
-    if not plan.get("enabled"):
-        return
-
-    try:
-        every_n_days = max(1, int(plan.get("every_n_days", 1)))
-        offset_min = max(0, int(plan.get("offset_after_light_on_min", 0)))
-    except Exception:
-        return
-
-    now_local = datetime.now()
-    today = now_local.date()
-
-    # Irrigation is supported by both controller layouts:
-    # - legacy 8-relay boards: pumps on relays 6..8
-    # - ESP32-S3-Relay-6Ch: pumps on relays 1..3
-    relay_count = int((payload or {}).get("settings.active_relay_count") or 0)
-    runs_left = int((payload or {}).get("irrigation.runsLeft") or 0)
-    if relay_count not in (6, 8) or runs_left > 0:
-        return
-
-    # Prefer actual light-on timestamp from today's history; fallback to configured ON schedule.
-    light_on_dt = _find_light_on_today_dt(tent["id"])
-    if light_on_dt is not None:
-        trigger_dt = light_on_dt + timedelta(minutes=offset_min)
-        now_cmp = datetime.now(trigger_dt.tzinfo) if getattr(trigger_dt, 'tzinfo', None) else now_local
-        if now_cmp < trigger_dt:
-            return
-    else:
-        on_min = _parse_light_on_minutes(payload)
-        if on_min is None:
-            # Fallback to an on-demand direct Shelly schedule read. The result is
-            # cached, so the scheduler does not permanently poll the Shelly.
-            on_min = _shelly_light_schedule_on_minutes(tent["id"], tent, payload)
-        if on_min is None:
-            return
-        now_min = now_local.hour * 60 + now_local.minute
-        if now_min < (on_min + offset_min):
-            return
-
-    last_run_date = tent.get("irrigation_last_run_date")
-    if last_run_date:
-        try:
-            last_d = date.fromisoformat(last_run_date)
-            if (today - last_d).days < every_n_days:
-                return
-        except Exception:
-            pass
-
-    # Trigger irrigation once; on success write last run date.
-    source_url = tent.get("source_url") or ""
-    base = derive_controller_base_url(source_url)
-    with httpx.Client(timeout=5.0) as client:
-        r = client.post(f"{base}/startWatering")
-        r.raise_for_status()
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE tents SET irrigation_last_run_date=%s WHERE id=%s", (today, tent["id"]))
+    # Retained symbol for compatibility. The ESP is the only automatic scheduler.
+    return None
 
 
 def _track_watering_run_from_payload(tent_id: int, payload: dict):
-    """Mark last_run_date when a watering cycle starts, independent of trigger source."""
-    try:
-        runs_left = int((payload or {}).get("irrigation.runsLeft") or 0)
-    except Exception:
-        runs_left = 0
-
-    is_active = runs_left > 0
-    was_active = bool(WATERING_ACTIVE_BY_TENT.get(tent_id, False))
-
-    if is_active and not was_active:
-        today = date.today()
-        try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE tents SET irrigation_last_run_date=%s WHERE id=%s", (today, tent_id))
-        except Exception as e:
-            print(f"[irrigation] tent #{tent_id} last_run_date auto-update failed: {e}")
-
-    WATERING_ACTIVE_BY_TENT[tent_id] = is_active
-
+    # Signed ESP history/events are authoritative, including manual starts.
+    return None
 
 
 def _heap_warning_reason(payload: dict):
@@ -3333,6 +3260,11 @@ def poll_loop():
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            try:
+                from services.irrigation_store import IrrigationStore
+                IrrigationStore().deliver(_send_pushover)
+            except Exception:
+                print("[irrigation] notification outbox delivery failed")
             soil_alerts_to_send: list[dict] = []
             soil_alert_date = datetime.now().date()
             soil_moisture_alert_enabled = bool(load_auth_config().get("soil_moisture_alert_enabled", True))
@@ -3359,7 +3291,12 @@ def poll_loop():
                         _refresh_soil_sensors_in_payload(payload, tent, client)
 
                         save_state(tent["id"], payload)
-                        _track_watering_run_from_payload(tent["id"], payload)
+                        try:
+                            from services.irrigation_service import IrrigationService
+                            IrrigationService().sync(tent["id"])
+                        except Exception:
+                            # No exception payloads: HTTP client objects may contain credentials.
+                            print(f"[irrigation] tent #{tent['id']} synchronization failed")
 
                         label = _tent_label_for_notify(tent, payload)
                         st = POLL_NOTIFY_STATE.get(tent["id"]) or {"online": None}
@@ -5094,103 +5031,26 @@ def update_tent(tent_id: int, payload: TentPayload):
             return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
 
 
+def _irrigation_call(method, *args):
+    from services.irrigation_service import IrrigationService
+    from services.irrigation_client import IrrigationError
+    try:
+        return getattr(IrrigationService(), method)(*args)
+    except IrrigationError as exc:
+        raise HTTPException(status_code=exc.status, detail={
+            "code": exc.code, "message": "ESP irrigation: " + exc.code,
+            "retry_same_command": exc.uncertain, "command_id": getattr(exc,"command_id",None),
+        })
+
+
 @app.get("/tents/{tent_id}/irrigation-plan")
 def get_irrigation_plan(tent_id: int):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT irrigation_plan_json, irrigation_last_run_date FROM tents WHERE id=%s", (tent_id,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="tent not found")
-            plan = json.loads(row[0] or '{}') if row[0] else {}
-            return {
-                "tent_id": tent_id,
-                "plan": {
-                    "enabled": bool(plan.get("enabled", False)),
-                    "every_n_days": max(1, int(plan.get("every_n_days", 1) or 1)),
-                    "offset_after_light_on_min": max(0, int(plan.get("offset_after_light_on_min", 0) or 0)),
-                },
-                "last_run_date": row[1].isoformat() if row[1] else None,
-            }
+    return _irrigation_call('get', tent_id)
 
 
 @app.put("/tents/{tent_id}/irrigation-plan")
 def update_irrigation_plan(tent_id: int, payload: IrrigationPlanPayload):
-    payload = payload.model_dump(exclude_unset=True)
-    enabled = bool(payload.get("enabled", False))
-    try:
-        every_n_days = max(1, int(payload.get("every_n_days", 1)))
-        offset_after_light_on_min = max(0, int(payload.get("offset_after_light_on_min", 0)))
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid schedule values")
-
-    raw_last_run_date = payload.get("last_run_date", None)
-    manual_last_run_date = None
-    if raw_last_run_date is not None and str(raw_last_run_date).strip() != "":
-        try:
-            manual_last_run_date = date.fromisoformat(str(raw_last_run_date).strip())
-        except Exception:
-            raise HTTPException(status_code=400, detail="invalid last_run_date (expected YYYY-MM-DD)")
-
-    plan_json = json.dumps(
-        {
-            "enabled": enabled,
-            "every_n_days": every_n_days,
-            "offset_after_light_on_min": offset_after_light_on_min,
-        }
-    )
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT irrigation_plan_json, irrigation_last_run_date FROM tents WHERE id=%s", (tent_id,))
-            prev = cur.fetchone()
-            if not prev:
-                raise HTTPException(status_code=404, detail="tent not found")
-
-            prev_plan = json.loads(prev[0] or '{}') if prev[0] else {}
-            prev_enabled = bool(prev_plan.get("enabled", False))
-            last_run_date = prev[1]
-
-            plan_changed = (
-                bool(prev_plan.get("enabled", False)) != enabled
-                or int(prev_plan.get("every_n_days", 1) or 1) != every_n_days
-                or int(prev_plan.get("offset_after_light_on_min", 0) or 0) != offset_after_light_on_min
-            )
-
-            if manual_last_run_date is not None:
-                last_run_date = manual_last_run_date
-            else:
-                # Prevent immediate schedule-triggered watering right after plan edits.
-                # When an enabled plan is newly enabled or changed, baseline to "today".
-                if enabled and (not prev_enabled or plan_changed):
-                    today = date.today()
-                    if not last_run_date or last_run_date < today:
-                        last_run_date = today
-
-            cur.execute(
-                """
-                UPDATE tents
-                SET irrigation_plan_json=%s,
-                    irrigation_last_run_date=%s
-                WHERE id=%s
-                RETURNING id
-                """,
-                (plan_json, last_run_date, tent_id),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="tent not found")
-
-    return {
-        "ok": True,
-        "tent_id": tent_id,
-        "plan": {
-            "enabled": enabled,
-            "every_n_days": every_n_days,
-            "offset_after_light_on_min": offset_after_light_on_min,
-        },
-        "last_run_date": last_run_date.isoformat() if last_run_date else None,
-    }
+    return _irrigation_call('update', tent_id, payload.model_dump(exclude_unset=True))
 
 
 @app.get("/tents/{tent_id}/exhaust-vpd-plan")
@@ -6259,23 +6119,8 @@ def toggle_relay(tent_id: int, relay_idx: int):
 
 
 @app.post("/tents/{tent_id}/actions/startWatering")
-def start_watering(tent_id: int):
-    latest_payload = get_latest_payload_for_tent(tent_id) or {}
-    active_count = int(latest_payload.get("settings.active_relay_count") or 0)
-    if active_count not in (6, 8):
-        raise HTTPException(status_code=400, detail="startWatering only available for supported irrigation tents")
-
-    res = proxy_post_to_tent_action(tent_id, "/startWatering")
-    if res.get("ok"):
-        try:
-            today = date.today()
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE tents SET irrigation_last_run_date=%s WHERE id=%s", (today, tent_id))
-            res["irrigation_last_run_date"] = today.isoformat()
-        except Exception as e:
-            print(f"[startWatering] tent #{tent_id} last_run_date update failed: {e}")
-    return res
+def start_watering(tent_id: int, payload: ManualIrrigationPayload):
+    return _irrigation_call('start', tent_id, payload.command_id)
 
 
 @app.post("/tents/{tent_id}/actions/pump/{pump_idx}/trigger10s")
@@ -7155,6 +7000,39 @@ def setup_page(request: Request):
             currentPlanTentId = 0;
           }
 
+          let irPlanRevision = null;
+          let irPlanGeneration = 0;
+          function irrigationMessage(code){
+            const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
+            const messages={
+              controller_unreachable:['ESP nicht erreichbar. Stand prüfen.','ESP unreachable. Verify the current state.'],
+              firmware_upgrade_required:['ESP-Firmware v0.5.10 oder neuer erforderlich.','ESP firmware v0.5.10 or newer is required.'],
+              revision_conflict:['Plan wurde am ESP geändert. Neu laden und Änderungen erneut prüfen.','The ESP plan changed. Reload and review your changes.'],
+              invalid_response_authentication:['HMAC-Antwort ungültig. Schlüssel und Uhrzeit prüfen.','Invalid HMAC response. Check key and clocks.'],
+              invalid_response_signature:['HMAC-Antwortsignatur ungültig. Schlüssel prüfen.','Invalid HMAC response signature. Check the key.'],
+              controller_apply_timeout:['Übernahme noch nicht bestätigt. Stand neu laden.','Application has not been confirmed. Reload the state.'],
+              previous_manual_command_unresolved:['Vorheriger Start noch unbestätigt. Derselbe Auftrag wird erneut geprüft.','Previous start is unconfirmed. The same command will be checked again.'],
+              manual_command_expired:['Startauftrag abgelaufen. Letzten Lauf prüfen, bevor ein neuer gestartet wird.','Start command expired. Check the last run before starting another.'],
+              manual_command_aborted:['Bewässerung wurde abgebrochen.','Watering was aborted.'],
+              manual_start_aborted:['Bewässerung wurde abgebrochen.','Watering was aborted.'],
+              drying_phase:['Bewässerung ist in der Trocknung gesperrt.','Watering is blocked in Drying.'],
+              watering_running:['Bewässerung läuft bereits.','Watering is already running.'],
+              event_queue_full:['ESP-Ereignispuffer voll. Synchronisierung prüfen.','ESP event buffer is full. Check synchronization.'],
+              backend_write_not_enabled:['HMAC-Backend-Zugriff ist für dieses Zelt nicht aktiviert.','HMAC backend access is not enabled for this tent.']
+            };
+            return messages[code]?.[de?0:1]||(de?'ESP-Auftrag fehlgeschlagen: ':'ESP request failed: ')+(code||'unknown');
+          }
+
+          function irrigationStatusText(status){
+            const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
+            const parts=['ESP'];
+            if(status?.drying_blocked)parts.push(de?'Trocknung: gesperrt':'Drying: blocked');
+            if(status?.clock_valid===false)parts.push(de?'Uhrzeit ungültig':'Invalid clock');
+            if(status?.schedule_stale)parts.push(de?'Shelly-Zeitplan veraltet':'Shelly schedule stale');
+            if(Number.isInteger(status?.queued_events))parts.push((de?'Ereignispuffer: ':'Event buffer: ')+status.queued_events+'/64');
+            return parts.join(' · ');
+          }
+
           async function openIrrigationPlanModal(tent){
             const modal = document.getElementById('irPlanModal');
             const msg = document.getElementById('irPlanMsg');
@@ -7169,22 +7047,48 @@ def setup_page(request: Request):
             if (title) title.textContent = `#${tent.id} ${tent.name}`;
             if (msg) msg.textContent = '';
             modal.style.display = 'flex';
+            irPlanRevision = null;
+            const saveButton = document.getElementById('irPlanSaveBtn');
+            if(saveButton) saveButton.disabled = true;
 
+            const generation=++irPlanGeneration;
+            const requestedTent=currentPlanTentId;
+            document.getElementById('irPlanTransferBtn')?.remove();
             try {
               const res = await fetch(`/tents/${currentPlanTentId}/irrigation-plan`, { cache: 'no-store' });
               const j = await res.json();
-              const p = j?.plan || {};
+              if(generation!==irPlanGeneration||requestedTent!==currentPlanTentId)return;
+              if(!res.ok || !j?.plan || !Number.isInteger(j?.revision)) throw new Error(j?.error || 'controller_unavailable');
+              irPlanRevision = j.stale ? null : j.revision;
+              if(saveButton) saveButton.disabled = !!j.stale;
+              const p = j.plan;
               enabledEl.checked = !!p.enabled;
               everyEl.value = Number(p.every_n_days || 1);
               offsetEl.value = Number(p.offset_after_light_on_min || 0);
               lastRunDateEl.value = j?.last_run_date || '';
-              if (msg && j?.last_run_date) msg.textContent = `Last run: ${j.last_run_date}`;
-            } catch {
+              const oldTransfer = document.getElementById('irPlanTransferBtn');
+              if(oldTransfer) oldTransfer.remove();
+              if(!j.stale && j.legacy_plan && j.revision===0){
+                const transfer=document.createElement('button'); transfer.type='button'; transfer.id='irPlanTransferBtn';
+                transfer.textContent=((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Bisherigen Backend-Plan laden':'Transfer previous backend plan');
+                transfer.onclick=()=>{
+                  if(!confirm((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Bisherigen Backend-Plan zur Prüfung laden?':'Load the previous backend plan for review?')) return;
+                  const legacy=j.legacy_plan;
+                  enabledEl.checked=!!legacy.plan?.enabled; everyEl.value=legacy.plan?.every_n_days||1;
+                  offsetEl.value=legacy.plan?.offset_after_light_on_min||0; lastRunDateEl.value=legacy.last_run_date||'';
+                  if(msg)msg.textContent=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Plan zur Prüfung geladen. Datum prüfen und mit Plan speichern übertragen.':'Plan loaded for review. Check the date, then choose Save plan to transfer.';
+                };
+                msg?.insertAdjacentElement('afterend',transfer);
+              }
+
+              if(msg)msg.textContent=j.stale?((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Stand veraltet – ESP nicht bestätigt. ':'Stale state – ESP not confirmed. ')+(j.last_success_at||''):irrigationStatusText(j.status)+(j.last_run_date?` · ${j.last_run_date}`:'');
+            } catch (error) {
+              if(generation!==irPlanGeneration||requestedTent!==currentPlanTentId)return;
               enabledEl.checked = false;
               everyEl.value = 1;
               offsetEl.value = 0;
               lastRunDateEl.value = '';
-              if (msg) msg.textContent = 'Failed to load plan.';
+              if (msg) msg.textContent = irrigationMessage(error.message);
             }
           }
 
@@ -7196,7 +7100,11 @@ def setup_page(request: Request):
             const lastRunDateEl = document.getElementById('irPlanLastRunDate');
             if (!currentPlanTentId || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl) return;
 
+            if(!Number.isInteger(irPlanRevision)) return;
+            const savingTent=currentPlanTentId;
+            const savingGeneration=irPlanGeneration;
             const payload = {
+              expected_revision: irPlanRevision,
               enabled: !!enabledEl.checked,
               every_n_days: Math.max(1, Number(everyEl.value || 1)),
               offset_after_light_on_min: Math.max(0, Number(offsetEl.value || 0)),
@@ -7209,12 +7117,17 @@ def setup_page(request: Request):
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
               });
+              if(savingTent!==currentPlanTentId||savingGeneration!==irPlanGeneration)return;
               if (!res.ok) {
-                const err = await res.text();
-                if (msg) msg.textContent = `Save failed: ${err}`;
+                const err = await res.json().catch(()=>({}));
+                if (msg) msg.textContent = irrigationMessage(err.detail?.code);
                 return;
               }
-              if (msg) msg.textContent = 'Plan saved.';
+              const confirmed = await res.json();
+              irPlanRevision=confirmed.revision;
+              lastRunDateEl.value=confirmed.last_run_date||'';
+              document.getElementById('irPlanTransferBtn')?.remove();
+              if (msg) msg.textContent = (localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Im ESP gespeichert.':'Saved on ESP.';
               await loadTents();
             } catch {
               if (msg) msg.textContent = 'Save failed.';
@@ -11622,36 +11535,7 @@ def dashboard_page(request: Request):
           }
 
           function computeNextIrrigationDateFromOnMin(plan, lastRunDate, onMin){
-            if (!plan?.enabled || onMin === null) return null;
-            const now = new Date();
-            const everyDays = Math.max(1, Number(plan.every_n_days || 1));
-            const offset = Math.max(0, Number(plan.offset_after_light_on_min || 0));
-            const runMin = Number(onMin) + offset;
-
-            const mkLocal = (d) => {
-              const dd = new Date(d);
-              dd.setHours(0,0,0,0);
-              const h = Math.floor(runMin / 60) % 24;
-              const m = runMin % 60;
-              dd.setHours(h, m, 0, 0);
-              return dd;
-            };
-
-            let next;
-            if (lastRunDate) {
-              const last = new Date(`${lastRunDate}T00:00:00`);
-              if (!Number.isNaN(last.getTime())) {
-                next = mkLocal(last);
-                next.setDate(next.getDate() + everyDays);
-                while (next <= now) next.setDate(next.getDate() + everyDays);
-              }
-            }
-
-            if (!next) {
-              next = mkLocal(now);
-              if (next <= now) next.setDate(next.getDate() + everyDays);
-            }
-            return next;
+            return null; // The ESP owns scheduling; no backend forecast or catch-up.
           }
 
           function computeNextIrrigationDate(plan, lastRunDate, lightLine){
@@ -11759,6 +11643,39 @@ def dashboard_page(request: Request):
             if (modal) modal.style.display = 'none';
           }
 
+          let dbIrPlanRevision = null;
+          let dbIrPlanGeneration = 0;
+          function irrigationMessage(code){
+            const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
+            const messages={
+              controller_unreachable:['ESP nicht erreichbar. Stand prüfen.','ESP unreachable. Verify the current state.'],
+              firmware_upgrade_required:['ESP-Firmware v0.5.10 oder neuer erforderlich.','ESP firmware v0.5.10 or newer is required.'],
+              revision_conflict:['Plan wurde am ESP geändert. Neu laden und Änderungen erneut prüfen.','The ESP plan changed. Reload and review your changes.'],
+              invalid_response_authentication:['HMAC-Antwort ungültig. Schlüssel und Uhrzeit prüfen.','Invalid HMAC response. Check key and clocks.'],
+              invalid_response_signature:['HMAC-Antwortsignatur ungültig. Schlüssel prüfen.','Invalid HMAC response signature. Check the key.'],
+              controller_apply_timeout:['Übernahme noch nicht bestätigt. Stand neu laden.','Application has not been confirmed. Reload the state.'],
+              previous_manual_command_unresolved:['Vorheriger Start noch unbestätigt. Derselbe Auftrag wird erneut geprüft.','Previous start is unconfirmed. The same command will be checked again.'],
+              manual_command_expired:['Startauftrag abgelaufen. Letzten Lauf prüfen, bevor ein neuer gestartet wird.','Start command expired. Check the last run before starting another.'],
+              manual_command_aborted:['Bewässerung wurde abgebrochen.','Watering was aborted.'],
+              manual_start_aborted:['Bewässerung wurde abgebrochen.','Watering was aborted.'],
+              drying_phase:['Bewässerung ist in der Trocknung gesperrt.','Watering is blocked in Drying.'],
+              watering_running:['Bewässerung läuft bereits.','Watering is already running.'],
+              event_queue_full:['ESP-Ereignispuffer voll. Synchronisierung prüfen.','ESP event buffer is full. Check synchronization.'],
+              backend_write_not_enabled:['HMAC-Backend-Zugriff ist für dieses Zelt nicht aktiviert.','HMAC backend access is not enabled for this tent.']
+            };
+            return messages[code]?.[de?0:1]||(de?'ESP-Auftrag fehlgeschlagen: ':'ESP request failed: ')+(code||'unknown');
+          }
+
+          function irrigationStatusText(status){
+            const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
+            const parts=['ESP'];
+            if(status?.drying_blocked)parts.push(de?'Trocknung: gesperrt':'Drying: blocked');
+            if(status?.clock_valid===false)parts.push(de?'Uhrzeit ungültig':'Invalid clock');
+            if(status?.schedule_stale)parts.push(de?'Shelly-Zeitplan veraltet':'Shelly schedule stale');
+            if(Number.isInteger(status?.queued_events))parts.push((de?'Ereignispuffer: ':'Event buffer: ')+status.queued_events+'/64');
+            return parts.join(' · ');
+          }
+
           async function openDashboardIrPlanModal(){
             const modal = document.getElementById('dbIrPlanModal');
             const msg = document.getElementById('dbIrPlanMsg');
@@ -11772,22 +11689,48 @@ def dashboard_page(request: Request):
             if (title) title.textContent = `#${currentTentId}`;
             if (msg) msg.textContent = '';
             modal.style.display = 'flex';
+            dbIrPlanRevision = null;
+            const saveButton = document.getElementById('dbIrPlanSaveBtn');
+            if(saveButton) saveButton.disabled = true;
 
+            const generation=++dbIrPlanGeneration;
+            const requestedTent=currentTentId;
+            document.getElementById('dbIrPlanTransferBtn')?.remove();
             try {
               const res = await fetch(`/tents/${currentTentId}/irrigation-plan`, { cache: 'no-store' });
               const j = await res.json();
-              const p = j?.plan || {};
+              if(generation!==dbIrPlanGeneration||requestedTent!==currentTentId)return;
+              if(!res.ok || !j?.plan || !Number.isInteger(j?.revision)) throw new Error(j?.error || 'controller_unavailable');
+              dbIrPlanRevision = j.stale ? null : j.revision;
+              if(saveButton) saveButton.disabled = !!j.stale;
+              const p = j.plan;
               enabledEl.checked = !!p.enabled;
               everyEl.value = Number(p.every_n_days || 1);
               offsetEl.value = Number(p.offset_after_light_on_min || 0);
               lastRunDateEl.value = j?.last_run_date || '';
-              if (msg && j?.last_run_date) msg.textContent = `Last run: ${j.last_run_date}`;
-            } catch {
+              const oldTransfer = document.getElementById('dbIrPlanTransferBtn');
+              if(oldTransfer) oldTransfer.remove();
+              if(!j.stale && j.legacy_plan && j.revision===0){
+                const transfer=document.createElement('button'); transfer.type='button'; transfer.id='dbIrPlanTransferBtn';
+                transfer.textContent=((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Bisherigen Backend-Plan laden':'Transfer previous backend plan');
+                transfer.onclick=()=>{
+                  if(!confirm((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Bisherigen Backend-Plan zur Prüfung laden?':'Load the previous backend plan for review?')) return;
+                  const legacy=j.legacy_plan;
+                  enabledEl.checked=!!legacy.plan?.enabled; everyEl.value=legacy.plan?.every_n_days||1;
+                  offsetEl.value=legacy.plan?.offset_after_light_on_min||0; lastRunDateEl.value=legacy.last_run_date||'';
+                  if(msg)msg.textContent=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Plan zur Prüfung geladen. Datum prüfen und mit Plan speichern übertragen.':'Plan loaded for review. Check the date, then choose Save plan to transfer.';
+                };
+                msg?.insertAdjacentElement('afterend',transfer);
+              }
+
+              if(msg)msg.textContent=j.stale?((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Stand veraltet – ESP nicht bestätigt. ':'Stale state – ESP not confirmed. ')+(j.last_success_at||''):irrigationStatusText(j.status)+(j.last_run_date?` · ${j.last_run_date}`:'');
+            } catch (error) {
+              if(generation!==dbIrPlanGeneration||requestedTent!==currentTentId)return;
               enabledEl.checked = false;
               everyEl.value = 1;
               offsetEl.value = 0;
               lastRunDateEl.value = '';
-              if (msg) msg.textContent = tr('loadFailed');
+              if (msg) msg.textContent = irrigationMessage(error.message);
             }
           }
 
@@ -11799,7 +11742,11 @@ def dashboard_page(request: Request):
             const lastRunDateEl = document.getElementById('dbIrPlanLastRunDate');
             if (!currentTentId || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl) return;
 
+            if(!Number.isInteger(dbIrPlanRevision)) return;
+            const savingTent=currentTentId;
+            const savingGeneration=dbIrPlanGeneration;
             const payload = {
+              expected_revision: dbIrPlanRevision,
               enabled: !!enabledEl.checked,
               every_n_days: Math.max(1, Number(everyEl.value || 1)),
               offset_after_light_on_min: Math.max(0, Number(offsetEl.value || 0)),
@@ -11810,13 +11757,17 @@ def dashboard_page(request: Request):
               const res = await fetch(`/tents/${currentTentId}/irrigation-plan`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
               });
+              if(savingTent!==currentTentId||savingGeneration!==dbIrPlanGeneration)return;
               if (!res.ok) {
-                if (msg) msg.textContent = tr('actionFailed');
+                const error=await res.json().catch(()=>({}));
+                if (msg) msg.textContent = irrigationMessage(error.detail?.code);
                 return;
               }
               const j = await res.json().catch(() => ({}));
+              dbIrPlanRevision=j.revision;
+              document.getElementById('dbIrPlanTransferBtn')?.remove();
               currentIrPlan = j?.plan || payload;
-              currentIrLastRunDate = j?.last_run_date || currentIrLastRunDate;
+              currentIrLastRunDate = j?.last_run_date || null;
               if (msg) msg.textContent = currentLang === 'de' ? 'Plan gespeichert.' : 'Plan saved.';
               await loadLatest();
             } catch {
@@ -11870,7 +11821,7 @@ def dashboard_page(request: Request):
               if (r.ok) {
                 currentIrPlan = j?.plan || null;
                 currentIrLastRunDate = j?.last_run_date || null;
-                if (irBtn) irBtn.style.background = j?.plan?.enabled ? activeStyle : inactiveStyle;
+                if (irBtn) {irBtn.style.background = j?.plan?.enabled ? activeStyle : inactiveStyle;irBtn.title=j.stale?(currentLang==='de'?'ESP: Stand veraltet':'ESP: stale state'):'ESP';}
               }
             } catch {}
           }
@@ -11885,8 +11836,25 @@ def dashboard_page(request: Request):
             await runPostAction(`/tents/${currentTentId}/actions/relay/${idx}/toggle`);
           }
 
+          let wateringCommandInFlight=false;
           async function startWatering(){
-            await runPostAction(`/tents/${currentTentId}/actions/startWatering`);
+            if(wateringCommandInFlight)return;
+            const storageKey=`irrigation-command:${currentTentId}`;
+            let commandId=sessionStorage.getItem(storageKey);
+            if(!commandId){if(!confirm((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Komplette Bewässerung jetzt starten?':'Start a complete watering cycle now?'))return;commandId=Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');sessionStorage.setItem(storageKey,commandId);}
+            wateringCommandInFlight=true;
+            try{
+              const response=await fetch(`/tents/${currentTentId}/actions/startWatering`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command_id:commandId})});
+              const result=await response.json();
+              if(!response.ok||!result.ok){
+                if(result.detail?.command_id)sessionStorage.setItem(storageKey,result.detail.command_id);
+                if(result.detail?.retry_same_command===false)sessionStorage.removeItem(storageKey);
+                throw new Error(irrigationMessage(result.detail?.code));
+              }
+              sessionStorage.removeItem(storageKey);
+              await loadLatest();
+            }catch(error){alert(String(error.message||'Start nicht bestätigt. Gleichen Auftrag erneut prüfen.'));}
+            finally{wateringCommandInFlight=false;}
           }
 
           async function triggerPump10s(idx){

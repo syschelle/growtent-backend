@@ -393,99 +393,14 @@ def insert_grow_write_audit_raw(
 
 
 def get_irrigation_plan_raw(tent_id: int):
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT irrigation_plan_json, irrigation_last_run_date FROM tents WHERE id=%s", (tent_id,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="tent not found")
-            plan = json.loads(row[0] or '{}') if row[0] else {}
-            return {
-                "tent_id": tent_id,
-                "plan": {
-                    "enabled": bool(plan.get("enabled", False)),
-                    "every_n_days": max(1, int(plan.get("every_n_days", 1) or 1)),
-                    "offset_after_light_on_min": max(0, int(plan.get("offset_after_light_on_min", 0) or 0)),
-                },
-                "last_run_date": row[1].isoformat() if row[1] else None,
-            }
+    import app as legacy
+    return legacy.get_irrigation_plan(tent_id)
 
 
 def update_irrigation_plan_raw(tent_id: int, payload: dict):
-    enabled = bool(payload.get("enabled", False))
-    try:
-        every_n_days = max(1, int(payload.get("every_n_days", 1)))
-        offset_after_light_on_min = max(0, int(payload.get("offset_after_light_on_min", 0)))
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid schedule values")
-
-    raw_last_run_date = payload.get("last_run_date", None)
-    manual_last_run_date = None
-    if raw_last_run_date is not None and str(raw_last_run_date).strip() != "":
-        try:
-            manual_last_run_date = date.fromisoformat(str(raw_last_run_date).strip())
-        except Exception:
-            raise HTTPException(status_code=400, detail="invalid last_run_date (expected YYYY-MM-DD)")
-
-    plan_json = json.dumps(
-        {
-            "enabled": enabled,
-            "every_n_days": every_n_days,
-            "offset_after_light_on_min": offset_after_light_on_min,
-        }
-    )
-
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT irrigation_plan_json, irrigation_last_run_date FROM tents WHERE id=%s", (tent_id,))
-            prev = cur.fetchone()
-            if not prev:
-                raise HTTPException(status_code=404, detail="tent not found")
-
-            prev_plan = json.loads(prev[0] or '{}') if prev[0] else {}
-            prev_enabled = bool(prev_plan.get("enabled", False))
-            last_run_date = prev[1]
-
-            plan_changed = (
-                bool(prev_plan.get("enabled", False)) != enabled
-                or int(prev_plan.get("every_n_days", 1) or 1) != every_n_days
-                or int(prev_plan.get("offset_after_light_on_min", 0) or 0) != offset_after_light_on_min
-            )
-
-            if manual_last_run_date is not None:
-                last_run_date = manual_last_run_date
-            else:
-                # Prevent immediate schedule-triggered watering right after plan edits.
-                # When an enabled plan is newly enabled or changed, baseline to "today".
-                if enabled and (not prev_enabled or plan_changed):
-                    today = date.today()
-                    if not last_run_date or last_run_date < today:
-                        last_run_date = today
-
-            cur.execute(
-                """
-                UPDATE tents
-                SET irrigation_plan_json=%s,
-                    irrigation_last_run_date=%s
-                WHERE id=%s
-                RETURNING id
-                """,
-                (plan_json, last_run_date, tent_id),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="tent not found")
-
-    return {
-        "ok": True,
-        "tent_id": tent_id,
-        "plan": {
-            "enabled": enabled,
-            "every_n_days": every_n_days,
-            "offset_after_light_on_min": offset_after_light_on_min,
-        },
-        "last_run_date": last_run_date.isoformat() if last_run_date else None,
-    }
+    import app as legacy
+    from models.schemas import IrrigationPlanPayload
+    return legacy.update_irrigation_plan(tent_id,IrrigationPlanPayload(**payload))
 
 
 def get_exhaust_vpd_plan_raw(tent_id: int):
