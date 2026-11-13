@@ -17,7 +17,7 @@ def notification(label,event,now=None):
     message=f'{label}: {words[event["type"]]}. {when}.'
     if delayed: message+=' Nachträglich gemeldet.'
     if event['type'] in ('aborted','missed'): message+=f' Grund: {event.get("reason","unknown")}. Anzahl: {event.get("count",1)}.'
-    return {'title':title,'message':message,'priority':1 if event['type'] in ('aborted','missed') else 0}
+    return {'title':title,'message':message,'priority':1 if event['type'] in ('aborted','missed') else 0,'_occurred_at':original,'_delayed':delayed}
 
 
 def validate_events(batch):

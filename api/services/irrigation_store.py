@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import hashlib
 import json
+import time
 @contextmanager
 def get_conn():
     from db.database import get_conn as connect
@@ -121,7 +122,13 @@ class IrrigationStore:
                         FOR UPDATE SKIP LOCKED LIMIT 1''')
                     row=cur.fetchone()
                     if not row: return
-                    try: ok=bool(send(**row[1]))
+                    payload=dict(row[1])
+                    has_original='_occurred_at' in payload
+                    original=payload.pop('_occurred_at',None)
+                    labelled=payload.pop('_delayed',False)
+                    if has_original and not labelled and (original is None or time.time()-original>60):
+                        payload['message']+=' Nachträglich gemeldet.'
+                    try: ok=bool(send(**payload))
                     except Exception: ok=False
                     if ok: cur.execute('UPDATE irrigation_notifications SET sent_at=NOW() WHERE notification_key=%s',(row[0],))
                     else: cur.execute("UPDATE irrigation_notifications SET attempts=attempts+1,next_attempt_at=NOW()+LEAST(3600,15*POWER(2,LEAST(attempts,8))) * INTERVAL '1 second' WHERE notification_key=%s",(row[0],))

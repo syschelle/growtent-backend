@@ -83,3 +83,10 @@ def test_cross_worker_lock_and_persistent_manual_identity(store):
     assert store.command(1,'http://esp:8080',other,110)['status']=='prepared'
     store.resolve_commands(1,'http://esp:8080',{'manual_commands':[]},111)
     assert store.command(1,'http://esp:8080',other,500)['status']=='expired'
+
+def test_provider_retry_gets_retrospective_label_at_delivery(store):
+    import time
+    store.warning(1,'delayed',{'title':'Event','message':'Original timestamp.','priority':0,'_occurred_at':int(time.time())-3600,'_delayed':False})
+    sent=[];store.deliver(lambda **payload:sent.append(payload) or True)
+    assert 'Nachträglich' in sent[0]['message']
+    assert '_occurred_at' not in sent[0]

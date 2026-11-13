@@ -7001,6 +7001,7 @@ def setup_page(request: Request):
           }
 
           let irPlanRevision = null;
+          let irPlanGeneration = 0;
           function irrigationMessage(code){
             const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
             const messages={
@@ -7050,9 +7051,13 @@ def setup_page(request: Request):
             const saveButton = document.getElementById('irPlanSaveBtn');
             if(saveButton) saveButton.disabled = true;
 
+            const generation=++irPlanGeneration;
+            const requestedTent=currentPlanTentId;
+            document.getElementById('irPlanTransferBtn')?.remove();
             try {
               const res = await fetch(`/tents/${currentPlanTentId}/irrigation-plan`, { cache: 'no-store' });
               const j = await res.json();
+              if(generation!==irPlanGeneration||requestedTent!==currentPlanTentId)return;
               if(!res.ok || !j?.plan || !Number.isInteger(j?.revision)) throw new Error(j?.error || 'controller_unavailable');
               irPlanRevision = j.stale ? null : j.revision;
               if(saveButton) saveButton.disabled = !!j.stale;
@@ -7078,6 +7083,7 @@ def setup_page(request: Request):
 
               if(msg)msg.textContent=j.stale?((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Stand veraltet – ESP nicht bestätigt. ':'Stale state – ESP not confirmed. ')+(j.last_success_at||''):irrigationStatusText(j.status)+(j.last_run_date?` · ${j.last_run_date}`:'');
             } catch (error) {
+              if(generation!==irPlanGeneration||requestedTent!==currentPlanTentId)return;
               enabledEl.checked = false;
               everyEl.value = 1;
               offsetEl.value = 0;
@@ -7095,6 +7101,8 @@ def setup_page(request: Request):
             if (!currentPlanTentId || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl) return;
 
             if(!Number.isInteger(irPlanRevision)) return;
+            const savingTent=currentPlanTentId;
+            const savingGeneration=irPlanGeneration;
             const payload = {
               expected_revision: irPlanRevision,
               enabled: !!enabledEl.checked,
@@ -7109,6 +7117,7 @@ def setup_page(request: Request):
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
               });
+              if(savingTent!==currentPlanTentId||savingGeneration!==irPlanGeneration)return;
               if (!res.ok) {
                 const err = await res.json().catch(()=>({}));
                 if (msg) msg.textContent = irrigationMessage(err.detail?.code);
@@ -11635,6 +11644,7 @@ def dashboard_page(request: Request):
           }
 
           let dbIrPlanRevision = null;
+          let dbIrPlanGeneration = 0;
           function irrigationMessage(code){
             const de=(localStorage.getItem('gt_lang')||document.documentElement.lang)==='de';
             const messages={
@@ -11683,9 +11693,13 @@ def dashboard_page(request: Request):
             const saveButton = document.getElementById('dbIrPlanSaveBtn');
             if(saveButton) saveButton.disabled = true;
 
+            const generation=++dbIrPlanGeneration;
+            const requestedTent=currentTentId;
+            document.getElementById('dbIrPlanTransferBtn')?.remove();
             try {
               const res = await fetch(`/tents/${currentTentId}/irrigation-plan`, { cache: 'no-store' });
               const j = await res.json();
+              if(generation!==dbIrPlanGeneration||requestedTent!==currentTentId)return;
               if(!res.ok || !j?.plan || !Number.isInteger(j?.revision)) throw new Error(j?.error || 'controller_unavailable');
               dbIrPlanRevision = j.stale ? null : j.revision;
               if(saveButton) saveButton.disabled = !!j.stale;
@@ -11711,6 +11725,7 @@ def dashboard_page(request: Request):
 
               if(msg)msg.textContent=j.stale?((localStorage.getItem('gt_lang')||document.documentElement.lang)==='de'?'Stand veraltet – ESP nicht bestätigt. ':'Stale state – ESP not confirmed. ')+(j.last_success_at||''):irrigationStatusText(j.status)+(j.last_run_date?` · ${j.last_run_date}`:'');
             } catch (error) {
+              if(generation!==dbIrPlanGeneration||requestedTent!==currentTentId)return;
               enabledEl.checked = false;
               everyEl.value = 1;
               offsetEl.value = 0;
@@ -11728,6 +11743,8 @@ def dashboard_page(request: Request):
             if (!currentTentId || !enabledEl || !everyEl || !offsetEl || !lastRunDateEl) return;
 
             if(!Number.isInteger(dbIrPlanRevision)) return;
+            const savingTent=currentTentId;
+            const savingGeneration=dbIrPlanGeneration;
             const payload = {
               expected_revision: dbIrPlanRevision,
               enabled: !!enabledEl.checked,
@@ -11740,6 +11757,7 @@ def dashboard_page(request: Request):
               const res = await fetch(`/tents/${currentTentId}/irrigation-plan`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
               });
+              if(savingTent!==currentTentId||savingGeneration!==dbIrPlanGeneration)return;
               if (!res.ok) {
                 const error=await res.json().catch(()=>({}));
                 if (msg) msg.textContent = irrigationMessage(error.detail?.code);
