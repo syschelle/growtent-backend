@@ -1,12 +1,54 @@
 """Parse the actual rendered setup/dashboard JavaScript, including irrigation changes."""
 import ast
 import json
-import re
+from html.parser import HTMLParser
+import pytest
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from fastapi import Request,HTTPException
 from fastapi.responses import RedirectResponse
+
+
+class ScriptCollector(HTMLParser):
+    """Collect script raw text using HTML's tag parsing, not a filtering regexp."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.scripts = []
+        self.chunks = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'script':
+            self.chunks = []
+
+    def handle_data(self, data):
+        if self.chunks is not None:
+            self.chunks.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == 'script' and self.chunks is not None:
+            self.scripts.append(''.join(self.chunks))
+            self.chunks = None
+
+
+def extract_scripts(html):
+    collector = ScriptCollector()
+    collector.feed(html)
+    collector.close()
+    return collector.scripts
+
+
+@pytest.mark.parametrize('opening,closing', [
+    ('<script>', '</script>'),
+    ('<SCRIPT>', '</SCRIPT>'),
+    ('<ScRiPt>', '</sCrIpT >'),
+    ('<script type="text/javascript">', '</script\n>'),
+    ('<script data-example=">">', '</script >'),
+])
+def test_script_collector_handles_html_tag_variants(opening, closing):
+    payload = 'const result = 1 < 2 && 3 > 2;\n'
+    assert extract_scripts(opening + payload + closing) == [payload]
 
 
 def render(name):
@@ -23,8 +65,9 @@ def test_rendered_irrigation_scripts_parse_and_include_revision_and_manual_ident
     scripts=[]
     for name in ('setup_page','dashboard_page'):
         html=render(name)
-        for rendered in (html, html.replace('<script', '<SCRIPT').replace('</script>', '</SCRIPT>')):
-            scripts+=re.findall(r'<script\b[^>]*>(.*?)</script>',rendered,re.S | re.IGNORECASE)
+        extracted=extract_scripts(html)
+        assert extracted, 'Rendered page must contain scripts to validate'
+        scripts+=extracted
         assert 'expected_revision:' in html and 'Stand veraltet' in html
         assert 'Transfer previous backend plan' in html
         assert 'if(saveButton) saveButton.disabled = !!j.stale' in html
