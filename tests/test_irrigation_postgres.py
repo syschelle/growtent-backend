@@ -90,3 +90,15 @@ def test_provider_retry_gets_retrospective_label_at_delivery(store):
     sent=[];store.deliver(lambda **payload:sent.append(payload) or True)
     assert 'Nachträglich' in sent[0]['message']
     assert '_occurred_at' not in sent[0]
+
+def test_event_error_is_separate_from_signed_plan_confirmation(store):
+    store.snapshot(1,'http://esp:8080')
+    state={'enabled':True,'every_n_days':2,'offset_after_light_on_min':60,'last_run_date':'2026-11-13','revision':4}
+    store.cache(1,state)
+    before=store.snapshot(1,'http://esp:8080')
+    store.event_error(1,'event_sequence_gap')
+    after=store.snapshot(1,'http://esp:8080')
+    assert after['error'] is None and after['event_error']=='event_sequence_gap'
+    assert after['checked_at']==before['checked_at']
+    store.event_error(1)
+    assert store.snapshot(1,'http://esp:8080')['event_error'] is None

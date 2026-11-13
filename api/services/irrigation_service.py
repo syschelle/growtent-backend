@@ -63,6 +63,7 @@ class IrrigationService:
                 'next_run_at':state.get('next_run_at'),
                 'next_run_status':state.get('next_run_status') or ('disabled' if state.get('enabled') is False else 'firmware_update_required' if state else 'unavailable'),
                 'stale':stale,'error':error or snapshot.get('error'),
+                'event_sync_error':snapshot.get('event_error'),
                 'last_success_at':checked.isoformat() if checked else None,
                 'legacy_plan':snapshot.get('legacy') if state and state.get('revision')==0 else None,
                 'status':{k:state.get(k) for k in ('active','drying_blocked','clock_valid','schedule_stale','last_schedule_sync','queued_events')}}
@@ -77,7 +78,12 @@ class IrrigationService:
             attempted=snapshot.get('attempted_at') or checked
             if attempted and self.now()-attempted.timestamp()<30:
                 return self.view(tent_id,snapshot,bool(snapshot.get('error')))
-            if not held: return self.view(tent_id,snapshot,True,'irrigation_busy')
+            if not held:
+                # The form can use a recently signed snapshot while another worker
+                # refreshes it. A save still performs a fresh signed revision check.
+                recent=checked and self.now()-checked.timestamp()<90 and not snapshot.get('error')
+                return {**self.view(tent_id,snapshot,not recent,None if recent else 'irrigation_busy'),'refresh_pending':True}
+
             try:
                 state=client.read_plan();self.store.cache(tent_id,state)
                 return self.view(tent_id,self.store.snapshot(tent_id,client.url))
@@ -95,7 +101,10 @@ class IrrigationService:
             if values.get('last_run_date') is not None: values['last_run_date']=values['last_run_date'].isoformat() if hasattr(values['last_run_date'],'isoformat') else values['last_run_date']
             try: state=client.apply_plan(expected,values)
             except IrrigationError as exc:
-                self.store.cache(tent_id,error=exc.code);raise
+                # A signed rejection (e.g. revision conflict) is not loss of contact.
+                try: self.store.cache(tent_id,client.read_plan())
+                except IrrigationError as read_error: self.store.cache(tent_id,error=read_error.code)
+                raise
             self.store.cache(tent_id,state)
             return {'ok':True,'verified':True,**self.view(tent_id,self.store.snapshot(tent_id,client.url))}
 
@@ -130,6 +139,10 @@ class IrrigationService:
             if not self.store.claim_poll(tent_id): return
             try:
                 state=client.read_plan();self.store.cache(tent_id,state)
+            except IrrigationError as exc:
+                self.store.cache(tent_id,error=exc.code)
+                return exc.code
+            try:
                 self.store.resolve_commands(tent_id,client.url,state,int(self.now()))
                 batch=client.request('GET',EVENTS);stream,events=validate_events(batch)
                 if stream!=state['stream_id']: raise IrrigationError('event_stream_changed')
@@ -138,7 +151,11 @@ class IrrigationService:
                 if (state.get('queued_events') or 0)>=48:
                     key=f'irrigation-queue:{tent_id}:{stream}:{int(self.now())//3600}'
                     self.store.warning(tent_id,key,{'title':'CanopyOps: Bewässerungspuffer fast voll','message':f'{cfg.get("name")}: {state["queued_events"]}/64 Ereignisse im ESP-Puffer.','priority':1})
+                self.store.event_error(tent_id)
             except IrrigationError as exc:
-                self.store.cache(tent_id,error=exc.code)
-                # Poller logs safe codes only; failures never trigger watering or erase intent.
+                # Event/ACK failures must never invalidate an independently verified plan.
+                self.store.event_error(tent_id,exc.code)
                 return exc.code
+            except Exception:
+                self.store.event_error(tent_id,'event_storage_failed')
+                raise

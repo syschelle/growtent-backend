@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.355
+ghcr.io/syschelle/growtent-backend-api:v0.356
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.355 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.355 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.356 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.356 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.355 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.356 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1073,3 +1073,7 @@ See [release notes](RELEASE_NOTES_v0.354.md), [testing](TESTING.md) and [securit
 ## Next irrigation display (v0.355)
 
 The dashboard displays the signed ESP-owned next-run time for both six- and eight-relay layouts. Install firmware v0.5.12 for this metadata. Disabled, unavailable and stale states are labelled; the backend does not calculate a replacement schedule or trigger automatic watering. See RELEASE_NOTES_v0.355.md.
+
+## Irrigation synchronization status (v0.356)
+
+Signed plan confirmation and event/ACK errors are independent. Event warnings do not disable a confirmed plan; actual offline/authentication failures remain read-only and show diagnostics. Confirmation times are displayed in Europe/Berlin. Firmware v0.5.13 adds the same next-run date/time display to the ESP itself. See RELEASE_NOTES_v0.356.md.
