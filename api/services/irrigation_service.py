@@ -60,6 +60,8 @@ class IrrigationService:
         checked=snapshot.get('checked_at')
         return {'tent_id':tent_id,'owner':'esp','plan':{k:state[k] for k in PLAN_FIELDS} if state else None,
                 'last_run_date':state.get('last_run_date'),'revision':state.get('revision'),
+                'next_run_at':state.get('next_run_at'),
+                'next_run_status':state.get('next_run_status') or ('disabled' if state.get('enabled') is False else 'firmware_update_required' if state else 'unavailable'),
                 'stale':stale,'error':error or snapshot.get('error'),
                 'last_success_at':checked.isoformat() if checked else None,
                 'legacy_plan':snapshot.get('legacy') if state and state.get('revision')==0 else None,

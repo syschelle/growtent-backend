@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.354"
+APP_VERSION = "v0.355"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -10711,6 +10711,7 @@ def dashboard_page(request: Request):
           let shellyLastActivityDirect = {};
           let shellyMainDirectTs = null;
           let currentIrPlan = null;
+          let currentIrForecastState = null;
           let currentIrLastRunDate = null;
           let lightScheduleCache = { tentId: null, ts: 0, data: null };
           let currentMinVpdMonitoring = null;
@@ -11534,12 +11535,30 @@ def dashboard_page(request: Request):
             return `${tr('day')} ${dayText} / ${tr('week')} ${weekText} / ${formatGrowDateFromDay(dayNumber)}`;
           }
 
-          function computeNextIrrigationDateFromOnMin(plan, lastRunDate, onMin){
-            return null; // The ESP owns scheduling; no backend forecast or catch-up.
-          }
-
-          function computeNextIrrigationDate(plan, lastRunDate, lightLine){
-            return computeNextIrrigationDateFromOnMin(plan, lastRunDate, parseLightOnMinFromLine(lightLine));
+          function irrigationNextLabel(summary){
+            const de=currentLang==='de';
+            if(!summary)return de?'Nicht verfügbar':'Unavailable';
+            const reasons={
+              disabled:['Deaktiviert','Disabled'],drying_blocked:['Trocknung: gesperrt','Drying: blocked'],
+              clock_invalid:['Uhrzeit nicht synchronisiert','Clock not synchronized'],storage_error:['Speicherfehler','Storage error'],
+              watering_running:['Bewässerung läuft','Watering in progress'],event_queue_full:['Ereignispuffer voll','Event buffer full'],
+              flood_blocked:['Flood-Sperre aktiv','Flood interlock active'],no_pumps:['Keine Pumpe verfügbar','No pump available'],
+              invalid_configuration:['Bewässerungsparameter prüfen','Check irrigation settings'],
+              waiting_for_shelly:['Warte auf Shelly-Zeitplan','Waiting for Shelly schedule'],
+              no_schedule:['Kein Licht-an-Termin im Zeitplan','No light-on occurrence in schedule'],
+              firmware_update_required:['ESP-Update für Terminanzeige erforderlich','ESP update required for next-run display'],
+              unavailable:['Nicht verfügbar','Unavailable']
+            };
+            const status=summary.next_run_status;
+            const at=summary.next_run_at;
+            const date=typeof at==='number'&&Number.isFinite(at)&&at>0?new Date(at*1000):null;
+            if(summary.stale)return (de?'Stand veraltet':'Stale state')+(date?' · '+(de?'zuletzt geplant: ':'last planned: ')+formatNextRunDate(date):'');
+            if(status==='ready'||status==='stale_shelly'){
+              if(!date)return de?'Nicht verfügbar':'Unavailable';
+              if(date.getTime()<Date.now()-60000)return de?'Aktualisierung vom ESP ausstehend':'Awaiting ESP refresh';
+              return formatNextRunDate(date)+(status==='stale_shelly'?(de?' (Shelly-Zeitplan veraltet)':' (Shelly schedule stale)'):'');
+            }
+            return reasons[status]?.[de?0:1]||(de?'Nicht verfügbar':'Unavailable');
           }
 
           async function readLightScheduleOnDemand(force=false){
@@ -11810,15 +11829,19 @@ def dashboard_page(request: Request):
             const minBtn = document.getElementById('openMinVpdInfoBtn');
             const activeStyle = 'linear-gradient(180deg, rgba(34,197,94,.35), rgba(22,163,74,.28))';
             const inactiveStyle = 'linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28))';
+            currentIrForecastState = null;
             currentIrPlan = null;
             currentIrLastRunDate = null;
             if (!currentTentId) return;
             if (minBtn) minBtn.style.background = (currentMinVpdMonitoring === true) ? activeStyle : inactiveStyle;
 
+            const forecastTentId=currentTentId;
             try {
               const r = await fetch(`/tents/${currentTentId}/irrigation-plan`, { cache:'no-store' });
               const j = await r.json().catch(() => ({}));
+              if(forecastTentId!==currentTentId)return;
               if (r.ok) {
+                currentIrForecastState=j;
                 currentIrPlan = j?.plan || null;
                 currentIrLastRunDate = j?.last_run_date || null;
                 if (irBtn) {irBtn.style.background = j?.plan?.enabled ? activeStyle : inactiveStyle;irBtn.title=j.stale?(currentLang==='de'?'ESP: Stand veraltet':'ESP: stale state'):'ESP';}
@@ -13455,29 +13478,8 @@ def dashboard_page(request: Request):
             }
 
             await refreshPlanButtonStates();
-            if (c === 8) {
-              const lightLine = d['settings.shelly.light.line'];
-              const lastRunLabel = formatLastRunDate(currentIrLastRunDate);
-              let lightOnMin = parseLightOnMinFromLine(lightLine);
-              let missingScheduleText = tr('irLightScheduleMissing');
-
-              if (currentIrPlan?.enabled && lightOnMin === null) {
-                const sched = await readLightScheduleOnDemand(false);
-                const shellyRawMin = sched?.on_minutes;
-                const shellyOnMin = (shellyRawMin === null || typeof shellyRawMin === 'undefined') ? null : Number(shellyRawMin);
-                if (Number.isFinite(shellyOnMin)) {
-                  lightOnMin = shellyOnMin;
-                } else if (sched?.ok === true) {
-                  missingScheduleText = tr('irLightOnScheduleNotFound');
-                }
-              }
-
-              if (currentIrPlan?.enabled && lightOnMin === null) {
-                txt('irNextRun', `${tr('irNextRun')}: ${missingScheduleText} · ${tr('lastShort')}: ${lastRunLabel}`);
-              } else {
-                const nextDt = computeNextIrrigationDateFromOnMin(currentIrPlan, currentIrLastRunDate, lightOnMin);
-                txt('irNextRun', `${tr('irNextRun')}: ${formatNextRunDate(nextDt)} · ${tr('lastShort')}: ${lastRunLabel}`);
-              }
+            if (c === 6 || c === 8) {
+              txt('irNextRun', `${tr('irNextRun')}: ${irrigationNextLabel(currentIrForecastState)} · ${tr('lastShort')}: ${formatLastRunDate(currentIrLastRunDate)}`);
             } else {
               txt('irNextRun', `${tr('irNextRun')}: -`);
             }
