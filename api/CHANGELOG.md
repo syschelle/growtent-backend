@@ -1,3 +1,11 @@
+# v0.354 — ESP-owned irrigation
+
+- Make ESP plan/history authoritative; disable independent backend scheduling.
+- Sign configuration and expiring manual commands with HMAC; fence stale revisions and verify durable results.
+- Persist/deduplicate ESP events and notification intents before ACK; retry Pushover from a durable outbox with delayed-event labeling.
+- Preserve the previous plan for explicit review/transfer and show stale offline state.
+- Add signed-protocol, PostgreSQL transaction and UI-script tests.
+
 # Changelog
 
 Entries are maintained in project language (English/German as needed).
