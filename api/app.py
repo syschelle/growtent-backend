@@ -49,7 +49,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.364"
+APP_VERSION = "v0.365"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -13178,6 +13178,22 @@ def dashboard_page(request: Request):
             };
           }
 
+          // Suggestions widen quiet climate curves without clipping larger excursions.
+          function climateChartRange(series, anchor, halfSpan, lower = null, upper = null){
+            const valid = series.flat().map(finiteNumber).filter(Number.isFinite);
+            const target = finiteNumber(anchor);
+            if (!valid.length && target === null) return {};
+            const center = target !== null ? target : (Math.min(...valid) + Math.max(...valid)) / 2;
+            let low = center - halfSpan;
+            let high = center + halfSpan;
+            if (lower !== null && low < lower) { high += lower - low; low = lower; }
+            if (upper !== null && high > upper) { low -= high - upper; high = upper; }
+            return {
+              suggestedMin: lower === null ? low : Math.max(lower, low),
+              suggestedMax: upper === null ? high : Math.min(upper, high)
+            };
+          }
+
           function syncRightAxisToLeft(chart){
             try {
               if (!chart?.scales?.y || !chart?.scales?.yR) return;
@@ -13259,6 +13275,7 @@ def dashboard_page(request: Request):
                 : '';
               const tTarget = Number.isFinite(targetTempCChart) ? convertTempFromC(targetTempCChart) : null;
               const tempTargetLine = labels.map(() => (Number.isFinite(tTarget) ? Number(tTarget.toFixed(1)) : null));
+              const tempRange = climateChartRange([temp, tempRawSeries], tTarget, currentTempUnit === 'F' ? 9 : 5);
               const tempAvg = calcSeriesAverage(temp, 1);
               const tempAvgLine = labels.map(() => (Number.isFinite(tempAvg) ? tempAvg : null));
               tempChart = new Chart(tempCtx, {
@@ -13280,8 +13297,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', ticks:{ color:'#22d3ee' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', ticks:{ color:'#22d3ee' }, grid:{ drawOnChartArea:false }, title: { display:true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { ...tempRange, position:'left', ticks:{ color:'#22d3ee' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { ...tempRange, position:'right', ticks:{ color:'#22d3ee' }, grid:{ drawOnChartArea:false }, title: { display:true, text: tempUnitLabel, color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }
@@ -13291,6 +13308,7 @@ def dashboard_page(request: Request):
 
             const humCtx = document.getElementById('humChart');
             if (humCtx) {
+              const humRange = climateChartRange([hum, humRawSeries], null, 5, 0, 100);
               humChart = new Chart(humCtx, {
                 type: 'line',
                 data: {
@@ -13307,8 +13325,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', ticks:{ color:'#a78bfa' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', ticks:{ color:'#a78bfa' }, grid:{ drawOnChartArea:false }, title: { display:true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { ...humRange, position:'left', ticks:{ color:'#a78bfa' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { ...humRange, position:'right', ticks:{ color:'#a78bfa' }, grid:{ drawOnChartArea:false }, title: { display:true, text: '%', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }

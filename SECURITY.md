@@ -41,3 +41,7 @@ Moving Adjust into the Grow Phase tile and replacing its iframe does not change 
 ## v0.364 ESP VPD channel integrity
 
 Only the ESP current VPD channel supplies live/control/history VPD. Missing, nonfinite, boolean, negative and explicitly invalid/stale climate inputs cannot be replaced by a calculation, raw channel or cached prior VPD. Existing backend exhaust control performs no network action without a valid control VPD. New normalization copies payloads and preserves stored history; it does not establish cryptographic measurement provenance. No authentication/HMAC, firmware, target or hysteresis change is introduced.
+
+## v0.365 chart presentation
+
+Climate axis suggestions only affect presentation. Data, exports, control decisions and authentication are unchanged; larger excursions remain visible.
