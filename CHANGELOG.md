@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.366
+
+- Add browser-local Setup chart ranges for temperature, humidity and VPD.
+- Support zero for automatic scaling, validated defaults and automatic expansion for larger excursions.
+
 ## v0.365
 
 - Widen temperature history to a suggested target ±5 °C range (±9 °F).

@@ -50,6 +50,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: python tests/render_target_editors.py /tmp/target-editors.json
       - run: node tests/test_target_tiles_browser.cjs /tmp/target-editors.json
+      - run: python tests/render_chart_settings.py /tmp/chart-settings.json
+      - run: node tests/test_chart_settings_browser.cjs /tmp/chart-settings.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

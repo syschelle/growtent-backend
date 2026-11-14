@@ -4,9 +4,11 @@ function extract(signature){const a=source.indexOf(signature);assert.ok(a>=0,sig
 const config=[];
 class Chart{constructor(ctx,cfg){this.data=cfg.data;this.options=cfg.options;config.push(cfg);}destroy(){}update(){}}
 Chart.defaults={plugins:{legend:{labels:{generateLabels:chart=>chart.data.datasets.map((ds,i)=>({text:ds.label,datasetIndex:i}))}}}};
-const context={Chart,document:{documentElement:{getAttribute:()=> 'dark'},getElementById:id=>id==='vpdChart'?{}:null},console};
+const preferences=new Map();
+const localStorage={getItem:key=>preferences.get(key)??null,setItem:(key,value)=>preferences.set(key,value)};
+const context={Chart,localStorage,document:{documentElement:{getAttribute:()=> 'dark'},getElementById:id=>id==='vpdChart'?{}:null},console};
 vm.createContext(context);
-const functions=['finiteNumber','espControlVpd','vpdHistoryValue','fmtNum','firstNum','chartLegendColor','legendLabelsWithCurrent','targetLineColor','climateChartRange','buildCharts'];
+const functions=['finiteNumber','espControlVpd','vpdHistoryValue','fmtNum','firstNum','chartLegendColor','legendLabelsWithCurrent','targetLineColor','climateChartRange','chartRangeSettings','buildCharts'];
 vm.runInContext(`let currentLang='de',currentTempUnit='C',targetVpdChart=1.17,targetTempCChart=22;
 let tempChart,humChart,vpdChart,soilMoistureChart,extTempChart,mainWChart,lightWChart,humidifierWChart,heatmatWChart,exhaustWChart,alphaChart,heapChart;
 const tr=k=>({vpd:'VPD',average:'Durchschnitt',target:'Sollwert'}[k]||k);
@@ -58,3 +60,21 @@ assert.equal(tc.options.scales.y.suggestedMin,16);assert.equal(tc.options.scales
 assert.equal(hc.options.scales.y.suggestedMin,0);assert.equal(hc.options.scales.y.suggestedMax,10);
 [tc,hc]=climate([null],[null]);assert.equal(tc.options.scales.y.suggestedMin,undefined);assert.equal(hc.options.scales.y.suggestedMin,undefined);
 console.log('Climate chart ranges: target ±5 C / ±9 F, humidity ±5 points, nulls, raw readings and unbounded excursions passed');
+
+// Saved preferences drive production chart config; malformed values retain safe defaults.
+assert.equal(vm.runInContext('chartRangeSettings().temperature',context),5);
+for(const bad of ['broken','null','[]','{"temperature":false,"humidity":"15","vpd":-1}']) {
+ localStorage.setItem('gt_chart_ranges',bad);
+ assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(chartRangeSettings())',context)),{temperature:5,humidity:10,vpd:0});
+}
+localStorage.setItem('gt_chart_ranges',JSON.stringify({temperature:2,humidity:20,vpd:0.4}));
+vm.runInContext('targetTempCChart=22;targetVpdChart=1.17',context);
+[tc,hc]=climate([21.8],[57]);assert.equal(tc.options.scales.y.suggestedMin,20);assert.equal(tc.options.scales.y.suggestedMax,24);assert.equal(hc.options.scales.y.suggestedMin,47);assert.equal(hc.options.scales.y.suggestedMax,67);
+context.document.getElementById=id=>id==='vpdChart'?{}:null;
+c=chart([1.15,1.18]);assert.ok(Math.abs(c.options.scales.y.suggestedMin-0.97)<1e-9);assert.ok(Math.abs(c.options.scales.y.suggestedMax-1.37)<1e-9);assert.equal(c.options.scales.y.min,undefined);assert.equal(c.options.scales.y.max,undefined);
+localStorage.setItem('gt_chart_ranges',JSON.stringify({temperature:0,humidity:0,vpd:0}));
+c=chart([1.15,1.18]);assert.equal(c.options.scales.y.suggestedMin,undefined);
+context.document.getElementById=id=>['tempChart','humChart'].includes(id)?{}:null;
+[tc,hc]=climate([21.8],[57]);assert.equal(tc.options.scales.y.suggestedMin,undefined);assert.equal(hc.options.scales.y.suggestedMin,undefined);
+vm.runInContext("currentTempUnit='F'",context);localStorage.setItem('gt_chart_ranges','{"temperature":2}');[tc]=climate([71.6],[57]);assert.ok(Math.abs(tc.options.scales.y.suggestedMin-68)<1e-9);assert.ok(Math.abs(tc.options.scales.y.suggestedMax-75.2)<1e-9);
+console.log('Saved chart preferences: defaults, corruption, bounds, custom ranges, automatic mode and Fahrenheit passed');

@@ -49,7 +49,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.365"
+APP_VERSION = "v0.366"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6169,6 +6169,10 @@ def setup_page(request: Request):
           #rubricStatus { grid-column:3; grid-row:2; }
           #rubricBackup { grid-column:4; grid-row:2; }
           #appearanceCard { grid-column:1; grid-row:3; }
+          #chartRangesCard { grid-column:1; grid-row:4 / span 2; }
+          .chart-range-field { display:flex; flex-direction:column; gap:5px; margin:10px 0; min-width:0; }
+          .chart-range-field input { box-sizing:border-box; width:100%; max-width:160px; padding:7px 9px; border:1px solid var(--grid); border-radius:8px; background:var(--bg); color:var(--text); }
+          #chartRangesHint { color:var(--muted); font-size:.85rem; line-height:1.4; }
           #accessCard { grid-column:2; grid-row:3; }
           #adminsCard { grid-column:2; grid-row:4; }
           #guestUsersCard { grid-column:2; grid-row:5; }
@@ -6193,7 +6197,7 @@ def setup_page(request: Request):
           @media (max-width: 560px) { .admin-fields { grid-template-columns:1fr; } }
           @media (max-width: 1200px) {
             .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
-            .section-title, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #rubricDevices { grid-column:auto; grid-row:auto; }
+            .section-title, #chartRangesCard, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #rubricDevices { grid-column:auto; grid-row:auto; }
           }
           @media (max-width: 780px) { .setup-content { grid-template-columns:1fr; } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
@@ -6254,6 +6258,16 @@ def setup_page(request: Request):
               <div id=\"msg\" style=\"margin-top:10px;\"></div>
             </div>
 
+
+            <form class=\"card\" id=\"chartRangesCard\">
+              <strong id=\"chartRangesTitle\">Charts</strong>
+              <div class=\"chart-range-field\"><label id=\"chartTemperatureLabel\" for=\"chartTemperatureRange\">Temperature: target ± (°C)</label><input id=\"chartTemperatureRange\" type=\"number\" min=\"0\" max=\"50\" step=\"0.1\" required></div>
+              <div class=\"chart-range-field\"><label id=\"chartHumidityLabel\" for=\"chartHumidityRange\">Humidity: minimum width (percentage points)</label><input id=\"chartHumidityRange\" type=\"number\" min=\"0\" max=\"100\" step=\"0.1\" required></div>
+              <div class=\"chart-range-field\"><label id=\"chartVpdLabel\" for=\"chartVpdRange\">VPD: minimum width (kPa)</label><input id=\"chartVpdRange\" type=\"number\" min=\"0\" max=\"10\" step=\"0.01\" required></div>
+              <p id=\"chartRangesHint\">0 = automatic. Larger excursions stay visible. Applies to all tents in this browser on the next chart refresh; measurements and control are unchanged. Temperature spans convert automatically for °F.</p>
+              <button id=\"saveChartRangesBtn\" type=\"submit\">Save</button>
+              <div id=\"chartRangesMsg\" role=\"status\" style=\"margin-top:8px;\"></div>
+            </form>
 
             <div id=\"rubricAccess\" class=\"section-title\">Access</div>
             <div id=\"rubricStatus\" class=\"section-title\">Status notifications</div>
@@ -6445,6 +6459,20 @@ def setup_page(request: Request):
         </div>
 
         <script>
+          function chartRangeSettings(storage = localStorage){
+            const defaults = {temperature:5, humidity:10, vpd:0};
+            const limits = {temperature:50, humidity:100, vpd:10};
+            let saved;
+            try { saved = JSON.parse(storage.getItem('gt_chart_ranges') || '{}'); } catch { return defaults; }
+            if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return defaults;
+            const result = {...defaults};
+            for (const key of Object.keys(defaults)) {
+              const value = saved[key];
+              if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= limits[key]) result[key] = value;
+            }
+            return result;
+          }
+
           const isEmbed = new URLSearchParams(window.location.search).get('embed') === '1';
           if (isEmbed) document.body.classList.add('embed');
 
@@ -6766,6 +6794,7 @@ def setup_page(request: Request):
             set('rubricBackup', tSetup('rubricBackup'));
             set('rubricDevices', tSetup('rubricDevices'));
             set('appearanceTitle', tSetup('appearance'));
+            applyChartRangesI18n();
             set('labelTheme', tSetup('theme'));
             set('labelLanguage', tSetup('language'));
             set('labelTempUnit', tSetup('tempUnit'));
@@ -7229,6 +7258,43 @@ def setup_page(request: Request):
               list.textContent = 'Failed to load tents.';
             }
           }
+
+          function applyChartRangesI18n(){
+            const de = langSel.value === 'de';
+            const labels = de ? {
+              chartRangesTitle:'Diagramme', chartTemperatureLabel:'Temperatur: Sollwert ± (°C)',
+              chartHumidityLabel:'Luftfeuchte: Mindestbreite (Prozentpunkte)', chartVpdLabel:'VPD: Mindestbreite (kPa)',
+              chartRangesHint:'0 = automatisch. Größere Ausschläge bleiben sichtbar. Gilt für alle Zelte in diesem Browser ab der nächsten Diagrammaktualisierung; Messwerte und Regelung bleiben unverändert. Temperaturbereiche werden für °F automatisch umgerechnet.', saveChartRangesBtn:'Speichern'
+            } : {
+              chartRangesTitle:'Charts', chartTemperatureLabel:'Temperature: target ± (°C)',
+              chartHumidityLabel:'Humidity: minimum width (percentage points)', chartVpdLabel:'VPD: minimum width (kPa)',
+              chartRangesHint:'0 = automatic. Larger excursions stay visible. Applies to all tents in this browser on the next chart refresh; measurements and control are unchanged. Temperature spans convert automatically for °F.', saveChartRangesBtn:'Save'
+            };
+            for (const [id,text] of Object.entries(labels)) document.getElementById(id).textContent=text;
+          }
+
+          function bindChartRangeSettings(){
+            const fields = {temperature:'chartTemperatureRange',humidity:'chartHumidityRange',vpd:'chartVpdRange'};
+            const initial = chartRangeSettings();
+            for (const [key,id] of Object.entries(fields)) document.getElementById(id).value=initial[key];
+            document.getElementById('chartRangesCard').addEventListener('submit', event=>{
+              event.preventDefault();
+              const message=document.getElementById('chartRangesMsg');
+              const values={};
+              for (const [key,id] of Object.entries(fields)) {
+                const input=document.getElementById(id);
+                if (!input.checkValidity() || input.value.trim()==='') { input.reportValidity(); return; }
+                values[key]=Number(input.value);
+              }
+              try {
+                localStorage.setItem('gt_chart_ranges',JSON.stringify(values));
+                message.textContent=langSel.value==='de'?'Gespeichert.':'Saved.';
+              } catch {
+                message.textContent=langSel.value==='de'?'Speichern fehlgeschlagen.':'Save failed.';
+              }
+            });
+          }
+          bindChartRangeSettings();
 
           document.getElementById('saveBtn').addEventListener('click', () => {
             const theme = sel.value === 'light' ? 'light' : 'dark';
@@ -13178,8 +13244,23 @@ def dashboard_page(request: Request):
             };
           }
 
+          function chartRangeSettings(storage = localStorage){
+            const defaults = {temperature:5, humidity:10, vpd:0};
+            const limits = {temperature:50, humidity:100, vpd:10};
+            let saved;
+            try { saved = JSON.parse(storage.getItem('gt_chart_ranges') || '{}'); } catch { return defaults; }
+            if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return defaults;
+            const result = {...defaults};
+            for (const key of Object.keys(defaults)) {
+              const value = saved[key];
+              if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= limits[key]) result[key] = value;
+            }
+            return result;
+          }
+
           // Suggestions widen quiet climate curves without clipping larger excursions.
           function climateChartRange(series, anchor, halfSpan, lower = null, upper = null){
+            if (!Number.isFinite(halfSpan) || halfSpan <= 0) return {};
             const valid = series.flat().map(finiteNumber).filter(Number.isFinite);
             const target = finiteNumber(anchor);
             if (!valid.length && target === null) return {};
@@ -13262,6 +13343,7 @@ def dashboard_page(request: Request):
             if (heapChart) heapChart.destroy();
 
             const tempUnitLabel = currentTempUnit === 'F' ? '°F' : '°C';
+            const chartRanges = chartRangeSettings();
 
             const tempCtx = document.getElementById('tempChart');
             if (tempCtx) {
@@ -13275,7 +13357,7 @@ def dashboard_page(request: Request):
                 : '';
               const tTarget = Number.isFinite(targetTempCChart) ? convertTempFromC(targetTempCChart) : null;
               const tempTargetLine = labels.map(() => (Number.isFinite(tTarget) ? Number(tTarget.toFixed(1)) : null));
-              const tempRange = climateChartRange([temp, tempRawSeries], tTarget, currentTempUnit === 'F' ? 9 : 5);
+              const tempRange = climateChartRange([temp, tempRawSeries], tTarget, chartRanges.temperature * (currentTempUnit === 'F' ? 1.8 : 1));
               const tempAvg = calcSeriesAverage(temp, 1);
               const tempAvgLine = labels.map(() => (Number.isFinite(tempAvg) ? tempAvg : null));
               tempChart = new Chart(tempCtx, {
@@ -13308,7 +13390,7 @@ def dashboard_page(request: Request):
 
             const humCtx = document.getElementById('humChart');
             if (humCtx) {
-              const humRange = climateChartRange([hum, humRawSeries], null, 5, 0, 100);
+              const humRange = climateChartRange([hum, humRawSeries], null, chartRanges.humidity / 2, 0, 100);
               humChart = new Chart(humCtx, {
                 type: 'line',
                 data: {
@@ -13345,6 +13427,7 @@ def dashboard_page(request: Request):
                 ? ` (min ${vpdMin.toFixed(2)} / max ${vpdMax.toFixed(2)})`
                 : '';
               const vpdTargetLine = labels.map(() => (Number.isFinite(targetVpdChart) ? Number(targetVpdChart.toFixed(2)) : null));
+              const vpdRange = climateChartRange([vpd], Number.isFinite(targetVpdChart) ? targetVpdChart : null, chartRanges.vpd / 2, 0);
               const vpdAvg = calcSeriesAverage(vpd, 2);
               const vpdAvgLine = labels.map(() => (Number.isFinite(vpdAvg) ? vpdAvg : null));
               vpdChart = new Chart(vpdCtx, {
@@ -13365,8 +13448,8 @@ def dashboard_page(request: Request):
                   interaction: { mode: 'nearest', intersect: false },
                   scales: {
                     x: { ticks: { color:'#94a3b8' }, grid:{ color:'rgba(148,163,184,.15)' } },
-                    y: { position:'left', ticks:{ color:'#f59e0b' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
-                    yR: { position:'right', ticks:{ color:'#f59e0b' }, grid:{ drawOnChartArea:false }, title: { display:true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
+                    y: { ...vpdRange, position:'left', ticks:{ color:'#f59e0b' }, grid:{ color:'rgba(148,163,184,.15)' }, title: { display: true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } },
+                    yR: { ...vpdRange, position:'right', ticks:{ color:'#f59e0b' }, grid:{ drawOnChartArea:false }, title: { display:true, text: 'kPa', color:'#cbd5e1' }, afterFit: (scale) => { scale.width = 56; } }
                   },
                   plugins: { legend: { labels: legendLabelsWithCurrent() } }
                 }

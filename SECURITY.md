@@ -45,3 +45,7 @@ Only the ESP current VPD channel supplies live/control/history VPD. Missing, non
 ## v0.365 chart presentation
 
 Climate axis suggestions only affect presentation. Data, exports, control decisions and authentication are unchanged; larger excursions remain visible.
+
+## v0.366 chart preferences
+
+Chart ranges are non-sensitive browser-local presentation settings. Stored JSON is type/range validated, never inserted as HTML and cannot alter controller configuration or measured data. No new write API or authorization behavior is introduced.
