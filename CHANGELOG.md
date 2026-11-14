@@ -1,5 +1,11 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.365
+
+- Widen temperature history to a suggested target ±5 °C range (±9 °F).
+- Widen humidity history to a suggested midpoint ±5 percentage-point range.
+- Retain automatic expansion for larger excursions and unchanged data/statistics.
+
 ## v0.364
 
 - Use the ESP regulation VPD consistently for ingestion, live display, histories and exports; retain gaps and exclude missing data from statistics without backend recalculation or historical rewrites.

@@ -6,7 +6,7 @@ class Chart{constructor(ctx,cfg){this.data=cfg.data;this.options=cfg.options;con
 Chart.defaults={plugins:{legend:{labels:{generateLabels:chart=>chart.data.datasets.map((ds,i)=>({text:ds.label,datasetIndex:i}))}}}};
 const context={Chart,document:{documentElement:{getAttribute:()=> 'dark'},getElementById:id=>id==='vpdChart'?{}:null},console};
 vm.createContext(context);
-const functions=['finiteNumber','espControlVpd','vpdHistoryValue','fmtNum','firstNum','chartLegendColor','legendLabelsWithCurrent','targetLineColor','buildCharts'];
+const functions=['finiteNumber','espControlVpd','vpdHistoryValue','fmtNum','firstNum','chartLegendColor','legendLabelsWithCurrent','targetLineColor','climateChartRange','buildCharts'];
 vm.runInContext(`let currentLang='de',currentTempUnit='C',targetVpdChart=1.17,targetTempCChart=22;
 let tempChart,humChart,vpdChart,soilMoistureChart,extTempChart,mainWChart,lightWChart,humidifierWChart,heatmatWChart,exhaustWChart,alphaChart,heapChart;
 const tr=k=>({vpd:'VPD',average:'Durchschnitt',target:'Sollwert'}[k]||k);
@@ -32,3 +32,29 @@ assert.ok(source.includes('const vpd = points.map(vpdHistoryValue);'));
 assert.equal((source.match(/const vpdKpa = espControlVpd\(payload\)/g)||[]).length,1);
 assert.equal((source.match(/const vpdRaw  = espControlVpd\(d\)/g)||[]).length,1);
 console.log('ESP VPD UI: strict source, null gaps, no zero/fallback, exact chart data, valid-only average/min/max and latest legend passed');
+
+// Actual production chart configuration: wider climate axes, unchanged samples.
+context.document.getElementById=id=>['tempChart','humChart'].includes(id)?{}:null;
+vm.runInContext("function convertTempFromC(v){return currentTempUnit==='F'?v*9/5+32:v;}",context);
+function climate(temp,hum,rawT=temp,rawH=hum){
+ config.length=0;Object.assign(context,{temp,hum,rawT,rawH});
+ vm.runInContext('buildCharts(temp.map((_,i)=>String(i)),temp,hum,[],[],[],[],[],[],[],[],[],rawT,rawH,[],[],[],[])',context);
+ assert.equal(config.length,2);return config;
+}
+let [tc,hc]=climate([21.6,22],[56.4,58.4]);
+assert.equal(tc.options.scales.y.suggestedMin,17);assert.equal(tc.options.scales.y.suggestedMax,27);
+assert.equal(tc.options.scales.yR.suggestedMin,17);assert.equal(tc.options.scales.yR.suggestedMax,27);
+assert.deepEqual(Array.from(tc.data.datasets[0].data),[21.6,22]);
+assert.equal(hc.options.scales.y.suggestedMin,52.4);assert.equal(hc.options.scales.y.suggestedMax,62.4);
+assert.equal(tc.options.scales.y.min,undefined);assert.equal(tc.options.scales.y.max,undefined);
+[tc,hc]=climate([5,40],[1,99]);
+assert.deepEqual(Array.from(tc.data.datasets[0].data),[5,40]); // suggestions allow Chart.js to include outliers
+assert.equal(hc.options.scales.y.min,undefined);assert.equal(hc.options.scales.y.max,undefined);
+vm.runInContext("currentTempUnit='F'",context);
+[tc]=climate([71,72],[55,56]);assert.ok(Math.abs(tc.options.scales.y.suggestedMin-62.6)<1e-9);assert.ok(Math.abs(tc.options.scales.y.suggestedMax-80.6)<1e-9);
+vm.runInContext("currentTempUnit='C';targetTempCChart=null",context);
+[tc,hc]=climate([null,20],[null,0],[null,22],[null,0]);
+assert.equal(tc.options.scales.y.suggestedMin,16);assert.equal(tc.options.scales.y.suggestedMax,26);
+assert.equal(hc.options.scales.y.suggestedMin,0);assert.equal(hc.options.scales.y.suggestedMax,10);
+[tc,hc]=climate([null],[null]);assert.equal(tc.options.scales.y.suggestedMin,undefined);assert.equal(hc.options.scales.y.suggestedMin,undefined);
+console.log('Climate chart ranges: target ±5 C / ±9 F, humidity ±5 points, nulls, raw readings and unbounded excursions passed');
