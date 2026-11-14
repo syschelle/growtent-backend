@@ -10031,7 +10031,7 @@ def dashboard_page(request: Request):
             .grow-profile-modal-card { width:min(560px,100%); height:auto; max-height:calc(100dvh - 12px); padding:9px; }
             #dbGrowProfileFrame { max-height:calc(100dvh - 88px); }
           }
-          .grow-profile-modal.target-editor .grow-profile-modal-card { width:min(280px,100%); }
+          .grow-profile-modal.target-editor .grow-profile-modal-card { box-sizing:border-box; min-width:0; width:min(280px,100%); }
           /* Current value colors aligned with history line colors */
           #temp { color:#22d3ee; }
           #hum { color:#a78bfa; }
