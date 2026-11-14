@@ -29,3 +29,7 @@ Dialog size/readiness messages still require the expected same origin and iframe
 ## v0.361 native target dialogs
 
 Target forms use the same administrator-protected profile API and backend/HMAC write service. Cached numeric values are bound to a tent and taken only from its actual latest payload, not another tent’s fallback. Submission rechecks readiness/tent identity; stale responses cannot modify a new dialog. Only verified responses with the requested numeric value are displayed as successful. No secrets or arbitrary HTML are added to the dialog. Unknown values remain unknown until a protected read succeeds.
+
+## v0.362 VPD precision
+
+Client VPD editing uses hundredths within the existing allowed range. Formatting alone does not create a pending write, invalid third-decimal drafts are not silently submitted, and payloads remain numeric through the existing protected/HMAC path. No access boundaries or endpoints change.
