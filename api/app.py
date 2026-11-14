@@ -23,6 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
+from services.vpd_channels import (
+    finite_number as _finite_sensor_number,
+    esp_control_vpd as _esp_control_vpd,
+    esp_raw_vpd as _esp_raw_vpd,
+    normalise_vpd_channels as _normalise_vpd_channels,
+)
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
@@ -43,7 +49,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.363"
+APP_VERSION = "v0.364"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1837,15 +1843,6 @@ def _normalise_growlight_power_drop_w(value, default: float = 20.0) -> float:
     return max(1.0, min(1000.0, float(parsed)))
 
 
-def _calc_vpd_kpa(temp_c: float | None, leaf_offset_c: float | None, humidity_pct: float | None):
-    if temp_c is None or humidity_pct is None:
-        return None
-    t_leaf = float(temp_c) + float(leaf_offset_c or 0.0)
-    rh = max(0.0, min(100.0, float(humidity_pct)))
-    svp = 0.6108 * math.exp((17.27 * t_leaf) / (t_leaf + 237.3))
-    return max(0.0, svp * (1.0 - rh / 100.0))
-
-
 def _ema_next(prev: float | None, cur: float | None, alpha: float):
     if cur is None:
         return prev
@@ -2035,8 +2032,8 @@ def _refresh_soil_sensors_in_payload(payload: dict, tent: dict, client: httpx.Cl
 def save_state(tent_id: int, payload: dict):
     captured_at = datetime.now(timezone.utc)
 
-    # Source of truth: controller-provided channels.
-    # Keep explicit raw and smoothed values if provided by firmware.
+    # VPD is owned by the ESP regulation channel. Preserve the existing
+    # temperature/humidity handling, without calculating or filling a VPD.
     d = dict(payload or {})
 
     raw_t = _to_float(d.get("sensors.cur.temperatureRawC"))
@@ -2046,22 +2043,16 @@ def save_state(tent_id: int, payload: dict):
     if raw_h is None:
         raw_h = _to_float(d.get("sensors.raw.humidityPct"))
 
-    leaf_offset = _to_float(d.get("settings.grow.offsetLeafTemperature")) or 0.0
-    raw_vpd = _to_float(d.get("sensors.raw.vpdKpa"))
-    if raw_vpd is None:
-        raw_vpd = _calc_vpd_kpa(raw_t, leaf_offset, raw_h)
+    raw_vpd = _esp_raw_vpd(d)
 
-    # If current sample is incomplete/invalid, reuse last known values for continuity.
-    if not _sensor_values_valid(raw_t, raw_h, raw_vpd):
+    # Retain existing temperature/humidity continuity only. VPD is never filled
+    # from a prior sample, another channel or a backend calculation.
+    if raw_t is None or raw_h is None:
         prev = _get_last_payload(tent_id)
         if raw_t is None:
             raw_t = _to_float(prev.get("sensors.raw.temperatureC"))
         if raw_h is None:
             raw_h = _to_float(prev.get("sensors.raw.humidityPct"))
-        if raw_vpd is None:
-            raw_vpd = _to_float(prev.get("sensors.raw.vpdKpa"))
-        if raw_vpd is None:
-            raw_vpd = _calc_vpd_kpa(raw_t, leaf_offset, raw_h)
 
     # Mark tent sensor initialization as valid from first accepted sample.
     if not SENSOR_INIT.get(tent_id):
@@ -2073,18 +2064,13 @@ def save_state(tent_id: int, payload: dict):
         sm_t = _to_float(d.get("sensors.cur.temperatureC"))
     if sm_h is None:
         sm_h = _to_float(d.get("sensors.cur.humidityPct"))
-    sm_vpd = _to_float(d.get("sensors.smoothed.vpdKpa"))
+    sm_vpd = _esp_control_vpd(d)
     if sm_t is None or sm_h is None:
         prev = _get_last_payload(tent_id)
         if sm_t is None:
             sm_t = _to_float(prev.get("sensors.smoothed.temperatureC"))
         if sm_h is None:
             sm_h = _to_float(prev.get("sensors.smoothed.humidityPct"))
-    if sm_vpd is None:
-        sm_vpd = _calc_vpd_kpa(sm_t, leaf_offset, sm_h)
-    if sm_vpd is None:
-        prev = _get_last_payload(tent_id)
-        sm_vpd = _to_float(prev.get("sensors.smoothed.vpdKpa"))
 
     payload = dict(payload or {})
     payload["sensors.raw.temperatureC"] = raw_t
@@ -2099,14 +2085,11 @@ def save_state(tent_id: int, payload: dict):
         payload["sensors.cur.temperatureC"] = sm_t
     if _to_float(payload.get("sensors.cur.humidityPct")) is None:
         payload["sensors.cur.humidityPct"] = sm_h
-    if _to_float(payload.get("sensors.cur.vpdKpa")) is None:
-        payload["sensors.cur.vpdKpa"] = sm_vpd
     if _to_float(payload.get("sensors.cur.temperatureRawC")) is None:
         payload["sensors.cur.temperatureRawC"] = raw_t
     if _to_float(payload.get("sensors.cur.humidityRawPct")) is None:
         payload["sensors.cur.humidityRawPct"] = raw_h
-    if _to_float(payload.get("sensors.cur.vpdRawKpa")) is None:
-        payload["sensors.cur.vpdRawKpa"] = raw_vpd
+    payload = _normalise_vpd_channels(payload)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -2642,9 +2625,8 @@ def _try_run_exhaust_vpd_control(tent: dict, payload: dict):
     except Exception:
         return
 
-    try:
-        cur_vpd = float((payload or {}).get("sensors.cur.vpdKpa"))
-    except Exception:
+    cur_vpd = _esp_control_vpd(payload)
+    if cur_vpd is None:
         return
 
     # Read real current exhaust state from Shelly directly (never from stale /api/state).
@@ -5172,7 +5154,7 @@ def latest_state(tent_id: int, request: Request):
                 "preview_url": preview_url,
                 "pot_strains": pot_strains,
                 "captured_at": captured.isoformat() if captured else None,
-                "latest": payload,
+                "latest": _normalise_vpd_channels(payload),
             }
 
 
@@ -5434,18 +5416,18 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
     points = []
     for ts, payload in rows:
         d = payload or {}
-        leaf_offset = _to_float(d.get("settings.grow.offsetLeafTemperature")) or 0.0
-        temp_raw = _to_float(d.get("sensors.cur.temperatureRawC"))
-        hum_raw = _to_float(d.get("sensors.cur.humidityRawPct"))
-        vpd_raw = _to_float(d.get("sensors.cur.vpdRawKpa"))
+        temp_raw = _finite_sensor_number(d.get("sensors.cur.temperatureRawC"))
+        hum_raw = _finite_sensor_number(d.get("sensors.cur.humidityRawPct"))
         if temp_raw is None:
-            temp_raw = _to_float(d.get("sensors.raw.temperatureC"))
+            temp_raw = _finite_sensor_number(d.get("sensors.raw.temperatureC"))
         if hum_raw is None:
-            hum_raw = _to_float(d.get("sensors.raw.humidityPct"))
-        if vpd_raw is None:
-            vpd_raw = _to_float(d.get("sensors.raw.vpdKpa"))
-        if vpd_raw is None:
-            vpd_raw = _calc_vpd_kpa(temp_raw, leaf_offset, hum_raw)
+            hum_raw = _finite_sensor_number(d.get("sensors.raw.humidityPct"))
+        if temp_raw is not None and not (TEMP_MIN_C <= temp_raw <= TEMP_MAX_C):
+            temp_raw = None
+        if hum_raw is not None and not (0 <= hum_raw <= 100):
+            hum_raw = None
+        vpd_raw = _esp_raw_vpd(d)
+        control_vpd = _esp_control_vpd(d)
 
         soil_sensors = []
         raw_soil_sensors = d.get("soil.sensors")
@@ -5455,23 +5437,21 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 if cleaned:
                     soil_sensors.append(cleaned)
 
-        # Ignore invalid startup/noise samples in history pipeline.
-        if not _sensor_values_valid(temp_raw, hum_raw, vpd_raw):
-            continue
-
+        # Keep timestamped null VPD points: deleting them would bridge outages
+        # with an apparently continuous curve and hide missing ESP samples.
         points.append(
             {
                 "t": ts.isoformat(),
                 "temperature_raw": temp_raw,
                 "humidity_raw": hum_raw,
                 "vpd_raw": vpd_raw,
-                "vpd_cur": _to_float(d.get("sensors.cur.vpdKpa")),
-                "temperature_smoothed": _to_float(d.get("sensors.smoothed.temperatureC")),
-                "humidity_smoothed": _to_float(d.get("sensors.smoothed.humidityPct")),
-                "vpd_smoothed": _to_float(d.get("sensors.smoothed.vpdKpa")),
-                "leafOffsetC": leaf_offset,
-                "effectiveAlfaTempC": _to_float(d.get("sensors.cur.effectiveAlfaTempC")),
-                "effectiveAlfaHumPct": _to_float(d.get("sensors.cur.effectiveAlfaHumPct")),
+                "vpd_cur": control_vpd,
+                "temperature_smoothed": _finite_sensor_number(d.get("sensors.smoothed.temperatureC")),
+                "humidity_smoothed": _finite_sensor_number(d.get("sensors.smoothed.humidityPct")),
+                "vpd_smoothed": control_vpd,
+                "leafOffsetC": _finite_sensor_number(d.get("settings.grow.offsetLeafTemperature")),
+                "effectiveAlfaTempC": _finite_sensor_number(d.get("sensors.cur.effectiveAlfaTempC")),
+                "effectiveAlfaHumPct": _finite_sensor_number(d.get("sensors.cur.effectiveAlfaHumPct")),
                 "extTemp": d.get("sensors.cur.extTempC"),
                 "mainW": d.get("cur.shelly.main.Watt"),
                 "lightW": d.get("cur.shelly.light.Watt"),
@@ -5480,10 +5460,10 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "exhaustW": d.get("cur.shelly.exhaust.Watt") if d.get("cur.shelly.exhaust.Watt") is not None else d.get("shelly.exhaust.watt"),
                 "mainWh": d.get("cur.shelly.main.Wh"),
                 "mainCost": d.get("cur.shelly.main.Cost"),
-                "sysFreeHeap": _to_float(d.get("sys.freeHeap")),
-                "sysMinFreeHeap": _to_float(d.get("sys.minFreeHeap")),
-                "sysLargestFreeHeapBlock": _to_float(d.get("sys.largestFreeHeapBlock")),
-                "sysHeapSize": _to_float(d.get("sys.heapSize")),
+                "sysFreeHeap": _finite_sensor_number(d.get("sys.freeHeap")),
+                "sysMinFreeHeap": _finite_sensor_number(d.get("sys.minFreeHeap")),
+                "sysLargestFreeHeapBlock": _finite_sensor_number(d.get("sys.largestFreeHeapBlock")),
+                "sysHeapSize": _finite_sensor_number(d.get("sys.heapSize")),
                 "soilSensors": soil_sensors,
             }
         )
@@ -5493,31 +5473,22 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
     temp_sm = []
     hum_sm = []
     for p in points:
-        tsm = _to_float(p.get("temperature_smoothed"))
-        hsm = _to_float(p.get("humidity_smoothed"))
+        tsm = _finite_sensor_number(p.get("temperature_smoothed"))
+        hsm = _finite_sensor_number(p.get("humidity_smoothed"))
         if tsm is None:
-            tsm = _to_float(p.get("temperature_raw"))
+            tsm = _finite_sensor_number(p.get("temperature_raw"))
         if hsm is None:
-            hsm = _to_float(p.get("humidity_raw"))
+            hsm = _finite_sensor_number(p.get("humidity_raw"))
         temp_sm.append(tsm)
         hum_sm.append(hsm)
 
-    vpd_sm = []
-    for i, p in enumerate(points):
-        # Keep history channel consistent with live tile: prefer smoothed VPD,
-        # then controller "cur" VPD, then raw VPD. Avoid backend re-calculation
-        # from temp/humidity here to prevent channel drift between tile and chart.
-        v = _to_float(p.get("vpd_smoothed"))
-        if v is None:
-            v = _to_float(p.get("vpd_cur"))
-        if v is None:
-            v = _to_float(p.get("vpd_raw"))
-        vpd_sm.append(v)
+    # Use the actual controller regulation channel without recalculation,
+    # forward-filling, raw fallback or backend spike/EMA filtering.
+    vpd_sm = [p["vpd_cur"] for p in points]
 
     if filter_spikes:
         temp_sm = _despike_series(temp_sm, rel_jump=0.35, abs_jump=8.0)
         hum_sm = _despike_series(hum_sm, rel_jump=0.50, abs_jump=25.0)
-        vpd_sm = _despike_series(vpd_sm, rel_jump=0.80, abs_jump=1.2)
         ext_f = _despike_series([p.get("extTemp") for p in points], rel_jump=0.35, abs_jump=8.0)
     else:
         ext_f = [p.get("extTemp") for p in points]
@@ -11545,8 +11516,18 @@ def dashboard_page(request: Request):
             }
           }
 
+          function finiteNumber(value){
+            if(value===null || value===undefined || typeof value==='boolean' || !['number','string'].includes(typeof value) || String(value).trim()==='')return null;
+            const n=Number(value);return Number.isFinite(n)?n:null;
+          }
+          function espControlVpd(payload){
+            if(Object.hasOwn(payload||{},'sensors.climate.fresh') && payload['sensors.climate.fresh']!==true)return null;
+            if(Object.hasOwn(payload||{},'sensors.climate.status') && payload['sensors.climate.status']!=='ok')return null;
+            const n=finiteNumber(payload?.['sensors.cur.vpdKpa']);return n!==null && n>=0?n:null;
+          }
+          function vpdHistoryValue(point){const n=finiteNumber(point?.vpd);return n!==null && n>=0?n:null;}
           function fmtNum(value, decimals){
-            const n = Number(value);
+            const n = finiteNumber(value);
             return Number.isFinite(n) ? n.toFixed(decimals) : '-';
           }
 
@@ -11604,7 +11585,7 @@ def dashboard_page(request: Request):
             const valPoint = pointOnSemi(cx, cy, r, p);
             const basePath = arcPath(cx, cy, r);
             const pClamped = Math.max(0, Math.min(1, Number.isFinite(p) ? p : 0));
-            const fillPath = `M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${valPoint.x} ${valPoint.y}`;
+            const fillPath = finiteNumber(value)===null ? '' : `M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${valPoint.x} ${valPoint.y}`;
 
             let targetDot = '';
             if (Number.isFinite(Number(targetValue))) {
@@ -11628,7 +11609,7 @@ def dashboard_page(request: Request):
             const tMax = currentTempUnit === 'F' ? 104 : 40;
             const tempLabel = Number.isFinite(Number(tempValue)) ? `${Number(tempValue).toFixed(1)}°${currentTempUnit}` : '-';
             const humLabel = Number.isFinite(Number(humValue)) ? `${Number(humValue).toFixed(1)}%` : '-';
-            const vpdLabel = Number.isFinite(Number(vpdValue)) ? `${Number(vpdValue).toFixed(2)} kPa` : '-';
+            const vpdLabel = Number.isFinite(finiteNumber(vpdValue)) ? `${Number(vpdValue).toFixed(2)} kPa` : '-';
             renderSemiGauge('gaugeTempWrap', 'g-fill-temp', tempValue, tMin, tMax, tempTarget, tempLabel);
             renderSemiGauge('gaugeHumWrap', 'g-fill-hum', humValue, 0, 100, null, humLabel);
             renderSemiGauge('gaugeVpdWrap', 'g-fill-vpd', vpdValue, 0, 3, vpdTarget, vpdLabel);
@@ -11636,7 +11617,7 @@ def dashboard_page(request: Request):
 
           function firstNum(obj, keys){
             for (const k of keys) {
-              const n = Number(obj?.[k]);
+              const n = finiteNumber(obj?.[k]);
               if (Number.isFinite(n)) return n;
             }
             return null;
@@ -12771,7 +12752,7 @@ def dashboard_page(request: Request):
                   const latestJson = await res.json();
                   const payload = latestJson?.latest || {};
                   const tempC = firstNum(payload, ['sensors.cur.temperatureC', 'curTemperature']);
-                  const vpdKpa = firstNum(payload, ['sensors.smoothed.vpdKpa', 'sensors.cur.vpdKpa', 'curVpd']);
+                  const vpdKpa = espControlVpd(payload);
                   const tempValue = convertTempFromC(tempC);
                   const tempUnitLabel = currentTempUnit === 'F' ? '°F' : '°C';
                   liveMetrics.textContent = `${tr('temperature')}: ${fmtNum(tempValue, 1)} ${tempUnitLabel} · ${tr('vpd')}: ${fmtNum(vpdKpa, 2)} kPa`;
@@ -13148,10 +13129,12 @@ def dashboard_page(request: Request):
                   const ds = chart?.data?.datasets?.[it.datasetIndex];
                   if (!ds || !Array.isArray(ds.data) || !it.text) return it;
                   let last = null;
-                  for (let i = ds.data.length - 1; i >= 0; i--) {
-                    const n = Number(ds.data[i]);
+                  if(ds.requireLatestValue)last=finiteNumber(ds.data[ds.data.length-1]);
+                  else for (let i = ds.data.length - 1; i >= 0; i--) {
+                    const n = finiteNumber(ds.data[i]);
                     if (Number.isFinite(n)) { last = n; break; }
                   }
+                  if(ds.requireLatestValue && last===null)it.text=`${it.text}: -`;
                   if (Number.isFinite(last)) {
                     const abs = Math.abs(last);
                     const decimals = abs >= 100 ? 0 : (abs >= 10 ? 1 : 2);
@@ -13242,7 +13225,7 @@ def dashboard_page(request: Request):
 
             const calcSeriesAverage = (series, decimals = 2) => {
               const valid = (Array.isArray(series) ? series : [])
-                .map((v) => Number(v))
+                .map(finiteNumber)
                 .filter((v) => Number.isFinite(v));
               if (!valid.length) return null;
               const avg = valid.reduce((sum, value) => sum + value, 0) / valid.length;
@@ -13267,7 +13250,7 @@ def dashboard_page(request: Request):
             const tempCtx = document.getElementById('tempChart');
             if (tempCtx) {
               const tempValid = (Array.isArray(temp) ? temp : [])
-                .map((value) => Number(value))
+                .map(finiteNumber)
                 .filter((value) => Number.isFinite(value));
               const tempMin = tempValid.length ? Math.min(...tempValid) : null;
               const tempMax = tempValid.length ? Math.max(...tempValid) : null;
@@ -13336,7 +13319,7 @@ def dashboard_page(request: Request):
             const vpdCtx = document.getElementById('vpdChart');
             if (vpdCtx) {
               const vpdValid = (Array.isArray(vpd) ? vpd : [])
-                .map((value) => Number(value))
+                .map(finiteNumber)
                 .filter((value) => Number.isFinite(value));
               const vpdMin = vpdValid.length ? Math.min(...vpdValid) : null;
               const vpdMax = vpdValid.length ? Math.max(...vpdValid) : null;
@@ -13351,7 +13334,7 @@ def dashboard_page(request: Request):
                 data: {
                   labels,
                   datasets: [
-                    { label: `${tr('vpd')} kPa`, data: vpd, borderColor: '#f59e0b', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
+                    { label: `${tr('vpd')} kPa`, data: vpd, requireLatestValue:true, spanGaps:false, borderColor: '#f59e0b', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
                     { label: '', data: vpd, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' },
                     { label: `${tr('average')} kPa`, legendAfter: vpdMinMaxSuffix, data: vpdAvgLine, borderColor: '#ef4444', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
                     { label: '', data: vpdAvgLine, borderColor: '#ffffff', borderDash: [8,8], borderDashOffset: 8, borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
@@ -13469,7 +13452,7 @@ def dashboard_page(request: Request):
             if (!shellyMainDirectTs && j?.captured_at) shellyMainDirectTs = j.captured_at;
 
             if ((!d || Object.keys(d).length === 0) && lastGoodLatestPayload) {
-              d = { ...lastGoodLatestPayload };
+              d = { ...lastGoodLatestPayload, 'sensors.cur.vpdKpa': null, 'backend.vpd.source':'unavailable' };
               if (!j?.captured_at && lastGoodCapturedAt) j.captured_at = lastGoodCapturedAt;
             }
 
@@ -13547,8 +13530,8 @@ def dashboard_page(request: Request):
             }
             const tempCur = firstNum(d, ['sensors.cur.temperatureC', 'curTemperature']);
             const humCur  = firstNum(d, ['sensors.cur.humidityPct', 'curHumidity']);
-            // Keep live tile aligned with history pipeline: prefer smoothed VPD channel.
-            const vpdRaw  = firstNum(d, ['sensors.smoothed.vpdKpa', 'sensors.cur.vpdKpa', 'curVpd']);
+            // Tile, popup and history share the ESP regulation channel only.
+            const vpdRaw  = espControlVpd(d);
             const extTempRaw = firstNum(d, ['sensors.cur.extTempC']);
             const alphaTemp = firstNum(d, ['sensors.cur.effectiveAlfaTempC']);
             const alphaHum = firstNum(d, ['sensors.cur.effectiveAlfaHumPct']);
@@ -13562,7 +13545,7 @@ def dashboard_page(request: Request):
             txt('hum',  fmtNum(humCur, 1) + ' %');
             txt('vpd',  fmtNum(vpdRaw, 2) + ' kPa');
             if (Object.keys(d || {}).length > 0) {
-              const hasCore = Number.isFinite(Number(tempCur)) || Number.isFinite(Number(humCur)) || Number.isFinite(Number(vpdRaw));
+              const hasCore = Number.isFinite(Number(tempCur)) || Number.isFinite(Number(humCur)) || Number.isFinite(vpdRaw);
               if (hasCore) {
                 lastGoodLatestPayload = { ...d };
                 lastGoodCapturedAt = j?.captured_at || lastGoodCapturedAt;
@@ -13906,29 +13889,26 @@ def dashboard_page(request: Request):
                 : d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
             });
             const temp = points.map(p => {
-              const c = Number(p.temp);
+              const c = finiteNumber(p.temp);
               if (!Number.isFinite(c)) return null;
               const converted = convertTempFromC(c);
               return Number.isFinite(converted) ? Number(converted.toFixed(1)) : null;
             });
             const hum  = points.map(p => {
-              const h = Number(p.hum);
+              const h = finiteNumber(p.hum);
               return Number.isFinite(h) ? Number(h.toFixed(1)) : null;
             });
             const tempRawSeries = points.map(p => {
-              const c = Number(p.temperature_raw);
+              const c = finiteNumber(p.temperature_raw);
               if (!Number.isFinite(c)) return null;
               const converted = convertTempFromC(c);
               return Number.isFinite(converted) ? Number(converted.toFixed(1)) : null;
             });
             const humRawSeries = points.map(p => {
-              const h = Number(p.humidity_raw);
+              const h = finiteNumber(p.humidity_raw);
               return Number.isFinite(h) ? Number(h.toFixed(1)) : null;
             });
-            const vpd  = points.map(p => {
-              const v = Number(p.vpd);
-              return Number.isFinite(v) ? Number(v.toFixed(2)) : null;
-            });
+            const vpd = points.map(vpdHistoryValue);
             const soilOrder = [];
             const soilByPoint = points.map((p) => {
               const mapped = {};
