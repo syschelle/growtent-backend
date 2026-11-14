@@ -2,7 +2,7 @@
 const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 (async()=>{
- const browser=await chromium.launch({headless:true}),context=await browser.newContext();
+ const browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})}),context=await browser.newContext();
  let patches=[],profileReads=0,reject=false,unverified=false,readFail=false;
  let state={targetTemperature:22,targetVPD:1.17,currentPhase:1,floweringStart:'',dryingStart:''};
  const tent={id:3,name:'Test tent',backend_write_enabled:true,backend_controller_url:'http://controller.invalid:8080',has_backend_hmac_secret:true};
@@ -64,8 +64,8 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   const readsBefore=profileReads;
   await page.locator('#editTemperatureTargetBtn').click();
   assert.equal(await page.locator('#dbTargetDialog').evaluate(el=>el.matches(':modal')),true,'Uses native dialog');
-  assert.equal(await page.locator('#dbGrowProfileFrame').getAttribute('src'),'about:blank','No target iframe navigation');
-  assert.equal(await page.locator('#dbGrowProfileModal').isVisible(),false,'No target iframe loader');
+  assert.equal(await page.locator('#dbGrowProfileFrame').count(),0,'No editor iframe');
+  assert.equal(await page.locator('#dbProfileDialog').isVisible(),false);
   assert.equal(profileReads,readsBefore,'Existing dashboard value avoids an extra read');
   assert.equal(await page.locator('#dbTargetTitle').innerText(),lang==='de'?'Solltemperatur':'Target temperature');
   assert.equal(await page.locator('#dbTargetInput').inputValue(),String(state.targetTemperature));
@@ -116,14 +116,47 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  // A tent change while editing cannot redirect this submission to another tent.
  await page.evaluate(()=>setTargetSnapshot(24,1.17));await page.locator('#editTemperatureTargetBtn').click();await page.locator('#dbTargetInput').fill('25');const beforeStale=patches.length;
  await page.evaluate(()=>{setTargetEditState({tent:4});document.getElementById('dbTargetForm').requestSubmit();});assert.equal(patches.length,beforeStale);assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);await page.locator('#dbTargetCancel').click();await page.evaluate(()=>setTargetEditState({tent:3}));
- // The existing phase/date editor stays on its separate legacy path.
- await page.setViewportSize({width:1640,height:1000});await page.locator('#openGrowProfileBtn').click();const frame=page.frameLocator('#dbGrowProfileFrame');
- await frame.locator('#pageStatus.ok').waitFor({state:'attached'});await page.waitForFunction(()=>!document.getElementById('dbGrowProfileModal').classList.contains('is-loading'));
- assert.equal(await frame.locator('[data-profile-field]:visible').count(),3);assert.equal(await frame.locator('#tempInput').isVisible(),false);
- await frame.locator('#phaseInput').selectOption('2');await frame.locator('#flowerInput').fill('2026-11-01');await frame.locator('#saveProfileBtn').click();await frame.locator('#pageStatus.ok').waitFor();
- assert.deepEqual(patches.at(-1),{currentPhase:2,floweringStart:'2026-11-01'});await page.locator('#dbGrowProfileCloseBtn').click();
+ // Profile editor is native, compact, verified, and beside the phase label.
+ for(const lang of ['de','en']){
+  await page.setViewportSize({width:lang==='de'?1640:390,height:1000});
+  await page.evaluate(lang=>{currentLang=lang;applyTargetLabels();document.getElementById('growPhaseValue').textContent=lang==='de'?'Blüte':'Flowering';},lang);
+  const button=page.locator('#openGrowProfileBtn');
+  assert.equal(await button.evaluate(el=>el.parentElement.className),'phase-value-row');
+  const phase=await page.locator('#growPhaseValue').boundingBox(),btn=await button.boundingBox();
+  assert.ok(btn.x>=phase.x+phase.width&&Math.abs((btn.y+btn.height/2)-(phase.y+phase.height/2))<3,'Button beside phase');
+  await button.click();assert.equal(await page.locator('#dbProfileDialog').evaluate(el=>el.matches(':modal')),true);
+  assert.equal(await page.locator('#dbProfileSave').isDisabled(),true);
+  const before=await page.locator('#dbProfileDialog').boundingBox();
+  await page.locator('#dbProfilePhase').waitFor({state:'visible'});await page.waitForFunction(()=>!document.getElementById('dbProfilePhase').disabled);
+  const after=await page.locator('#dbProfileDialog').boundingBox();assert.ok(Math.abs(before.width-after.width)<1&&Math.abs(before.height-after.height)<2,'Stable profile opening size');
+  assert.ok(after.width<=321);assert.equal(await page.locator('#dbProfileDialog iframe').count(),0);
+  assert.ok(await page.locator('#dbProfileDialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1));
+  assert.equal(await page.locator('#dbProfileTitle').innerText(),lang==='de'?'Grow-Profil':'Grow profile');
+  await page.locator('#dbProfilePhase').selectOption('2');await page.locator('#dbProfileFlower').fill('2026-11-01');
+  if(state.currentPhase!==2){await page.locator('#dbProfileSave').click();await page.locator('#dbProfileStatus.success').waitFor();assert.deepEqual(patches.at(-1),{currentPhase:2,floweringStart:'2026-11-01'});}
+  await page.locator('#dbProfileDialog').screenshot({path:`layout-previews/profile-editor-${lang}.png`});
+  await page.locator('#dbProfileCancel').click();assert.equal(await page.evaluate(()=>document.activeElement.id),'openGrowProfileBtn');
+ }
+ // Phase-only PATCH and explicit date deletion/undo; no target fields leave this form.
+ await page.locator('#openGrowProfileBtn').click();await page.waitForFunction(()=>!document.getElementById('dbProfilePhase').disabled);
+ await page.locator('#dbProfilePhase').selectOption('1');
+ await page.locator('#dbProfileFlowerDelete').click();await page.locator('#dbProfileFlowerDelete').click();assert.equal(await page.locator('#dbProfileFlower').inputValue(),'2026-11-01');
+ await page.locator('#dbProfileSave').click();await page.locator('#dbProfileStatus.success').waitFor();assert.deepEqual(patches.at(-1),{currentPhase:1});
+ await page.locator('#dbProfileFlower').fill('');assert.equal(await page.locator('#dbProfileSave').isDisabled(),true,'Empty existing date requires explicit deletion');
+ await page.locator('#dbProfileFlowerDelete').click();await page.locator('#dbProfileSave').click();await page.locator('#dbProfileStatus.success').waitFor();assert.deepEqual(patches.at(-1),{floweringStart:null});
+ await page.locator('#dbProfileCancel').click();
+ // Failed/unverified writes preserve the draft and never show success.
+ await page.locator('#openGrowProfileBtn').click();await page.waitForFunction(()=>!document.getElementById('dbProfilePhase').disabled);
+ await page.locator('#dbProfileDry').fill('2026-11-14');unverified=true;await page.locator('#dbProfileSave').click();await page.locator('#dbProfileStatus.error').waitFor();assert.equal(await page.locator('#dbProfileDry').inputValue(),'2026-11-14');unverified=false;
+ reject=true;await page.locator('#dbProfileSave').click();await page.locator('#dbProfileStatus.error').waitFor();reject=false;
+ await page.keyboard.press('Escape');assert.equal(await page.locator('#dbProfileDialog').evaluate(el=>el.open),false);
+ // Cancelling and reopening cannot receive stale data; failed reads never guess a phase.
+ await page.locator('#openGrowProfileBtn').click();await page.locator('#dbProfileCancel').click();
+ readFail=true;await page.locator('#openGrowProfileBtn').click();await page.locator('#dbProfileStatus.error').waitFor();assert.equal(await page.locator('#dbProfileSave').isDisabled(),true);assert.equal(await page.locator('#dbProfilePhase').inputValue(),'');await page.locator('#dbProfileCancel').click();readFail=false;
+ await page.locator('#openGrowProfileBtn').click();await page.waitForFunction(()=>!document.getElementById('dbProfilePhase').disabled);await page.locator('#dbProfilePhase').selectOption('2');
+ const prior=patches.length;await page.evaluate(()=>{setTargetEditState({tent:4});document.getElementById('dbProfileForm').requestSubmit();});assert.equal(patches.length,prior);await page.locator('#dbProfileCancel').click();await page.evaluate(()=>setTargetEditState({tent:3}));
  assert.ok(await page.evaluate(()=>window.refreshCalls>0));
- await page.goto('http://backend.test/dashboard?embed=1&guest=1');for(const id of [...ids,'dbTargetDialog'])assert.equal(await page.locator('#'+id).count(),0,'Guest HTML excludes editing');
+ await page.goto('http://backend.test/dashboard?embed=1&guest=1');for(const id of [...ids,'dbTargetDialog','dbProfileDialog'])assert.equal(await page.locator('#'+id).count(),0,'Guest HTML excludes editing');
  console.log('Native target dialogs: instant sizing/cache, guarded read fallback, exact verified PATCH, limits, errors, cancellation, permissions and phase/date compatibility passed');
  await browser.close();
 })().catch(error=>{console.error(error);process.exit(1)});

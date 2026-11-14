@@ -31,7 +31,7 @@ def test_grow_profile_editor_opens_as_dashboard_modal_and_stays_out_of_setup():
     assert 'id=\\"growProfileInline\\"' not in dashboard
     assert 'openGrowProfileBtn' in dashboard
     assert 'function openGrowProfilePage()' in dashboard
-    assert 'dbGrowProfileModal' in dashboard
+    assert 'dbProfileDialog' in dashboard
     assert '__GROW_PROFILE_MODAL__' in dashboard
     assert 'data-grow-profile-tent' not in setup
     assert 'id=\\"tentBackendWriteEnabled\\"' in setup
@@ -40,31 +40,23 @@ def test_grow_profile_editor_opens_as_dashboard_modal_and_stays_out_of_setup():
     assert 'id="saveProfileBtn"' in page
 
 
-def test_dashboard_opens_grow_profile_as_modal_like_irrigation_plan():
+def test_dashboard_uses_native_profile_dialog_and_preserves_legacy_links():
     source = _source()
     dashboard = _dashboard_source()
-    assert "page === 'grow-profile' && tent" in source  # legacy deep links keep working
-    assert "src = `/grow-profile?embed=1&tent=${encodeURIComponent(tent)}`" in source
-    assert 'id="dbGrowProfileModal" class="grow-profile-modal"' in dashboard
-    assert 'id="dbGrowProfileFrame" title="Grow profile"' in dashboard
-    assert 'dbIrPlanModal' in dashboard  # existing watering plan dialog retained
-    assert 'role="dialog" aria-modal="true"' in dashboard
-    assert "modal.style.display = 'flex';" in dashboard
+    assert "page === 'grow-profile' && tent" in source
+    assert 'id="dbProfileDialog" class="target-dialog profile-dialog"' in dashboard
+    assert 'dbGrowProfileFrame' not in dashboard
+    assert 'dbIrPlanModal' in dashboard
+    assert 'dialog.showModal()' in dashboard
     assert 'function closeGrowProfileModal()' in dashboard
-    assert "frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}&section=${encodeURIComponent(section)}&view=${growProfileModalToken}`;" in dashboard
-    assert 'window.parent.location.href = url' not in dashboard[dashboard.index('function openGrowProfilePage()'):dashboard.index('function applyI18n()')]
-    assert "frame.src = 'about:blank';" in dashboard
-    assert "loadLatest().catch(() => {});" in dashboard
+    assert 'loadLatest().catch(()=>{});' in dashboard
 
 
-def test_modal_has_mobile_height_and_compact_editor_without_standalone_header():
+def test_native_profile_dialog_fits_mobile_viewport():
     dashboard = _dashboard_source()
-    page = _grow_profile_page_source()
-    assert '.grow-profile-modal-card' in dashboard
-    assert 'height:calc(100dvh - 12px)' in dashboard
-    assert 'max-height:calc(100dvh - 12px)' in dashboard
-    assert 'body.modal-editor .head { display:none; }' in page
-    assert "qs.get('modal') === '1'" in page
+    assert 'width:min(320px,calc(100vw - 24px))' in dashboard
+    assert 'max-height:calc(100dvh - 24px); overflow:auto;' in dashboard
+    assert '.profile-date-row input { flex:1; min-width:0; }' in dashboard
 
 
 def test_modal_is_server_side_admin_only_while_grow_profile_route_remains_protected():
@@ -79,12 +71,11 @@ def test_modal_is_server_side_admin_only_while_grow_profile_route_remains_protec
 
 def test_modal_closes_with_button_escape_and_backdrop_and_keeps_dashboard():
     dashboard = _dashboard_source()
-    assert "dbGrowProfileCloseBtn')?.addEventListener('click', closeGrowProfileModal)" in dashboard
-    assert "event.target?.id === 'dbGrowProfileModal'" in dashboard
-    assert "event.key === 'Escape'" in dashboard
-    assert "document.body.style.overflow = 'hidden';" in dashboard
-    assert "modal.setAttribute('aria-hidden', 'true')" in dashboard
-    assert "modal.setAttribute('aria-hidden', 'false')" in dashboard
+    assert "dbProfileCancel')?.addEventListener('click',closeGrowProfileModal)" in dashboard
+    assert "dbProfileDialog')?.addEventListener('cancel'" in dashboard
+    assert "dbProfileDialog')?.addEventListener('click'" in dashboard
+    assert 'document.body.style.overflow=ctx.previousOverflow' in dashboard
+    assert 'ctx.focus.focus()' in dashboard
 
 
 
@@ -141,20 +132,16 @@ def test_detached_editor_keeps_controller_api_in_celsius():
     assert "matchesStep(vpd,0.01,0.5)" in page
 
 
-def test_dashboard_adjust_button_is_inside_status_tile_after_status_text_and_not_in_phase_card():
+def test_dashboard_adjust_button_is_next_to_phase_instead_of_status_row():
     dashboard = _dashboard_source()
-    row = r'<div class=\"status-row\">'
-    status = r'<div id=\"status\" class=\"small\"><span id=\"statusText\">Loading…</span> __GROW_PROFILE_ACTION__</div>'
-    assert row in dashboard
-    assert status in dashboard
-    assert "grow_profile_action = '<button id=\"openGrowProfileBtn\"" in dashboard
+    status_start=dashboard.index('class=\\"status-row\\"')
+    phase_start=dashboard.index('class=\\"phase-value-row\\"')
+    phase_end=dashboard.index('class=\\"phase-stats\\"',phase_start)
+    assert '__GROW_PROFILE_ACTION__' not in dashboard[status_start:phase_start]
+    assert '__GROW_PROFILE_ACTION__' in dashboard[phase_start:phase_end]
     assert "editGrowProfile: 'Anpassen'" in dashboard
     assert "const statusText = document.getElementById('statusText') || el;" in dashboard
-    assert 'statusText.innerHTML = `Status: <span class="status-ok">OK</span>`;' in dashboard
-    phase_line = 'phaseActions.innerHTML = `<button id="resetEnergyBtn"'
-    phase_start = dashboard.index(phase_line)
-    phase_end = dashboard.index(';', phase_start)
-    assert 'openGrowProfileBtn' not in dashboard[phase_start:phase_end]
+
 
 def test_dashboard_adjust_button_only_shows_for_admin_ready_online_ok_controller():
     dashboard = _dashboard_source()
@@ -162,7 +149,7 @@ def test_dashboard_adjust_button_only_shows_for_admin_ready_online_ok_controller
     assert 'let currentStatusOk = false;' in dashboard
     assert 'const visible = isAdmin && ready && currentEspOnline && currentStatusOk;' in dashboard
     assert "btn.style.display = visible ? 'inline-flex' : 'none';" in dashboard
-    assert "if (currentUserRole !== 'admin' || !currentTentId || !currentEspOnline || !currentStatusOk) return;" in dashboard
+    assert "section!=='profile'||!dialog||!canEditTarget(currentTentId)" in dashboard
     assert 'currentEspOnline = getTentOnlineState(j?.captured_at || currentTentMeta?.capturedAt || null);' in dashboard
     assert 'currentStatusOk = false;' in dashboard
     assert 'currentStatusOk = true;' in dashboard

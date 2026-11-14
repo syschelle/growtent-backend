@@ -36,13 +36,13 @@ def _request():
 def test_admin_dashboard_renders_usable_modal_and_keeps_the_irrigation_modal():
     html = _render_functions('admin')['dashboard_page'](_request())
     assert 'id="openGrowProfileBtn"' in html
-    assert 'id="dbGrowProfileModal"' in html
-    assert 'id="dbGrowProfileFrame"' in html
+    assert 'id="dbProfileDialog"' in html
+    assert 'id="dbGrowProfileFrame"' not in html
     assert 'id="dbIrPlanModal"' in html
     assert '__GROW_PROFILE_MODAL__' not in html
-    assert 'modal=1&tent=' in html
+    assert 'dialog.showModal()' in html
     assert 'closeGrowProfileModal' in html
-    assert 'frame.src = \'about:blank\';' in html
+    assert 'profileActive(ctx)' in html
 
 
 @pytest.mark.parametrize('role', [None, 'guest'])
@@ -50,7 +50,7 @@ def test_guest_or_anonymous_html_has_no_adjust_button_or_modal_and_cannot_open_p
     funcs = _render_functions(role)
     html = funcs['dashboard_page'](_request())
     assert 'id="openGrowProfileBtn"' not in html
-    assert 'id="dbGrowProfileModal"' not in html
+    assert 'id="dbProfileDialog"' not in html
     with pytest.raises(HTTPException) as exc:
         funcs['grow_profile_page'](_request())
     assert exc.value.status_code == 403
@@ -82,10 +82,8 @@ def test_compact_modal_uses_content_height_and_retains_viewport_scroll_limit():
     assert "body.modal-editor .edit-row { grid-column:2; grid-row:1 / span 2;" in page
     assert "type:'grow-profile-modal-height'" in page
     assert "new ResizeObserver(reportHeight).observe(content)" in page
-    assert "height:auto; overflow:hidden;" in dashboard
-    assert "height:390px; max-height:calc(100dvh - 108px);" in dashboard
-    assert "event.data?.type === 'grow-profile-modal-height'" in dashboard
-    assert "frame.style.height = `${Math.max(100, Math.ceil(height))}px`;" in dashboard
+    assert "max-height:calc(100dvh - 24px); overflow:auto;" in dashboard
+    assert "dbGrowProfileFrame" not in dashboard
 
 
 def test_compact_mobile_layout_preserves_single_save_and_delete_actions():
@@ -104,8 +102,8 @@ def test_compact_mobile_layout_preserves_single_save_and_delete_actions():
 def test_narrow_modal_keeps_desktop_rows_without_breaking_phone_layout():
     dashboard = _render_functions('admin')['dashboard_page'](_request())
     editor = _render_functions('admin')['grow_profile_page'](_request())
-    assert 'width:min(560px,100%); max-height:calc(100dvh - 28px);' in dashboard
-    assert '.grow-profile-modal-card { width:min(560px,100%); height:auto;' in dashboard
+    assert '.profile-dialog { width:min(320px,calc(100vw - 24px)); }' in dashboard
+    assert 'class="target-dialog profile-dialog"' in dashboard
     assert 'width:min(720px,100%)' not in dashboard
     # The iframe is narrower than 640px on desktop. Use a lower breakpoint so
     # it does not inadvertently render every setting in two rows.
