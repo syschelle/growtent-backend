@@ -1,7 +1,7 @@
 const fs=require('fs'),assert=require('node:assert/strict');const{chromium}=require('playwright');
 (async()=>{
  const f=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));const browser=await chromium.launch();const context=await browser.newContext();
- await context.route('http://chart-settings.test/**',route=>route.fulfill({contentType:'text/html',body:f.html}));
+ await context.route('http://chart-settings.test/**',route=>route.fulfill({contentType:'text/html; charset=utf-8',body:f.html}));
  const page=await context.newPage();await page.goto('http://chart-settings.test/setup');await page.addScriptTag({content:f.js});
  assert.equal(await page.locator('#chartTemperatureRange').inputValue(),'5');assert.equal(await page.locator('#chartHumidityRange').inputValue(),'10');assert.equal(await page.locator('#chartVpdRange').inputValue(),'0');
  await page.locator('#chartTemperatureRange').fill('2.5');await page.locator('#chartHumidityRange').fill('12');await page.locator('#chartVpdRange').fill('0.30');await page.locator('#saveChartRangesBtn').click();

@@ -6198,7 +6198,7 @@ def setup_page(request: Request):
           @media (max-width: 560px) { .admin-fields { grid-template-columns:1fr; } }
           @media (max-width: 1200px) {
             .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
-            .section-title, #chartRangesCard, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #rubricDevices { grid-column:auto; grid-row:auto; }
+            .section-title, #rubricAppearance, #rubricAccess, #rubricStatus, #rubricBackup, #chartRangesCard, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #rubricDevices { grid-column:auto; grid-row:auto; }
           }
           @media (max-width: 780px) { .setup-content { grid-template-columns:minmax(0,1fr); } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
