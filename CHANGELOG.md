@@ -2,7 +2,7 @@
 
 ## v0.359
 
-- Use ändern/change for both target tile buttons, retaining specific dialog titles and unchanged write behavior.
+- Use ändern/change for both target tile buttons, halve target-dialog desktop width to 280 px and show current VPD with two decimals. Specific titles and write behavior are retained.
 
 
 ## v0.358

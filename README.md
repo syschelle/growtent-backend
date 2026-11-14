@@ -1083,3 +1083,5 @@ Signed plan confirmation and event/ACK errors are independent. Event warnings do
 Administrators can edit target temperature and VPD directly from their measurement tiles. Each button opens a dialog for that target only; Adjust contains grow phase and dates. Controls require configured backend writes and an available controller/status. The existing HMAC Grow Profile path remains in use. See [RELEASE_NOTES_v0.359.md](RELEASE_NOTES_v0.359.md).
 
 In v0.359 both target tile buttons read **ändern** (German) or **change** (English); their dialogs keep the specific target name.
+
+Target-only dialogs use a compact 280 px maximum width in v0.359; the phase/date editor remains larger. Current VPD is displayed with two decimal places.

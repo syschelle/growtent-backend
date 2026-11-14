@@ -9253,7 +9253,7 @@ def grow_profile_page(request: Request):
             profileLoaded=true;
             const temp=Number(state?.targetTemperature), vpd=Number(state?.targetVPD), phase=Number(state?.currentPhase||1);
             setText('tempCurrent',Number.isFinite(temp)?temp.toFixed(1):'-'); $('tempInput').value=Number.isFinite(temp)?temp:'';
-            setText('vpdCurrent',Number.isFinite(vpd)?vpd.toFixed(1):'-'); $('vpdInput').value=Number.isFinite(vpd)?vpd:'';
+            setText('vpdCurrent',Number.isFinite(vpd)?vpd.toFixed(2):'-'); $('vpdInput').value=Number.isFinite(vpd)?vpd:'';
             setText('phaseCurrent',phaseText(phase)); $('phaseInput').value=String([1,2,3].includes(phase)?phase:1);
             setText('flowerCurrent',formatDate(state?.floweringStart)); $('flowerInput').value=state?.floweringStart||'';
             setText('dryCurrent',formatDate(state?.dryingStart)); $('dryInput').value=state?.dryingStart||'';
@@ -10031,6 +10031,7 @@ def dashboard_page(request: Request):
             .grow-profile-modal-card { width:min(560px,100%); height:auto; max-height:calc(100dvh - 12px); padding:9px; }
             #dbGrowProfileFrame { max-height:calc(100dvh - 88px); }
           }
+          .grow-profile-modal.target-editor .grow-profile-modal-card { width:min(280px,100%); }
           /* Current value colors aligned with history line colors */
           #temp { color:#22d3ee; }
           #hum { color:#a78bfa; }
@@ -10875,6 +10876,7 @@ def dashboard_page(request: Request):
             if (!modal || !frame) return;
             growProfileModalLastFocus = document.activeElement;
             growProfileModalSection=section;
+            modal.classList.toggle('target-editor',section==='temperature'||section==='vpd');
             txt('dbGrowProfileTitle',growProfileEditorTitle());
             frame.title=growProfileEditorTitle();
             const title = document.getElementById('dbGrowProfileTentName');
