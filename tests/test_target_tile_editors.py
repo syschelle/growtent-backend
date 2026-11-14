@@ -14,6 +14,7 @@ def test_non_admin_dashboard_has_no_target_controls_or_editor_access(role):
     funcs=_render_functions(role);html=funcs['dashboard_page'](_request())
     assert 'id="editTemperatureTargetBtn"' not in html
     assert 'id="editVpdTargetBtn"' not in html
+    assert 'id="dbTargetDialog"' not in html
     for section in ('temperature','vpd','profile'):
         request=SimpleNamespace(query_params={'embed':'1','tent':'3','section':section},cookies={})
         with pytest.raises(HTTPException) as exc:funcs['grow_profile_page'](request)
@@ -21,6 +22,8 @@ def test_non_admin_dashboard_has_no_target_controls_or_editor_access(role):
 
 def test_admin_buttons_and_scoped_editor_fields_are_rendered():
     funcs=_render_functions('admin');html=funcs['dashboard_page'](_request())
+    assert 'id="dbTargetDialog"' in html
+    assert 'function openTargetDialog(section)' in html
     tags=Controls(html).tags
     for id in ('editTemperatureTargetBtn','editVpdTargetBtn'):
         matches=[a for tag,a in tags if a.get('id')==id]

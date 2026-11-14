@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.361
+
+- Replace target iframe editors with direct native dashboard forms, retaining scoped verified HMAC writes and the existing phase/date editor.
+
+
 ## v0.360
 
 - Reveal target dialogs only after their scoped editor has reported a ready size, with cancellable loading feedback and stale-message fencing.
