@@ -30,7 +30,7 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  let currentUserRole='admin',currentTentId=3,currentEspOnline=true,currentStatusOk=true;
  let currentTentMeta=${JSON.stringify(tent)};
  window.testLang='de';window.refreshCalls=0;
- function tr(key){return ({editTemperatureTarget:{de:'Solltemperatur',en:'Target temperature'},editVpdTarget:{de:'Soll-VPD',en:'Target VPD'},growProfileTitle:{de:'Grow-Profil',en:'Grow profile'},editGrowProfile:{de:'Anpassen',en:'Adjust'}})[key]?.[window.testLang]||key;}
+ function tr(key){return ({changeTarget:{de:'ändern',en:'change'},editTemperatureTarget:{de:'Solltemperatur',en:'Target temperature'},editVpdTarget:{de:'Soll-VPD',en:'Target VPD'},growProfileTitle:{de:'Grow-Profil',en:'Grow profile'},editGrowProfile:{de:'Anpassen',en:'Adjust'}})[key]?.[window.testLang]||key;}
  function txt(id,value){const el=document.getElementById(id);if(el)el.textContent=value;}
  async function loadLatest(){window.refreshCalls++;}
  ${fixture.modal_js}
@@ -38,7 +38,8 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  window.setTargetEditState=(patch)=>{if('role'in patch)currentUserRole=patch.role;if('online'in patch)currentEspOnline=patch.online;if('ok'in patch)currentStatusOk=patch.ok;if('ready'in patch)currentTentMeta.backend_write_enabled=patch.ready;syncGrowProfileAction();};
  window.openScopedEditor=openGrowProfileEditor;
  syncGrowProfileAction();
- ['editTemperatureTargetBtn','editVpdTargetBtn','openGrowProfileBtn'].forEach(id=>txt(id,tr(id==='editTemperatureTargetBtn'?'editTemperatureTarget':id==='editVpdTargetBtn'?'editVpdTarget':'editGrowProfile')));
+ window.applyTargetLabels=()=>{${fixture.labels_js}};
+ applyTargetLabels();
  `});
  const ids=['editTemperatureTargetBtn','editVpdTargetBtn','openGrowProfileBtn'];
  for(const gate of [{role:'guest'},{online:false},{ok:false},{ready:false}]){
@@ -58,9 +59,11 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   await page.locator('#currentValuesGrid').screenshot({path:`layout-previews/target-tiles-${width}.png`});
  }
  for(const lang of ['de','en']){
-  await page.evaluate(lang=>{window.testLang=lang;localStorage.setItem('gt_lang',lang);},lang);
+  await page.evaluate(lang=>{window.testLang=lang;localStorage.setItem('gt_lang',lang);applyTargetLabels();},lang);
+  for(const id of ids.slice(0,2))assert.equal(await page.locator('#'+id).innerText(),lang==='de'?'ändern':'change');
   const beforeTemp=String(state.targetTemperature);
   await page.locator('#editTemperatureTargetBtn').click();
+  assert.equal(await page.locator('#dbGrowProfileTitle').innerText(),lang==='de'?'Solltemperatur':'Target temperature');
   let frame=page.frameLocator('#dbGrowProfileFrame');await frame.locator('#tempInput').waitFor();
   await page.waitForFunction(expected=>document.querySelector('#dbGrowProfileFrame').contentDocument?.getElementById('tempInput')?.value===expected,beforeTemp);
   assert.equal(await frame.locator('[data-profile-field]:visible').count(),1);assert.equal(await frame.locator('#vpdInput').isVisible(),false);
@@ -72,7 +75,8 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   await page.locator('.grow-profile-modal-card').screenshot({path:`layout-previews/temperature-editor-${lang}.png`});
   await page.locator('#dbGrowProfileCloseBtn').click();assert.equal(await page.locator('#dbGrowProfileFrame').getAttribute('src'),'about:blank');
   assert.equal(await page.evaluate(()=>document.activeElement.id),'editTemperatureTargetBtn');
-  await page.locator('#editVpdTargetBtn').click();frame=page.frameLocator('#dbGrowProfileFrame');await frame.locator('#vpdInput').waitFor();
+  await page.locator('#editVpdTargetBtn').click();
+  assert.equal(await page.locator('#dbGrowProfileTitle').innerText(),lang==='de'?'Soll-VPD':'Target VPD');frame=page.frameLocator('#dbGrowProfileFrame');await frame.locator('#vpdInput').waitFor();
   await page.waitForFunction(()=>document.querySelector('#dbGrowProfileFrame').contentDocument?.getElementById('vpdInput')?.value==='1.17');
   assert.equal(await frame.locator('[data-profile-field]:visible').count(),1);assert.equal(await frame.locator('#tempInput').isVisible(),false);
   await frame.locator('#vpdInput').fill('1.25');assert.equal(await frame.locator('#saveProfileBtn').isDisabled(),true);

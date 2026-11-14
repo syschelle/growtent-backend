@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.359
+
+- Use ändern/change for both target tile buttons, retaining specific dialog titles and unchanged write behavior.
+
+
 ## v0.358
 
 - Add scoped target-temperature and target-VPD editors to dashboard tiles; keep phase/dates in Adjust. Preserve administrator/HMAC requirements and existing confirmation behavior.

@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.358"
+APP_VERSION = "v0.359"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9725,8 +9725,8 @@ def dashboard_page(request: Request):
     session = get_session(token)
     is_admin = bool(session and (session.get("role") or "") == "admin")
     grow_profile_action = '<button id="openGrowProfileBtn" type="button" style="display:none;">Adjust</button>' if is_admin else ''
-    temperature_target_action = '<div class="target-adjust-action"><button id="editTemperatureTargetBtn" type="button" style="display:none;">Target temperature</button></div>' if is_admin else ''
-    vpd_target_action = '<div class="target-adjust-action"><button id="editVpdTargetBtn" type="button" style="display:none;">Target VPD</button></div>' if is_admin else ''
+    temperature_target_action = '<div class="target-adjust-action"><button id="editTemperatureTargetBtn" type="button" style="display:none;">change</button></div>' if is_admin else ''
+    vpd_target_action = '<div class="target-adjust-action"><button id="editVpdTargetBtn" type="button" style="display:none;">change</button></div>' if is_admin else ''
     # The modal and its iframe are rendered only for authenticated administrators.
     # Guest HTML must not expose the Grow Profile editor entry or its container.
     grow_profile_modal = '''
@@ -10522,6 +10522,7 @@ def dashboard_page(request: Request):
               growProfileTitle: 'Grow profile',
               close: 'Close',
               editGrowProfile: 'Adjust',
+              changeTarget: 'change',
               editTemperatureTarget: 'Target temperature',
               editVpdTarget: 'Target VPD',
               growLoadFailed: 'Failed to load controller state.',
@@ -10702,6 +10703,7 @@ def dashboard_page(request: Request):
               growProfileTitle: 'Grow-Profil',
               close: 'Schließen',
               editGrowProfile: 'Anpassen',
+              changeTarget: 'ändern',
               editTemperatureTarget: 'Solltemperatur',
               editVpdTarget: 'Soll-VPD',
               growLoadFailed: 'Controllerzustand konnte nicht geladen werden.',
@@ -10887,8 +10889,8 @@ def dashboard_page(request: Request):
           function applyI18n(){
             txt('titleMain', tr('title'));
             txt('openGrowProfileBtn', tr('editGrowProfile'));
-            txt('editTemperatureTargetBtn',tr('editTemperatureTarget'));
-            txt('editVpdTargetBtn',tr('editVpdTarget'));
+            txt('editTemperatureTargetBtn',tr('changeTarget'));
+            txt('editVpdTargetBtn',tr('changeTarget'));
             txt('dbGrowProfileTitle',growProfileEditorTitle());
             const closeGrowProfileBtn = document.getElementById('dbGrowProfileCloseBtn');
             if (closeGrowProfileBtn) {
