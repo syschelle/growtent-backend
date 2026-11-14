@@ -9,8 +9,8 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  // Fixture HTML is trusted repository output. DOMParser removes scripts without HTML regex filtering.
  await context.route('**/*',async route=>{
   const url=new URL(route.request().url()),path=url.pathname;
-  if(path==='/dashboard')return route.fulfill({contentType:'text/html',body:url.searchParams.get('guest')==='1'?fixture.guest_static:fixture.dashboard_static});
-  if(path==='/grow-profile')return route.fulfill({contentType:'text/html',body:fixture.editor});
+  if(path==='/dashboard')return route.fulfill({contentType:'text/html; charset=utf-8',body:url.searchParams.get('guest')==='1'?fixture.guest_static:fixture.dashboard_static});
+  if(path==='/grow-profile')return route.fulfill({contentType:'text/html; charset=utf-8',body:fixture.editor});
   if(path==='/auth/whoami')return route.fulfill({json:{role:'admin'}});
   if(path==='/tents')return route.fulfill({json:[tent]});
   if(path==='/tents/3/grow-profile'){
