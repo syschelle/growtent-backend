@@ -51,7 +51,7 @@ def test_dashboard_opens_grow_profile_as_modal_like_irrigation_plan():
     assert 'role="dialog" aria-modal="true"' in dashboard
     assert "modal.style.display = 'flex';" in dashboard
     assert 'function closeGrowProfileModal()' in dashboard
-    assert "frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}`;" in dashboard
+    assert "frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}&section=${encodeURIComponent(section)}`;" in dashboard
     assert 'window.parent.location.href = url' not in dashboard[dashboard.index('function openGrowProfilePage()'):dashboard.index('function applyI18n()')]
     assert "frame.src = 'about:blank';" in dashboard
     assert "loadLatest().catch(() => {});" in dashboard
@@ -200,8 +200,8 @@ def test_dashboard_shows_green_hmac_badge_in_grow_phase_card_when_write_api_is_c
 
 def test_hmac_badge_uses_same_bilingual_info_popover_pattern_as_temperature_and_vpd():
     dashboard = _dashboard_source()
-    assert "hmacHint: 'The Adjust button can change selected grow values directly on the GrowTent controller." in dashboard
-    assert "hmacHint: 'Über „Anpassen“ können ausgewählte Grow-Werte direkt im GrowTent-Controller geändert werden." in dashboard
+    assert "hmacHint: 'Adjust and the target-temperature/VPD tile buttons can change selected grow values directly on the GrowTent controller." in dashboard
+    assert "hmacHint: 'Über „Anpassen“, „Solltemperatur“ und „Soll-VPD“ können ausgewählte Grow-Werte direkt im GrowTent-Controller geändert werden." in dashboard
     assert 'id=\\"hmacMeaningHint\\"' in dashboard
     assert "const hmacMeaningEl = document.getElementById('hmacMeaningHint');" in dashboard
     assert "showInfoPopover(hmacMeaningEl, hint)" in dashboard

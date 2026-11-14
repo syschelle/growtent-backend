@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.358
+
+- Add scoped target-temperature and target-VPD editors to dashboard tiles; keep phase/dates in Adjust. Preserve administrator/HMAC requirements and existing confirmation behavior.
+
+
 - Make ESP plan/history authoritative; disable independent backend scheduling.
 - Sign configuration and expiring manual commands with HMAC; fence stale revisions and verify durable results.
 - Persist/deduplicate ESP events and notification intents before ACK; retry Pushover from a durable outbox with delayed-event labeling.

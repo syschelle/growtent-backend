@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.357"
+APP_VERSION = "v0.358"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -8980,7 +8980,9 @@ def grow_profile_page(request: Request):
     if tent_id <= 0:
         return RedirectResponse(url="/app?page=dashboard", status_code=302)
     if request.query_params.get("embed") != "1":
-        return RedirectResponse(url=f"/app?page=grow-profile&tent={tent_id}", status_code=302)
+        section = request.query_params.get("section")
+        suffix = f"&section={section}" if section in ("temperature", "vpd", "profile") else ""
+        return RedirectResponse(url=f"/app?page=grow-profile&tent={tent_id}{suffix}", status_code=302)
 
     return r"""
     <html>
@@ -8999,6 +9001,7 @@ def grow_profile_page(request: Request):
           .muted { color:var(--muted); font-size:.88rem; }
           .back { display:inline-block; text-decoration:none; color:var(--text); border:1px solid var(--grid); border-radius:9px; padding:8px 11px; white-space:nowrap; }
           .card { background:var(--card); border:1px solid var(--grid); border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 2px 8px rgba(0,0,0,.12); }
+          #editor .card[hidden] { display:none !important; }
           .label { font-size:.86rem; color:var(--muted); margin-bottom:5px; font-weight:700; }
           .current { font-size:1rem; margin-bottom:10px; }
           .edit-row { display:grid; grid-template-columns:minmax(0,1fr); gap:9px; align-items:center; }
@@ -9092,7 +9095,7 @@ def grow_profile_page(request: Request):
           <div id="pageStatus" class="status"></div>
           <div id="notReady" class="card notice"></div>
           <div id="editor">
-            <section class="card">
+            <section class="card" data-profile-field="targetTemperature">
               <div class="label" id="tempLabel">Solltemperatur</div>
               <div class="current"><span id="currentLabelTemp">Aktuell:</span> <strong id="tempCurrent">-</strong> °C</div>
               <div class="edit-row">
@@ -9100,7 +9103,7 @@ def grow_profile_page(request: Request):
               </div>
             </section>
 
-            <section class="card">
+            <section class="card" data-profile-field="targetVPD">
               <div class="label" id="vpdLabel">Soll-VPD</div>
               <div class="current"><span id="currentLabelVpd">Aktuell:</span> <strong id="vpdCurrent">-</strong> kPa</div>
               <div class="edit-row">
@@ -9108,7 +9111,7 @@ def grow_profile_page(request: Request):
               </div>
             </section>
 
-            <section class="card">
+            <section class="card" data-profile-field="currentPhase">
               <div class="label" id="phaseLabel">Phase</div>
               <div class="current"><span id="currentLabelPhase">Aktuell:</span> <strong id="phaseCurrent">-</strong></div>
               <div class="edit-row">
@@ -9120,7 +9123,7 @@ def grow_profile_page(request: Request):
               </div>
             </section>
 
-            <section class="card">
+            <section class="card" data-profile-field="floweringStart">
               <div class="label" id="flowerLabel">Blütestart</div>
               <div class="current"><span id="currentLabelFlower">Aktuell:</span> <strong id="flowerCurrent">-</strong></div>
               <div class="edit-row date-row">
@@ -9129,7 +9132,7 @@ def grow_profile_page(request: Request):
               </div>
             </section>
 
-            <section class="card">
+            <section class="card" data-profile-field="dryingStart">
               <div class="label" id="dryLabel">Trocknungsstart</div>
               <div class="current"><span id="currentLabelDry">Aktuell:</span> <strong id="dryCurrent">-</strong></div>
               <div class="edit-row date-row">
@@ -9169,6 +9172,15 @@ def grow_profile_page(request: Request):
             window.addEventListener('resize', reportHeight);
             requestAnimationFrame(reportHeight);
           }
+          const requestedSection = qs.get('section');
+          const editSection = ['temperature','vpd','profile'].includes(requestedSection) ? requestedSection : 'all';
+          function allowsField(field){
+            if(editSection==='temperature') return field==='targetTemperature';
+            if(editSection==='vpd') return field==='targetVPD';
+            if(editSection==='profile') return ['currentPhase','floweringStart','dryingStart'].includes(field);
+            return true;
+          }
+          document.querySelectorAll('[data-profile-field]').forEach(card=>{card.hidden=!allowsField(card.dataset.profileField);});
           const tentId = Number(qs.get('tent') || '0');
           const lang = (localStorage.getItem('gt_lang') || 'de') === 'en' ? 'en' : 'de';
           let original = {};
@@ -9201,7 +9213,7 @@ def grow_profile_page(request: Request):
             return m ? (lang==='de' ? `${m[3]}.${m[2]}.${m[1]}` : `${m[1]}-${m[2]}-${m[3]}`) : String(v);
           }
           function applyI18n(){
-            setText('pageTitle',T.title); setText('backBtn',T.back);
+            setText('pageTitle',editSection==='temperature'?T.temp:editSection==='vpd'?T.vpd:T.title); setText('backBtn',T.back);
             setText('tempLabel',T.temp); setText('vpdLabel',T.vpd); setText('phaseLabel',T.phase); setText('flowerLabel',T.flower); setText('dryLabel',T.dry);
             ['Temp','Vpd','Phase','Flower','Dry'].forEach(x=>setText(`currentLabel${x}`,T.current));
             setText('saveProfileBtn',T.save);
@@ -9267,6 +9279,7 @@ def grow_profile_page(request: Request):
           function buildPatch(){
             const patch={};
             if(!profileLoaded) return {patch,error:''};
+            if(allowsField('targetTemperature')){
             const tempRaw=$('tempInput').value;
             if(tempRaw==='') return {patch,error:T.invalidValue};
             const temp=Number(tempRaw);
@@ -9275,6 +9288,8 @@ def grow_profile_page(request: Request):
                 return {patch,error:T.invalidTempStep};
               patch.targetTemperature=temp;
             }
+            }
+            if(allowsField('targetVPD')){
             const vpdRaw=$('vpdInput').value;
             if(vpdRaw==='') return {patch,error:T.invalidValue};
             const vpd=Number(vpdRaw);
@@ -9283,10 +9298,14 @@ def grow_profile_page(request: Request):
                 return {patch,error:T.invalidVpdStep};
               patch.targetVPD=vpd;
             }
+            }
+            if(allowsField('currentPhase')){
             const phase=Number($('phaseInput').value);
             if(![1,2,3].includes(phase)) return {patch,error:T.invalidValue};
             if(phase!==Number(original.currentPhase)) patch.currentPhase=phase;
+            }
             for(const [field,inputId] of Object.entries(dateInputs)){
+              if(!allowsField(field)) continue;
               const before=original[field]||'';
               const value=$(inputId).value;
               if(pendingDeletes.has(field)){
@@ -9342,6 +9361,7 @@ def grow_profile_page(request: Request):
           document.querySelectorAll('[data-delete]').forEach(btn=>btn.addEventListener('click',()=>{
             if(busy||!profileLoaded) return;
             const field=btn.dataset.delete;
+            if(!allowsField(field)) return;
             if(pendingDeletes.has(field)){
               pendingDeletes.delete(field);
               $(dateInputs[field]).value=original[field]||'';
@@ -9589,6 +9609,7 @@ def app_shell_page():
             else if (page === 'grow-guide') src = '/grow-guide?embed=1';
             else if (page === 'grow-profile' && tent) src = `/grow-profile?embed=1&tent=${encodeURIComponent(tent)}`;
             else if (page === 'strains') src = '/strain-library?embed=1';
+            if(page==='grow-profile' && ['temperature','vpd','profile'].includes(qp.get('section'))) src += '&section='+encodeURIComponent(qp.get('section'));
             else if (tent) src = `/dashboard?embed=1&tent=${encodeURIComponent(tent)}`;
             if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
             updateActive();
@@ -9704,6 +9725,8 @@ def dashboard_page(request: Request):
     session = get_session(token)
     is_admin = bool(session and (session.get("role") or "") == "admin")
     grow_profile_action = '<button id="openGrowProfileBtn" type="button" style="display:none;">Adjust</button>' if is_admin else ''
+    temperature_target_action = '<div class="target-adjust-action"><button id="editTemperatureTargetBtn" type="button" style="display:none;">Target temperature</button></div>' if is_admin else ''
+    vpd_target_action = '<div class="target-adjust-action"><button id="editVpdTargetBtn" type="button" style="display:none;">Target VPD</button></div>' if is_admin else ''
     # The modal and its iframe are rendered only for authenticated administrators.
     # Guest HTML must not expose the Grow Profile editor entry or its container.
     grow_profile_modal = '''
@@ -9948,6 +9971,9 @@ def dashboard_page(request: Request):
             align-items:stretch;
             margin-bottom:10px;
           }
+          .target-adjust-card { display:flex; flex-direction:column; }
+          .target-adjust-action { display:flex; justify-content:flex-end; margin-top:auto; padding-top:6px; }
+          .target-adjust-action button { width:auto; min-height:26px; padding:3px 8px; font-size:.76rem; }
           #openGrowProfileBtn {
             display:none;
             align-items:center;
@@ -10137,7 +10163,7 @@ def dashboard_page(request: Request):
         </div>
 
         <div class=\"grid\" id=\"currentValuesGrid\">
-          <div class=\"card\">
+          <div class=\"card target-adjust-card\">
             <div class=\"card-head\">
               <div class=\"label\"><span>🌡️</span> <span id=\"lblTemp\">Temperature</span> <span id=\"tempMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span><span id=\"tempAlphaLed\" class=\"alpha-led alpha-led-off\"></span></div>
               <div class=\"small\" id=\"tempLastChange\">Last change: -</div>
@@ -10145,16 +10171,18 @@ def dashboard_page(request: Request):
             <div class=\"value\" id=\"temp\">-</div>
             <div class=\"small\" id=\"tempRaw\">Raw: -</div>
             <div class=\"small\" id=\"tempTarget\">Target: -</div>
+            __TEMPERATURE_TARGET_ACTION__
             <!-- gauge removed -->
           </div>
           <div class=\"card\"><div class=\"card-head\"><div class=\"label\"><span>💧</span> <span id=\"lblHum\">Humidity</span> <span id=\"humMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span><span id=\"humAlphaLed\" class=\"alpha-led alpha-led-off\"></span></div><div class=\"small\" id=\"humLastChange\">Last change: -</div></div><div class=\"value\" id=\"hum\">-</div><div class=\"small\" id=\"humRaw\">Raw: -</div><!-- gauge removed --></div>
-          <div class=\"card\">
+          <div class=\"card target-adjust-card\">
             <div class=\"card-head\">
               <div class=\"label\"><span>🫧</span> <span id=\"lblVpd\">VPD</span> <span id=\"vpdMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
               <div class=\"small\" id=\"vpdLastChange\">Last change: -</div>
             </div>
             <div class=\"value\" id=\"vpd\">-</div>
             <div class=\"small\" id=\"vpdTarget\">Target: -</div>
+            __VPD_TARGET_ACTION__
             <!-- gauge removed -->
           </div>
           <div class=\"card\">
@@ -10490,10 +10518,12 @@ def dashboard_page(request: Request):
               shellyFan: 'Fan',
               shellyExhaust: 'Exhaust',
               growPhase: 'Grow Phase',
-              hmacHint: 'The Adjust button can change selected grow values directly on the GrowTent controller. These write requests use HMAC (Hash-based Message Authentication Code): the backend and controller share a secret key used to sign every request. This lets the controller verify that the request is unchanged and comes from the authorized backend. HMAC does not encrypt the HTTP connection.',
+              hmacHint: 'Adjust and the target-temperature/VPD tile buttons can change selected grow values directly on the GrowTent controller. These write requests use HMAC (Hash-based Message Authentication Code): the backend and controller share a secret key used to sign every request. This lets the controller verify that the request is unchanged and comes from the authorized backend. HMAC does not encrypt the HTTP connection.',
               growProfileTitle: 'Grow profile',
               close: 'Close',
               editGrowProfile: 'Adjust',
+              editTemperatureTarget: 'Target temperature',
+              editVpdTarget: 'Target VPD',
               growLoadFailed: 'Failed to load controller state.',
               growNotConfigured: 'Backend Write API is not fully configured for this tent.',
               mainSwitchCost: 'Total Cost',
@@ -10668,10 +10698,12 @@ def dashboard_page(request: Request):
               shellyFan: 'Lüfter',
               shellyExhaust: 'Abluft',
               growPhase: 'Growphase',
-              hmacHint: 'Über „Anpassen“ können ausgewählte Grow-Werte direkt im GrowTent-Controller geändert werden. Diese Schreibzugriffe nutzen HMAC (Hash-based Message Authentication Code): Backend und Controller teilen einen geheimen Schlüssel, mit dem jede Anfrage signiert wird. So kann der Controller prüfen, dass die Anfrage unverändert und vom berechtigten Backend stammt. HMAC verschlüsselt die HTTP-Verbindung nicht.',
+              hmacHint: 'Über „Anpassen“, „Solltemperatur“ und „Soll-VPD“ können ausgewählte Grow-Werte direkt im GrowTent-Controller geändert werden. Diese Schreibzugriffe nutzen HMAC (Hash-based Message Authentication Code): Backend und Controller teilen einen geheimen Schlüssel, mit dem jede Anfrage signiert wird. So kann der Controller prüfen, dass die Anfrage unverändert und vom berechtigten Backend stammt. HMAC verschlüsselt die HTTP-Verbindung nicht.',
               growProfileTitle: 'Grow-Profil',
               close: 'Schließen',
               editGrowProfile: 'Anpassen',
+              editTemperatureTarget: 'Solltemperatur',
+              editVpdTarget: 'Soll-VPD',
               growLoadFailed: 'Controllerzustand konnte nicht geladen werden.',
               growNotConfigured: 'Die Backend Write API ist für dieses Zelt noch nicht vollständig konfiguriert.',
               mainSwitchCost: 'Gesamtkosten',
@@ -10798,17 +10830,23 @@ def dashboard_page(request: Request):
           }
 
           function syncGrowProfileAction(){
-            const btn = document.getElementById('openGrowProfileBtn');
-            if (!btn) return;
             const isAdmin = currentUserRole === 'admin';
             const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
             const visible = isAdmin && ready && currentEspOnline && currentStatusOk;
-            btn.style.display = visible ? 'inline-flex' : 'none';
-            btn.disabled = !visible;
-            btn.title = visible ? tr('editGrowProfile') : '';
+            for(const [id,key] of [['openGrowProfileBtn','editGrowProfile'],['editTemperatureTargetBtn','editTemperatureTarget'],['editVpdTargetBtn','editVpdTarget']]){
+              const btn=document.getElementById(id);
+              if(!btn) continue;
+              btn.style.display = visible ? 'inline-flex' : 'none';
+              btn.disabled = !visible;
+              btn.title = visible ? tr(key) : '';
+            }
           }
 
           let growProfileModalLastFocus = null;
+          let growProfileModalSection = 'profile';
+          function growProfileEditorTitle(){
+            return tr(growProfileModalSection==='temperature'?'editTemperatureTarget':growProfileModalSection==='vpd'?'editVpdTarget':'growProfileTitle');
+          }
 
           function closeGrowProfileModal(){
             const modal = document.getElementById('dbGrowProfileModal');
@@ -10824,7 +10862,9 @@ def dashboard_page(request: Request):
             loadLatest().catch(() => {});
           }
 
-          function openGrowProfilePage(){
+          function openGrowProfilePage(){ openGrowProfileEditor('profile'); }
+          function openGrowProfileEditor(section){
+            if(!['temperature','vpd','profile'].includes(section)) return;
             if (currentUserRole !== 'admin' || !currentTentId || !currentEspOnline || !currentStatusOk) return;
             const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
             if (!ready) return;
@@ -10832,19 +10872,24 @@ def dashboard_page(request: Request):
             const frame = document.getElementById('dbGrowProfileFrame');
             if (!modal || !frame) return;
             growProfileModalLastFocus = document.activeElement;
+            growProfileModalSection=section;
+            txt('dbGrowProfileTitle',growProfileEditorTitle());
+            frame.title=growProfileEditorTitle();
             const title = document.getElementById('dbGrowProfileTentName');
             if (title) title.textContent = currentTentMeta?.name || `#${currentTentId}`;
             modal.style.display = 'flex';
             modal.setAttribute('aria-hidden', 'false');
             document.body.style.overflow = 'hidden';
-            frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}`;
+            frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}&section=${encodeURIComponent(section)}`;
             document.getElementById('dbGrowProfileCloseBtn')?.focus();
           }
 
           function applyI18n(){
             txt('titleMain', tr('title'));
             txt('openGrowProfileBtn', tr('editGrowProfile'));
-            txt('dbGrowProfileTitle', tr('growProfileTitle'));
+            txt('editTemperatureTargetBtn',tr('editTemperatureTarget'));
+            txt('editVpdTargetBtn',tr('editVpdTarget'));
+            txt('dbGrowProfileTitle',growProfileEditorTitle());
             const closeGrowProfileBtn = document.getElementById('dbGrowProfileCloseBtn');
             if (closeGrowProfileBtn) {
               closeGrowProfileBtn.title = tr('close');
@@ -13899,6 +13944,8 @@ def dashboard_page(request: Request):
           if (growProfileBtnEl) {
             growProfileBtnEl.addEventListener('click', openGrowProfilePage);
           }
+          document.getElementById('editTemperatureTargetBtn')?.addEventListener('click',()=>openGrowProfileEditor('temperature'));
+          document.getElementById('editVpdTargetBtn')?.addEventListener('click',()=>openGrowProfileEditor('vpd'));
           document.getElementById('dbGrowProfileCloseBtn')?.addEventListener('click', closeGrowProfileModal);
           window.addEventListener('message', (event) => {
             const frame = document.getElementById('dbGrowProfileFrame');
@@ -14005,4 +14052,4 @@ def dashboard_page(request: Request):
         </script>
       </body>
     </html>
-    """.replace("__GROW_PROFILE_ACTION__", grow_profile_action).replace("__GROW_PROFILE_MODAL__", grow_profile_modal).replace("__HEAP_EXPORT_ACTION__", heap_export_action).replace("__FAVICON_LINKS__", FAVICON_LINKS)
+    """.replace("__TEMPERATURE_TARGET_ACTION__", temperature_target_action).replace("__VPD_TARGET_ACTION__", vpd_target_action).replace("__GROW_PROFILE_ACTION__", grow_profile_action).replace("__GROW_PROFILE_MODAL__", grow_profile_modal).replace("__HEAP_EXPORT_ACTION__", heap_export_action).replace("__FAVICON_LINKS__", FAVICON_LINKS)
