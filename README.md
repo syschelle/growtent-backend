@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.360
+ghcr.io/syschelle/growtent-backend-api:v0.361
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.360 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.360 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.361 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.361 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.360 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.361 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1078,12 +1078,12 @@ The dashboard displays the signed ESP-owned next-run time for both six- and eigh
 
 Signed plan confirmation and event/ACK errors are independent. Event warnings do not disable a confirmed plan; actual offline/authentication failures remain read-only and show diagnostics. Confirmation times are displayed in Europe/Berlin. Firmware v0.5.13 adds the same next-run date/time display to the ESP itself. See RELEASE_NOTES_v0.356.md.
 
-## Dashboard target editors (v0.360)
+## Dashboard target editors (v0.361)
 
-Administrators can edit target temperature and VPD directly from their measurement tiles. Each button opens a dialog for that target only; Adjust contains grow phase and dates. Controls require configured backend writes and an available controller/status. The existing HMAC Grow Profile path remains in use. See [RELEASE_NOTES_v0.360.md](RELEASE_NOTES_v0.360.md).
+Administrators can edit target temperature and VPD directly from their measurement tiles. Each button opens a dialog for that target only; Adjust contains grow phase and dates. Controls require configured backend writes and an available controller/status. The existing HMAC Grow Profile path remains in use. See [RELEASE_NOTES_v0.361.md](RELEASE_NOTES_v0.361.md).
 
-In v0.360 both target tile buttons read **ändern** (German) or **change** (English); their dialogs keep the specific target name.
+In v0.361 both target tile buttons read **ändern** (German) or **change** (English); their dialogs keep the specific target name.
 
-Target-only dialogs use a compact 280 px maximum width in v0.360; the phase/date editor remains larger. Current VPD is displayed with two decimal places.
+Target-only dialogs use a compact 280 px maximum width in v0.361; the phase/date editor remains larger. Current VPD is displayed with two decimal places.
 
-Target dialogs now reveal their card only after the embedded editor has loaded and reported its content height, preventing the initial resize flash. A compact loading indicator can be closed while waiting.
+Target-temperature and VPD editors now use small native dialogs directly in the dashboard, without an editor iframe, opening loader or height adjustment. The current tent’s existing target value is used immediately; a missing value is read once from the protected profile endpoint. Save still uses the existing backend/HMAC path.

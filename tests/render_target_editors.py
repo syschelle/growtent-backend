@@ -37,13 +37,15 @@ class StaticHTML(HTMLParser):
 def fixtures():
     admin=_render_functions('admin');guest=_render_functions('guest')
     dashboard=admin['dashboard_page'](_request());scripts='\n'.join(InlineScripts(dashboard).scripts)
-    start=scripts.index('          function syncGrowProfileAction(){')
+    start=scripts.index('          // Native target dialogs:')
     end=scripts.index('          function applyI18n(){', start)
     bindings_start=scripts.index("          const growProfileBtnEl = document.getElementById('openGrowProfileBtn');")
     bindings_end=scripts.index('          // Diagnostic export:',bindings_start)
     guest_html=guest['dashboard_page'](_request())
     label_start=scripts.index("            txt('editTemperatureTargetBtn',")
     label_end=scripts.index("            const closeGrowProfileBtn",label_start)
-    return dict(labels_js=scripts[label_start:label_end],dashboard=dashboard,dashboard_static=''.join(StaticHTML(dashboard).parts),guest_static=''.join(StaticHTML(guest_html).parts),guest=guest_html,editor=admin['grow_profile_page'](_request()),modal_js=scripts[start:end],bindings_js=scripts[bindings_start:bindings_end])
+    i18n_start=scripts.index('          const I18N = {')
+    i18n_end=scripts.index('          let currentLang',i18n_start)
+    return dict(i18n_js=scripts[i18n_start:i18n_end],labels_js=scripts[label_start:label_end],dashboard=dashboard,dashboard_static=''.join(StaticHTML(dashboard).parts),guest_static=''.join(StaticHTML(guest_html).parts),guest=guest_html,editor=admin['grow_profile_page'](_request()),modal_js=scripts[start:end],bindings_js=scripts[bindings_start:bindings_end])
 
 if __name__=='__main__':Path(sys.argv[1]).write_text(json.dumps(fixtures()),encoding='utf-8')

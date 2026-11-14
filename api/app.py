@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.360"
+APP_VERSION = "v0.361"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9752,6 +9752,15 @@ def dashboard_page(request: Request):
             <iframe id="dbGrowProfileFrame" title="Grow profile" src="about:blank"></iframe>
           </div>
         </div>
+        <dialog id="dbTargetDialog" class="target-dialog" aria-labelledby="dbTargetTitle">
+          <form id="dbTargetForm" novalidate>
+            <h2 id="dbTargetTitle">Target</h2>
+            <div class="target-dialog-current"><span id="dbTargetCurrentLabel">Current:</span> <strong id="dbTargetCurrent">—</strong> <span id="dbTargetUnit"></span></div>
+            <label class="target-dialog-field" for="dbTargetInput"><span id="dbTargetInputLabel">New value</span><input id="dbTargetInput" type="number" inputmode="decimal" required></label>
+            <p id="dbTargetStatus" role="status" aria-live="polite"></p>
+            <div class="target-dialog-actions"><button id="dbTargetCancel" type="button">Cancel</button><button id="dbTargetSave" type="submit" disabled>Save</button></div>
+          </form>
+        </dialog>
     ''' if is_admin else ''
     heap_export_action = '<button id="heapExportBtn" type="button">Download 24h CSV</button>' if is_admin else ''
     return """
@@ -10044,7 +10053,20 @@ def dashboard_page(request: Request):
             .grow-profile-modal-card { width:min(560px,100%); height:auto; max-height:calc(100dvh - 12px); padding:9px; }
             #dbGrowProfileFrame { max-height:calc(100dvh - 88px); }
           }
-          .grow-profile-modal.target-editor .grow-profile-modal-card { box-sizing:border-box; min-width:0; width:min(280px,100%); }
+          .target-dialog { box-sizing:border-box; width:min(280px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; margin:auto; padding:12px; border:1px solid var(--grid); border-radius:12px; background:var(--card); color:var(--text); }
+          .target-dialog::backdrop { background:rgba(2,6,23,.72); }
+          .target-dialog form { display:grid; gap:10px; margin:0; }
+          .target-dialog h2 { margin:0; font-size:1.1rem; }
+          .target-dialog-current { font-size:.85rem; }
+          .target-dialog-field { display:grid; gap:5px; font-size:.85rem; }
+          .target-dialog input { box-sizing:border-box; width:100%; min-width:0; min-height:38px; padding:7px 9px; border:1px solid var(--grid); border-radius:8px; background:var(--bg); color:var(--text); font-size:1rem; }
+          #dbTargetStatus { margin:0; font-size:.85rem; overflow-wrap:anywhere; }
+          #dbTargetStatus:empty { display:none; }
+          #dbTargetStatus.error { color:#ef4444; }
+          #dbTargetStatus.success { color:#22c55e; }
+          .target-dialog-actions { display:flex; gap:8px; }
+          .target-dialog-actions button { flex:1 1 0; min-width:0; width:auto; min-height:36px; padding:6px 9px; font-size:.85rem; }
+          .target-dialog button:disabled { opacity:.55; cursor:not-allowed; }
           /* Current value colors aligned with history line colors */
           #temp { color:#22d3ee; }
           #hum { color:#a78bfa; }
@@ -10538,6 +10560,14 @@ def dashboard_page(request: Request):
               editGrowProfile: 'Adjust',
               growProfileLoading: 'Loading…',
               growProfileLoadError: 'Editor could not be loaded.',
+              targetCurrent: "Current",
+              targetSave: "Save",
+              targetSaving: "Saving…",
+              targetSaved: "Saved and confirmed by the controller.",
+              targetUnavailable: "The controller is not available for editing.",
+              targetNotConfirmed: "The controller did not confirm this value.",
+              targetInvalidTemperature: "Use 18–30 °C in 0.5 °C steps.",
+              targetInvalidVpd: "Use 0.5–3.5 kPa in 0.1 kPa steps.",
               changeTarget: 'change',
               editTemperatureTarget: 'Target temperature',
               editVpdTarget: 'Target VPD',
@@ -10721,6 +10751,14 @@ def dashboard_page(request: Request):
               editGrowProfile: 'Anpassen',
               growProfileLoading: 'Wird geladen…',
               growProfileLoadError: 'Editor konnte nicht geladen werden.',
+              targetCurrent: "Aktuell",
+              targetSave: "Speichern",
+              targetSaving: "Wird gespeichert…",
+              targetSaved: "Gespeichert und vom Controller bestätigt.",
+              targetUnavailable: "Der Controller ist derzeit nicht zum Ändern verfügbar.",
+              targetNotConfirmed: "Der Controller hat diesen Wert nicht bestätigt.",
+              targetInvalidTemperature: "18–30 °C in 0,5-°C-Schritten einstellen.",
+              targetInvalidVpd: "0,5–3,5 kPa in 0,1-kPa-Schritten einstellen.",
               changeTarget: 'ändern',
               editTemperatureTarget: 'Solltemperatur',
               editVpdTarget: 'Soll-VPD',
@@ -10849,6 +10887,112 @@ def dashboard_page(request: Request):
             badge.setAttribute('aria-hidden', configured ? 'false' : 'true');
           }
 
+          // Native target dialogs: no iframe, content-height messaging or opening loader.
+          let targetSnapshot={tentId:0};
+          let targetDialogContext=null;
+          function targetNumber(value){
+            if(!['number','string'].includes(typeof value)||String(value).trim()==='')return null;
+            const n=Number(value);return Number.isFinite(n)?n:null;
+          }
+          function cacheTargetValuesFromPayload(tentId,data){
+            if(Number(tentId)!==Number(currentTentId))return;
+            const first=keys=>{for(const key of keys){const n=targetNumber(data?.[key]);if(n!==null)return n;}return null;};
+            targetSnapshot={tentId:Number(tentId),
+              targetTemperature:first(['settings.grow.targetTemperature','settings.targetTemperature','target.targetTempC']),
+              targetVPD:first(['settings.grow.targetVPD','settings.targetVPD','target.targetVpdKpa'])};
+          }
+          function targetSpec(section){
+            if(section==='temperature')return {field:'targetTemperature',min:18,max:30,step:0.5,decimals:1,unit:'°C',label:'editTemperatureTarget',invalid:'targetInvalidTemperature'};
+            if(section==='vpd')return {field:'targetVPD',min:0.5,max:3.5,step:0.1,decimals:2,unit:'kPa',label:'editVpdTarget',invalid:'targetInvalidVpd'};
+            return null;
+          }
+          function canEditTarget(tentId){
+            return currentUserRole==='admin'&&Number(tentId)===Number(currentTentId)&&currentEspOnline&&currentStatusOk&&
+              !!(currentTentMeta?.backend_write_enabled&&currentTentMeta?.backend_controller_url&&currentTentMeta?.has_backend_hmac_secret);
+          }
+          function targetDialogActive(ctx){return targetDialogContext===ctx&&document.getElementById('dbTargetDialog')?.open&&Number(currentTentId)===ctx.tentId;}
+          function targetStatus(message='',kind=''){
+            const el=document.getElementById('dbTargetStatus');if(el){el.textContent=message;el.className=kind;}
+          }
+          function targetError(body,fallback){const d=body?.detail;return typeof d==='string'?d:(d?.message||body?.error||fallback);}
+          function targetValueValid(ctx,value){const units=(value-ctx.spec.min)/ctx.spec.step;return Number.isFinite(value)&&value>=ctx.spec.min&&value<=ctx.spec.max&&Math.abs(units-Math.round(units))<1e-9;}
+          function syncTargetDialogActions(){
+            const ctx=targetDialogContext;if(!ctx)return;
+            const input=document.getElementById('dbTargetInput'),raw=input.value,value=Number(raw);
+            document.getElementById('dbTargetSave').disabled=ctx.busy||!ctx.loaded||!canEditTarget(ctx.tentId)||raw===''||value===ctx.current||!targetValueValid(ctx,value);
+            input.disabled=ctx.busy;
+            txt('dbTargetCancel',tr(ctx.saved?'close':'cancel'));
+          }
+          function renderTargetDialog(){
+            const ctx=targetDialogContext;if(!ctx)return;
+            txt('dbTargetTitle',tr(ctx.spec.label));txt('dbTargetInputLabel',`${tr(ctx.spec.label)} (${ctx.spec.unit})`);
+            txt('dbTargetCurrentLabel',tr('targetCurrent')+':');txt('dbTargetUnit',ctx.spec.unit);
+            txt('dbTargetCurrent',ctx.current===null?'—':ctx.current.toFixed(ctx.spec.decimals));
+            txt('dbTargetSave',tr('targetSave'));syncTargetDialogActions();
+          }
+          function closeTargetDialog(){
+            const dialog=document.getElementById('dbTargetDialog'),ctx=targetDialogContext;
+            targetDialogContext=null;
+            if(dialog?.open)dialog.close();
+            if(!ctx)return;
+            document.body.style.overflow=ctx.previousOverflow;
+            if(ctx.busy)targetSnapshot={tentId:0};
+            if(ctx.focus?.isConnected)ctx.focus.focus();
+            if(ctx.tentId===Number(currentTentId))loadLatest().catch(()=>{});
+          }
+          async function readTargetDialog(ctx){
+            try{
+              const res=await fetch(`/tents/${ctx.tentId}/grow-profile`,{cache:'no-store'}),body=await res.json().catch(()=>({}));
+              if(!res.ok)throw new Error(targetError(body,tr('growLoadFailed')));
+              if(!targetDialogActive(ctx))return;
+              const value=targetNumber((body?.state?.runtime||body?.state?.stored||{})[ctx.spec.field]);
+              if(value===null)throw new Error(tr('growLoadFailed'));
+              ctx.current=value;ctx.loaded=true;
+              targetSnapshot={...(targetSnapshot.tentId===ctx.tentId?targetSnapshot:{}),tentId:ctx.tentId,[ctx.spec.field]:value};
+              if(!ctx.dirty)document.getElementById('dbTargetInput').value=String(value);
+              renderTargetDialog();
+            }catch(error){if(targetDialogActive(ctx)){targetStatus(error.message,'error');syncTargetDialogActions();}}
+          }
+          function openTargetDialog(section){
+            const spec=targetSpec(section),dialog=document.getElementById('dbTargetDialog');
+            if(!spec||!dialog||!canEditTarget(currentTentId))return;
+            if(dialog.open)closeTargetDialog();
+            const value=targetSnapshot.tentId===Number(currentTentId)?targetNumber(targetSnapshot[spec.field]):null;
+            const ctx={tentId:Number(currentTentId),spec,current:value,loaded:value!==null,dirty:false,busy:false,saved:false,focus:document.activeElement,previousOverflow:document.body.style.overflow};
+            targetDialogContext=ctx;
+            const input=document.getElementById('dbTargetInput');
+            input.min=String(spec.min);input.max=String(spec.max);input.step=String(spec.step);input.value=value===null?'':String(value);
+            targetStatus();renderTargetDialog();dialog.showModal();document.body.style.overflow='hidden';input.focus();input.select();
+            if(!ctx.loaded)readTargetDialog(ctx);
+          }
+          async function saveTargetDialog(event){
+            event.preventDefault();const ctx=targetDialogContext,input=document.getElementById('dbTargetInput');
+            if(!ctx||ctx.busy||!ctx.loaded)return;
+            if(!canEditTarget(ctx.tentId)){targetStatus(tr('targetUnavailable'),'error');syncTargetDialogActions();return;}
+            const value=Number(input.value);
+            if(input.value===''||!targetValueValid(ctx,value)){targetStatus(tr(ctx.spec.invalid),'error');return;}
+            if(value===ctx.current)return;
+            ctx.busy=true;targetStatus(tr('targetSaving'));syncTargetDialogActions();
+            try{
+              const res=await fetch(`/tents/${ctx.tentId}/grow-profile`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({[ctx.spec.field]:value})});
+              const body=await res.json().catch(()=>({}));
+              if(!res.ok)throw new Error(targetError(body,tr('targetNotConfirmed')));
+              const confirmed=targetNumber((body?.state?.runtime||body?.state?.stored||{})[ctx.spec.field]);
+              if(body?.verified!==true||confirmed===null||Math.abs(confirmed-value)>1e-6)throw new Error(tr('targetNotConfirmed'));
+              if(!targetDialogActive(ctx))return;
+              ctx.current=confirmed;ctx.saved=true;ctx.dirty=false;input.value=String(confirmed);
+              targetSnapshot={...(targetSnapshot.tentId===ctx.tentId?targetSnapshot:{}),tentId:ctx.tentId,[ctx.spec.field]:confirmed};
+              renderTargetDialog();targetStatus(tr('targetSaved'),'success');
+            }catch(error){if(targetDialogActive(ctx))targetStatus(error.message,'error');}
+            finally{if(targetDialogActive(ctx)){ctx.busy=false;syncTargetDialogActions();}}
+          }
+          document.getElementById('dbTargetForm')?.addEventListener('submit',saveTargetDialog);
+          document.getElementById('dbTargetInput')?.addEventListener('input',()=>{const ctx=targetDialogContext;if(!ctx)return;ctx.dirty=true;ctx.saved=false;targetStatus();syncTargetDialogActions();});
+          document.getElementById('dbTargetCancel')?.addEventListener('click',closeTargetDialog);
+          document.getElementById('dbTargetDialog')?.addEventListener('cancel',event=>{event.preventDefault();closeTargetDialog();});
+          document.getElementById('dbTargetDialog')?.addEventListener('close',()=>{if(targetDialogContext&&!document.getElementById('dbTargetDialog').open)closeTargetDialog();});
+          document.getElementById('dbTargetDialog')?.addEventListener('click',event=>{if(event.target!==event.currentTarget)return;const r=event.currentTarget.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)closeTargetDialog();});
+
           function syncGrowProfileAction(){
             const isAdmin = currentUserRole === 'admin';
             const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
@@ -10860,6 +11004,7 @@ def dashboard_page(request: Request):
               btn.disabled = !visible;
               btn.title = visible ? tr(key) : '';
             }
+            syncTargetDialogActions();
           }
 
           let growProfileModalLastFocus = null;
@@ -10888,6 +11033,7 @@ def dashboard_page(request: Request):
 
           function openGrowProfilePage(){ openGrowProfileEditor('profile'); }
           function openGrowProfileEditor(section){
+            if(section==='temperature'||section==='vpd'){openTargetDialog(section);return;}
             if(!['temperature','vpd','profile'].includes(section)) return;
             if (currentUserRole !== 'admin' || !currentTentId || !currentEspOnline || !currentStatusOk) return;
             const ready = !!(currentTentMeta?.backend_write_enabled && currentTentMeta?.backend_controller_url && currentTentMeta?.has_backend_hmac_secret);
@@ -10920,6 +11066,7 @@ def dashboard_page(request: Request):
             txt('editTemperatureTargetBtn',tr('changeTarget'));
             txt('editVpdTargetBtn',tr('changeTarget'));
             txt('dbGrowProfileTitle',growProfileEditorTitle());
+            renderTargetDialog();
             txt('dbGrowProfileLoadingText',tr('growProfileLoading'));
             const loadingClose=document.getElementById('dbGrowProfileLoadingCloseBtn');
             if(loadingClose){loadingClose.title=tr('close');loadingClose.setAttribute('aria-label',tr('close'));}
@@ -13285,7 +13432,8 @@ def dashboard_page(request: Request):
           }
 
           async function loadLatest(){
-            const r = await fetch(`/tents/${currentTentId}/latest`, { cache:'no-store' });
+            const requestedTentId=currentTentId;
+            const r = await fetch(`/tents/${requestedTentId}/latest`, { cache:'no-store' });
             const j = await r.json();
             let d = j.latest || {};
             if (!shellyMainDirectTs && j?.captured_at) shellyMainDirectTs = j.captured_at;
@@ -13413,6 +13561,7 @@ def dashboard_page(request: Request):
             txt('tempTarget', `${tr('target')}: ${fmtNum(tgtTemp, 1)} ${tempUnitLabel}`);
 
             const tgtVpd = firstNum(d, ['settings.grow.targetVPD', 'settings.targetVPD', 'target.targetVpdKpa']);
+            cacheTargetValuesFromPayload(requestedTentId,j.latest||{});
             targetVpdChart = Number.isFinite(Number(tgtVpd)) ? Number(tgtVpd) : NaN;
             const leafOffset = firstNum(d, ['settings.grow.offsetLeafTemperature']);
             const leafOffsetTxt = Number.isFinite(Number(leafOffset)) ? `${Number(leafOffset).toFixed(2)}°C` : '-';
