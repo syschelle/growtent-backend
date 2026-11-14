@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.359
+
+- Use ändern/change for both target tile buttons, halve target-dialog desktop width to 280 px and show current VPD with two decimals. Specific titles and write behavior are retained.
+
+
 ## v0.358
 
 - Add scoped target-temperature and target-VPD editors to dashboard tiles; keep phase/dates in Adjust. Preserve administrator/HMAC requirements and existing confirmation behavior.

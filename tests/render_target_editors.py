@@ -42,6 +42,8 @@ def fixtures():
     bindings_start=scripts.index("          const growProfileBtnEl = document.getElementById('openGrowProfileBtn');")
     bindings_end=scripts.index('          // Diagnostic export:',bindings_start)
     guest_html=guest['dashboard_page'](_request())
-    return dict(dashboard=dashboard,dashboard_static=''.join(StaticHTML(dashboard).parts),guest_static=''.join(StaticHTML(guest_html).parts),guest=guest_html,editor=admin['grow_profile_page'](_request()),modal_js=scripts[start:end],bindings_js=scripts[bindings_start:bindings_end])
+    label_start=scripts.index("            txt('editTemperatureTargetBtn',")
+    label_end=scripts.index("            const closeGrowProfileBtn",label_start)
+    return dict(labels_js=scripts[label_start:label_end],dashboard=dashboard,dashboard_static=''.join(StaticHTML(dashboard).parts),guest_static=''.join(StaticHTML(guest_html).parts),guest=guest_html,editor=admin['grow_profile_page'](_request()),modal_js=scripts[start:end],bindings_js=scripts[bindings_start:bindings_end])
 
 if __name__=='__main__':Path(sys.argv[1]).write_text(json.dumps(fixtures()),encoding='utf-8')
