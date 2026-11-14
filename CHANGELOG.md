@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.364
+
+- Use the ESP regulation VPD consistently for ingestion, live display, histories and exports; retain gaps and exclude missing data from statistics without backend recalculation or historical rewrites.
+
 ## v0.363
 
 - Move Adjust beside the current phase and replace the iframe editor with a compact native phase/date dialog, retaining verified partial HMAC writes and explicit date deletion.

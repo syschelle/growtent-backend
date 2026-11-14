@@ -33,6 +33,7 @@ jobs:
       - run: python -m pip install -r api/requirements.txt pytest
       - run: python -m compileall -q api
       - run: python -m pytest -q
+      - run: node tests/test_vpd_ui.mjs
 
   target-editor-ui:
     runs-on: ubuntu-latest

@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.363
+ghcr.io/syschelle/growtent-backend-api:v0.364
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.363 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.363 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.364 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.364 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.363 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.364 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1089,3 +1089,9 @@ Target-only dialogs use a compact 280 px maximum width in v0.363; the native pha
 Target-temperature and VPD editors now use small native dialogs directly in the dashboard, without an editor iframe, opening loader or height adjustment. The current tent’s existing target value is used immediately; a missing value is read once from the protected profile endpoint. Save still uses the existing backend/HMAC path.
 
 VPD target edits use 0.01 kPa steps and two displayed decimal places in v0.363 (for example 1.17 or 1.20). Numeric API payloads and the 0.50–3.50 kPa range are unchanged.
+
+## ESP-owned VPD channel (v0.364)
+
+The VPD tile, camera-popup metric, VPD history curve, average/min/max and history exports use `sensors.cur.vpdKpa`, the ESP regulation channel. The backend does not recalculate or smooth VPD from temperature/humidity and does not substitute raw, legacy/current aliases or older samples. Missing/invalid values and explicit climate-invalid/stale flags produce null and a chart gap rather than zero. `sensors.smoothed.vpdKpa` and export `vpd_smoothed` remain compatibility aliases of the control value. Raw VPD stays a separate diagnostic field; the VPD chart keeps its existing single VPD curve, average and target labels. No ESP update is required, and Adaptive Climate Smoothing, targets and hysteresis are unchanged.
+
+Stored history JSON is not rewritten. Read projections prefer the existing stored current channel, so old charts can change to that channel rather than the formerly preferred backend calculation. If an older backend already synthesized a missing current value before storing it, its original ESP provenance cannot be reconstructed automatically; no historical backfill is attempted. `backend.vpd.source` describes the selected channel (`esp_current` or `unavailable`), not cryptographic provenance. Temperature/humidity continuity behavior remains unchanged.

@@ -37,3 +37,7 @@ Client VPD editing uses hundredths within the existing allowed range. Formatting
 ## v0.363 native phase/date dialog
 
 Moving Adjust into the Grow Phase tile and replacing its iframe does not change authorization. The native dialog is rendered only for administrator sessions and requires configured writes plus an online/OK controller. It sends only modified phase/date fields through the existing protected endpoint. Existing dates require explicit Delete; deletion sends JSON null. Success requires verified controller state matching every requested change. Failed reads, unverified responses and stale/tent-switched dialogs cannot enable or confirm writes. No HMAC secrets are sent to the browser.
+
+## v0.364 ESP VPD channel integrity
+
+Only the ESP current VPD channel supplies live/control/history VPD. Missing, nonfinite, boolean, negative and explicitly invalid/stale climate inputs cannot be replaced by a calculation, raw channel or cached prior VPD. Existing backend exhaust control performs no network action without a valid control VPD. New normalization copies payloads and preserves stored history; it does not establish cryptographic measurement provenance. No authentication/HMAC, firmware, target or hysteresis change is introduced.
