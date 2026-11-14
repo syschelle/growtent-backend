@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.362
+
+- Edit VPD in 0.01 kPa steps and retain two displayed decimal places without accidental writes caused by formatting.
+
+
 ## v0.361
 
 - Replace target iframe editors with direct native dashboard forms, retaining scoped verified HMAC writes and the existing phase/date editor.

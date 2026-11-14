@@ -48,7 +48,7 @@ def test_date_deletion_is_explicit_reversible_and_not_sent_immediately():
 def test_validation_and_failed_write_keep_the_pending_changes():
     page = _page()
     assert 'matchesStep(temp,0.5,18)' in page
-    assert 'matchesStep(vpd,0.1,0.5)' in page
+    assert 'matchesStep(vpd,0.01,0.5)' in page
     assert 'if(!res.ok) throw new Error' in page
     assert "}catch(err){ setStatus(err?.message||'Error','err'); }" in page
     assert 'finally{ setBusy(false); }' in page

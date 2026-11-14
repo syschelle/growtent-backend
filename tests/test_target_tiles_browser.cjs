@@ -79,20 +79,31 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   await page.locator('#dbTargetCancel').click();assert.equal(await page.evaluate(()=>document.activeElement.id),'editTemperatureTargetBtn');
   await page.locator('#editVpdTargetBtn').click();
   assert.equal(await page.locator('#dbTargetTitle').innerText(),lang==='de'?'Soll-VPD':'Target VPD');assert.equal(await page.locator('#dbTargetCurrent').innerText(),'1.17');
+  assert.equal(await page.locator('#dbTargetInput').getAttribute('step'),'0.01');
   assert.equal(await page.locator('#dbTargetDialog iframe').count(),0);assert.equal(profileReads,readsBefore);
-  await page.locator('#dbTargetInput').fill('1.25');assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);
+  await page.locator('#dbTargetInput').fill('1.251');assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);
   reject=true;await page.locator('#dbTargetInput').fill('1.2');await page.locator('#dbTargetSave').click();await page.locator('#dbTargetStatus.error').waitFor();
-  assert.deepEqual(patches.at(-1),{targetVPD:1.2});assert.equal(await page.locator('#dbTargetInput').inputValue(),'1.2');assert.equal(await page.locator('#dbTargetSave').isEnabled(),true);reject=false;
+  assert.deepEqual(patches.at(-1),{targetVPD:1.2});assert.equal(await page.locator('#dbTargetInput').inputValue(),'1.20');assert.equal(await page.locator('#dbTargetSave').isEnabled(),true);reject=false;
   await page.locator('#dbTargetDialog').screenshot({path:`layout-previews/vpd-editor-${lang}.png`});
   await page.keyboard.press('Escape');assert.equal(await page.locator('#dbTargetDialog').evaluate(el=>el.open),false);
  }
+ // VPD hundredths, trailing zeros, spinner steps and API numeric precision.
+ await page.locator('#editVpdTargetBtn').click();
+ await page.locator('#dbTargetInput').evaluate(el=>{el.stepUp();el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));});
+ assert.equal(await page.locator('#dbTargetInput').inputValue(),'1.18');assert.equal(await page.locator('#dbTargetSave').isEnabled(),true);
+ await page.locator('#dbTargetSave').click();await page.locator('#dbTargetStatus.success').waitFor();assert.deepEqual(patches.at(-1),{targetVPD:1.18});
+ await page.locator('#dbTargetInput').fill('1.2');await page.locator('#dbTargetInput').blur();assert.equal(await page.locator('#dbTargetInput').inputValue(),'1.20');
+ await page.locator('#dbTargetSave').click();await page.locator('#dbTargetStatus.success').waitFor();assert.equal(await page.locator('#dbTargetCurrent').innerText(),'1.20');assert.equal(await page.locator('#dbTargetInput').inputValue(),'1.20');assert.deepEqual(patches.at(-1),{targetVPD:1.2});
+ await page.locator('#dbTargetCancel').click();await page.locator('#editVpdTargetBtn').click();assert.equal(await page.locator('#dbTargetInput').inputValue(),'1.20');assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);await page.locator('#dbTargetCancel').click();
+ // Display formatting must not mark an untouched higher-precision snapshot as changed.
+ await page.evaluate(()=>setTargetSnapshot(24,1.175));await page.locator('#editVpdTargetBtn').click();assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);await page.locator('#dbTargetCancel').click();await page.evaluate(()=>setTargetSnapshot(24,1.2));
  // HTTP 200 without controller verification must not be displayed as success.
  await page.locator('#editTemperatureTargetBtn').click();unverified=true;await page.locator('#dbTargetInput').fill('24.5');await page.locator('#dbTargetSave').click();await page.locator('#dbTargetStatus.error').waitFor();
  assert.equal(await page.locator('#dbTargetCurrent').innerText(),'24.0');unverified=false;await page.locator('#dbTargetCancel').click();
  // Cold-cache fallback is a single read inside the already-open native dialog.
  await page.evaluate(()=>setTargetSnapshot(null,null));const beforeCold=profileReads;
  await page.locator('#editVpdTargetBtn').click();const initial=await page.locator('#dbTargetDialog').boundingBox();
- assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);await page.waitForFunction(()=>document.getElementById('dbTargetInput').value==='1.17');
+ assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);await page.waitForFunction(()=>document.getElementById('dbTargetInput').value==='1.20');
  assert.equal(profileReads,beforeCold+1);const ready=await page.locator('#dbTargetDialog').boundingBox();assert.ok(Math.abs(initial.width-ready.width)<1&&Math.abs(initial.height-ready.height)<2,'No opening resize');
  await page.locator('#dbTargetCancel').click();
  // A delayed read from a cancelled dialog cannot overwrite the next dialog.

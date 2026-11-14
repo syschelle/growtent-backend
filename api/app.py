@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.361"
+APP_VERSION = "v0.362"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9107,7 +9107,7 @@ def grow_profile_page(request: Request):
               <div class="label" id="vpdLabel">Soll-VPD</div>
               <div class="current"><span id="currentLabelVpd">Aktuell:</span> <strong id="vpdCurrent">-</strong> kPa</div>
               <div class="edit-row">
-                <input id="vpdInput" type="number" min="0.5" max="3.5" step="0.1" inputmode="decimal" />
+                <input id="vpdInput" type="number" min="0.5" max="3.5" step="0.01" inputmode="decimal" />
               </div>
             </section>
 
@@ -9193,14 +9193,14 @@ def grow_profile_page(request: Request):
               title:'Grow-Profil', back:'← Dashboard', current:'Aktuell:', temp:'Solltemperatur', vpd:'Soll-VPD', phase:'Phase', flower:'Blütestart', dry:'Trocknungsstart',
               save:'Änderungen speichern', del:'Löschen', undo:'Rückgängig', noChanges:'Keine Änderungen', changeCount:'Änderungen:', deleteMarked:'Zum Löschen vorgemerkt – erst beim Speichern wird der Wert gelöscht.', dateDeleteExplicit:'Ein vorhandenes Datum nur über „Löschen“ entfernen.', loading:'Werte werden geladen …', loaded:'', sending:'Wird gesendet …', saved:'Gespeichert und vom Controller bestätigt.',
               denied:'Nur Administratoren dürfen Grow-Einstellungen ändern.', notReady:'Die Backend Write API ist für dieses Zelt noch nicht vollständig eingerichtet. Bitte zuerst unter Setup die Controller-Adresse und das HMAC-Secret konfigurieren.',
-              chooseDate:'Bitte zuerst ein Datum auswählen.', invalidValue:'Bitte einen gültigen Wert eingeben.', invalidTempStep:'Solltemperatur nur in 0,5-°C-Schritten von 18,0 bis 30,0 °C einstellen.', invalidVpdStep:'Soll-VPD nur in 0,1-kPa-Schritten von 0,5 bis 3,5 kPa einstellen.', deleteConfirm:'Diesen Datumswert wirklich löschen?',
+              chooseDate:'Bitte zuerst ein Datum auswählen.', invalidValue:'Bitte einen gültigen Wert eingeben.', invalidTempStep:'Solltemperatur nur in 0,5-°C-Schritten von 18,0 bis 30,0 °C einstellen.', invalidVpdStep:'Soll-VPD nur in 0,01-kPa-Schritten von 0,5 bis 3,5 kPa einstellen.', deleteConfirm:'Diesen Datumswert wirklich löschen?',
               p1:'Wachstum', p2:'Blüte', p3:'Trocknung', loadFailed:'Werte konnten nicht geladen werden.'
             },
             en: {
               title:'Grow profile', back:'← Dashboard', current:'Current:', temp:'Target temperature', vpd:'Target VPD', phase:'Phase', flower:'Flowering start', dry:'Drying start',
               save:'Save changes', del:'Delete', undo:'Undo', noChanges:'No changes', changeCount:'Changes:', deleteMarked:'Marked for deletion – the value is only deleted when you save.', dateDeleteExplicit:'Use Delete to remove an existing date.', loading:'Loading values …', loaded:'', sending:'Sending …', saved:'Saved and confirmed by the controller.',
               denied:'Only administrators may change grow settings.', notReady:'The Backend Write API is not fully configured for this tent. Configure the controller address and HMAC secret in Setup first.',
-              chooseDate:'Select a date first.', invalidValue:'Enter a valid value.', invalidTempStep:'Set target temperature only in 0.5 °C steps from 18.0 to 30.0 °C.', invalidVpdStep:'Set target VPD only in 0.1 kPa steps from 0.5 to 3.5 kPa.', deleteConfirm:'Delete this date value?',
+              chooseDate:'Select a date first.', invalidValue:'Enter a valid value.', invalidTempStep:'Set target temperature only in 0.5 °C steps from 18.0 to 30.0 °C.', invalidVpdStep:'Set target VPD only in 0.01 kPa steps from 0.5 to 3.5 kPa.', deleteConfirm:'Delete this date value?',
               p1:'Vegetative', p2:'Flowering', p3:'Drying', loadFailed:'Values could not be loaded.'
             }
           }[lang];
@@ -9232,6 +9232,7 @@ def grow_profile_page(request: Request):
           }
           let busy=false;
           let profileLoaded=false;
+          let vpdDirty=false;
           const pendingDeletes=new Set();
           const dateInputs={floweringStart:'flowerInput',dryingStart:'dryInput'};
           const dateButtons={floweringStart:'flowerDelete',dryingStart:'dryDelete'};
@@ -9254,10 +9255,10 @@ def grow_profile_page(request: Request):
           function fill(state){
             original={...(state||{})};
             pendingDeletes.clear();
-            profileLoaded=true;
+            profileLoaded=true;vpdDirty=false;
             const temp=Number(state?.targetTemperature), vpd=Number(state?.targetVPD), phase=Number(state?.currentPhase||1);
             setText('tempCurrent',Number.isFinite(temp)?temp.toFixed(1):'-'); $('tempInput').value=Number.isFinite(temp)?temp:'';
-            setText('vpdCurrent',Number.isFinite(vpd)?vpd.toFixed(2):'-'); $('vpdInput').value=Number.isFinite(vpd)?vpd:'';
+            setText('vpdCurrent',Number.isFinite(vpd)?vpd.toFixed(2):'-'); $('vpdInput').value=Number.isFinite(vpd)?vpd.toFixed(2):'';
             setText('phaseCurrent',phaseText(phase)); $('phaseInput').value=String([1,2,3].includes(phase)?phase:1);
             setText('flowerCurrent',formatDate(state?.floweringStart)); $('flowerInput').value=state?.floweringStart||'';
             setText('dryCurrent',formatDate(state?.dryingStart)); $('dryInput').value=state?.dryingStart||'';
@@ -9297,10 +9298,12 @@ def grow_profile_page(request: Request):
             const vpdRaw=$('vpdInput').value;
             if(vpdRaw==='') return {patch,error:T.invalidValue};
             const vpd=Number(vpdRaw);
+            if(vpdDirty){
             if(vpd!==Number(original.targetVPD)){
-              if(!Number.isFinite(vpd)||vpd<0.5||vpd>3.5||!matchesStep(vpd,0.1,0.5))
+              if(!Number.isFinite(vpd)||vpd<0.5||vpd>3.5||!matchesStep(vpd,0.01,0.5))
                 return {patch,error:T.invalidVpdStep};
               patch.targetVPD=vpd;
+            }
             }
             }
             if(allowsField('currentPhase')){
@@ -9346,6 +9349,7 @@ def grow_profile_page(request: Request):
           }
           document.querySelectorAll('#editor input, #editor select').forEach(input=>{
             const changed=()=>{
+              if(input.id==='vpdInput')vpdDirty=true;
               const field=Object.keys(dateInputs).find(f=>dateInputs[f]===input.id);
               if(field && input.value && pendingDeletes.has(field)){
                 pendingDeletes.delete(field);
@@ -9361,6 +9365,11 @@ def grow_profile_page(request: Request):
                 $('saveProfileBtn').click();
               }
             });
+          });
+          $('vpdInput').addEventListener('blur',()=>{
+            const input=$('vpdInput'),value=Number(input.value);
+            if(input.value!==''&&Number.isFinite(value)&&value>=0.5&&value<=3.5&&matchesStep(value,0.01,0.5))input.value=value.toFixed(2);
+            updateChanges();
           });
           document.querySelectorAll('[data-delete]').forEach(btn=>btn.addEventListener('click',()=>{
             if(busy||!profileLoaded) return;
@@ -10567,7 +10576,7 @@ def dashboard_page(request: Request):
               targetUnavailable: "The controller is not available for editing.",
               targetNotConfirmed: "The controller did not confirm this value.",
               targetInvalidTemperature: "Use 18–30 °C in 0.5 °C steps.",
-              targetInvalidVpd: "Use 0.5–3.5 kPa in 0.1 kPa steps.",
+              targetInvalidVpd: "Use 0.50–3.50 kPa in 0.01 kPa steps.",
               changeTarget: 'change',
               editTemperatureTarget: 'Target temperature',
               editVpdTarget: 'Target VPD',
@@ -10758,7 +10767,7 @@ def dashboard_page(request: Request):
               targetUnavailable: "Der Controller ist derzeit nicht zum Ändern verfügbar.",
               targetNotConfirmed: "Der Controller hat diesen Wert nicht bestätigt.",
               targetInvalidTemperature: "18–30 °C in 0,5-°C-Schritten einstellen.",
-              targetInvalidVpd: "0,5–3,5 kPa in 0,1-kPa-Schritten einstellen.",
+              targetInvalidVpd: "0,50–3,50 kPa in 0,01-kPa-Schritten einstellen.",
               changeTarget: 'ändern',
               editTemperatureTarget: 'Solltemperatur',
               editVpdTarget: 'Soll-VPD',
@@ -10903,7 +10912,7 @@ def dashboard_page(request: Request):
           }
           function targetSpec(section){
             if(section==='temperature')return {field:'targetTemperature',min:18,max:30,step:0.5,decimals:1,unit:'°C',label:'editTemperatureTarget',invalid:'targetInvalidTemperature'};
-            if(section==='vpd')return {field:'targetVPD',min:0.5,max:3.5,step:0.1,decimals:2,unit:'kPa',label:'editVpdTarget',invalid:'targetInvalidVpd'};
+            if(section==='vpd')return {field:'targetVPD',min:0.5,max:3.5,step:0.01,decimals:2,unit:'kPa',label:'editVpdTarget',invalid:'targetInvalidVpd'};
             return null;
           }
           function canEditTarget(tentId){
@@ -10915,11 +10924,12 @@ def dashboard_page(request: Request):
             const el=document.getElementById('dbTargetStatus');if(el){el.textContent=message;el.className=kind;}
           }
           function targetError(body,fallback){const d=body?.detail;return typeof d==='string'?d:(d?.message||body?.error||fallback);}
+          function formatTargetInput(ctx,value){return ctx.spec.field==='targetVPD'?Number(value).toFixed(2):String(value);}
           function targetValueValid(ctx,value){const units=(value-ctx.spec.min)/ctx.spec.step;return Number.isFinite(value)&&value>=ctx.spec.min&&value<=ctx.spec.max&&Math.abs(units-Math.round(units))<1e-9;}
           function syncTargetDialogActions(){
             const ctx=targetDialogContext;if(!ctx)return;
             const input=document.getElementById('dbTargetInput'),raw=input.value,value=Number(raw);
-            document.getElementById('dbTargetSave').disabled=ctx.busy||!ctx.loaded||!canEditTarget(ctx.tentId)||raw===''||value===ctx.current||!targetValueValid(ctx,value);
+            document.getElementById('dbTargetSave').disabled=ctx.busy||!ctx.loaded||!ctx.dirty||!canEditTarget(ctx.tentId)||raw===''||value===ctx.current||!targetValueValid(ctx,value);
             input.disabled=ctx.busy;
             txt('dbTargetCancel',tr(ctx.saved?'close':'cancel'));
           }
@@ -10949,7 +10959,7 @@ def dashboard_page(request: Request):
               if(value===null)throw new Error(tr('growLoadFailed'));
               ctx.current=value;ctx.loaded=true;
               targetSnapshot={...(targetSnapshot.tentId===ctx.tentId?targetSnapshot:{}),tentId:ctx.tentId,[ctx.spec.field]:value};
-              if(!ctx.dirty)document.getElementById('dbTargetInput').value=String(value);
+              if(!ctx.dirty)document.getElementById('dbTargetInput').value=formatTargetInput(ctx,value);
               renderTargetDialog();
             }catch(error){if(targetDialogActive(ctx)){targetStatus(error.message,'error');syncTargetDialogActions();}}
           }
@@ -10961,13 +10971,13 @@ def dashboard_page(request: Request):
             const ctx={tentId:Number(currentTentId),spec,current:value,loaded:value!==null,dirty:false,busy:false,saved:false,focus:document.activeElement,previousOverflow:document.body.style.overflow};
             targetDialogContext=ctx;
             const input=document.getElementById('dbTargetInput');
-            input.min=String(spec.min);input.max=String(spec.max);input.step=String(spec.step);input.value=value===null?'':String(value);
+            input.min=String(spec.min);input.max=String(spec.max);input.step=String(spec.step);input.value=value===null?'':formatTargetInput(ctx,value);
             targetStatus();renderTargetDialog();dialog.showModal();document.body.style.overflow='hidden';input.focus();input.select();
             if(!ctx.loaded)readTargetDialog(ctx);
           }
           async function saveTargetDialog(event){
             event.preventDefault();const ctx=targetDialogContext,input=document.getElementById('dbTargetInput');
-            if(!ctx||ctx.busy||!ctx.loaded)return;
+            if(!ctx||ctx.busy||!ctx.loaded||!ctx.dirty)return;
             if(!canEditTarget(ctx.tentId)){targetStatus(tr('targetUnavailable'),'error');syncTargetDialogActions();return;}
             const value=Number(input.value);
             if(input.value===''||!targetValueValid(ctx,value)){targetStatus(tr(ctx.spec.invalid),'error');return;}
@@ -10980,7 +10990,7 @@ def dashboard_page(request: Request):
               const confirmed=targetNumber((body?.state?.runtime||body?.state?.stored||{})[ctx.spec.field]);
               if(body?.verified!==true||confirmed===null||Math.abs(confirmed-value)>1e-6)throw new Error(tr('targetNotConfirmed'));
               if(!targetDialogActive(ctx))return;
-              ctx.current=confirmed;ctx.saved=true;ctx.dirty=false;input.value=String(confirmed);
+              ctx.current=confirmed;ctx.saved=true;ctx.dirty=false;input.value=formatTargetInput(ctx,confirmed);
               targetSnapshot={...(targetSnapshot.tentId===ctx.tentId?targetSnapshot:{}),tentId:ctx.tentId,[ctx.spec.field]:confirmed};
               renderTargetDialog();targetStatus(tr('targetSaved'),'success');
             }catch(error){if(targetDialogActive(ctx))targetStatus(error.message,'error');}
@@ -10988,6 +10998,11 @@ def dashboard_page(request: Request):
           }
           document.getElementById('dbTargetForm')?.addEventListener('submit',saveTargetDialog);
           document.getElementById('dbTargetInput')?.addEventListener('input',()=>{const ctx=targetDialogContext;if(!ctx)return;ctx.dirty=true;ctx.saved=false;targetStatus();syncTargetDialogActions();});
+          for(const eventName of ['change','blur'])document.getElementById('dbTargetInput')?.addEventListener(eventName,()=>{
+            const ctx=targetDialogContext,input=document.getElementById('dbTargetInput');
+            if(ctx?.spec.field==='targetVPD'&&input.value!==''&&targetValueValid(ctx,Number(input.value)))input.value=formatTargetInput(ctx,Number(input.value));
+            syncTargetDialogActions();
+          });
           document.getElementById('dbTargetCancel')?.addEventListener('click',closeTargetDialog);
           document.getElementById('dbTargetDialog')?.addEventListener('cancel',event=>{event.preventDefault();closeTargetDialog();});
           document.getElementById('dbTargetDialog')?.addEventListener('close',()=>{if(targetDialogContext&&!document.getElementById('dbTargetDialog').open)closeTargetDialog();});

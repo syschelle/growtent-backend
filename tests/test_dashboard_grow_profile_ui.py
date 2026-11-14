@@ -136,7 +136,7 @@ def test_detached_editor_keeps_controller_api_in_celsius():
     page = _grow_profile_page_source()
     assert '<strong id="tempCurrent">-</strong> °C' in page
     assert 'id="tempInput" type="number" min="18" max="30" step="0.5"' in page
-    assert 'id="vpdInput" type="number" min="0.5" max="3.5" step="0.1"' in page
+    assert 'id="vpdInput" type="number" min="0.5" max="3.5" step="0.01"' in page
     assert "matchesStep(temp,0.5,18)" in page
     assert "matchesStep(vpd,0.1,0.5)" in page
 
