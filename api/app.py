@@ -6163,7 +6163,8 @@ def setup_page(request: Request):
           .setup-content { display:grid; grid-template-columns:repeat(4, minmax(240px, 1fr)); gap:12px; align-items:start; }
           .setup-content > h1 { grid-column:1 / -1; margin:0 0 2px 0; }
           .section-title { margin:8px 0 2px 0; font-size:.92rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
-          .setup-content .card { max-width:none !important; margin-bottom:0 !important; }
+          .setup-content .card { max-width:none !important; margin-bottom:0 !important; min-width:0; overflow-wrap:anywhere; }
+          .setup-content input,.setup-content select { max-width:100%; box-sizing:border-box; }
           #rubricAppearance { grid-column:1; grid-row:2; }
           #rubricAccess { grid-column:2; grid-row:2; }
           #rubricStatus { grid-column:3; grid-row:2; }
@@ -6199,7 +6200,7 @@ def setup_page(request: Request):
             .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
             .section-title, #chartRangesCard, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #rubricDevices { grid-column:auto; grid-row:auto; }
           }
-          @media (max-width: 780px) { .setup-content { grid-template-columns:1fr; } }
+          @media (max-width: 780px) { .setup-content { grid-template-columns:minmax(0,1fr); } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
           select, button { padding:8px 10px; border-radius:10px; }
           button {

@@ -18,7 +18,8 @@ const fs=require('fs'),assert=require('node:assert/strict');const{chromium}=requ
   await page.setViewportSize({width,height:1000});await page.evaluate(lang=>{document.getElementById('langSelect').value=lang;applyChartRangesI18n();},lang);
   assert.ok(await page.locator('#chartRangesTitle').isVisible());assert.equal(await page.locator('#chartRangesTitle').textContent(),lang==='de'?'Diagramme':'Charts');
   assert.ok(await page.locator('#chartRangesCard').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Card overflow');
-  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Page overflow');
+  const overflow=await page.evaluate(()=>({viewport:innerWidth,width:document.documentElement.scrollWidth,elements:[...document.querySelectorAll('body *')].filter(el=>el.getBoundingClientRect().right>innerWidth+1).map(el=>({tag:el.tagName,id:el.id,width:el.getBoundingClientRect().width})).slice(0,15)}));
+  assert.ok(overflow.width<=width+1,'Page overflow '+JSON.stringify(overflow));
   await page.screenshot({path:`layout-previews/chart-settings-${lang}-${width}.png`,fullPage:true});
  }
  // A quota/storage failure must not report successful persistence.
