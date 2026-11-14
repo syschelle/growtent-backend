@@ -3,7 +3,7 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
 const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 (async()=>{
  const browser=await chromium.launch({headless:true}),context=await browser.newContext();
- let patches=[],reject=false;
+ let patches=[],reject=false,profileLoadFail=false;
  let state={targetTemperature:22,targetVPD:1.17,currentPhase:1,floweringStart:'',dryingStart:''};
  const tent={id:3,name:'Test tent',backend_write_enabled:true,backend_controller_url:'http://controller.invalid:8080',has_backend_hmac_secret:true};
  // Fixture HTML is trusted repository output. DOMParser removes scripts without HTML regex filtering.
@@ -18,6 +18,10 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
     const patch=route.request().postDataJSON();patches.push(patch);
     if(reject)return route.fulfill({status:409,json:{detail:'Synthetic controller rejection'}});
     state={...state,...patch};
+   }
+   if(route.request().method()==='GET'){
+    await new Promise(resolve=>setTimeout(resolve,200));
+    if(profileLoadFail)return route.fulfill({status:503,json:{detail:'Synthetic load failure'}});
    }
    return route.fulfill({json:{state:{runtime:state}}});
   }
@@ -58,15 +62,34 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   }
   await page.locator('#currentValuesGrid').screenshot({path:`layout-previews/target-tiles-${width}.png`});
  }
+ // A cancelled opening must stay closed even if old iframe messages arrive later.
+ await page.locator('#editTemperatureTargetBtn').click();
+ const cancelledView=await page.locator('#dbGrowProfileFrame').evaluate(frame=>new URL(frame.src).searchParams.get('view'));
+ assert.equal(await page.locator('.grow-profile-modal-card').isVisible(),false,'No oversized initial card');
+ await page.locator('#dbGrowProfileLoadingCloseBtn').click();
+ assert.equal(await page.locator('#dbGrowProfileModal').isVisible(),false,'Loading can be cancelled');
  for(const lang of ['de','en']){
   await page.setViewportSize({width:lang==='de'?1640:390,height:1000});
   await page.evaluate(lang=>{window.testLang=lang;localStorage.setItem('gt_lang',lang);applyTargetLabels();},lang);
   for(const id of ids.slice(0,2))assert.equal(await page.locator('#'+id).innerText(),lang==='de'?'ändern':'change');
   const beforeTemp=String(state.targetTemperature);
   await page.locator('#editTemperatureTargetBtn').click();
+  assert.equal(await page.locator('.grow-profile-modal-card').isVisible(),false,'Card stays hidden until ready');
+  assert.equal(await page.locator('#dbGrowProfileLoading').isVisible(),true,'Loading feedback remains visible');
+  await page.evaluate(oldView=>{
+    const frame=document.getElementById('dbGrowProfileFrame');
+    const view=new URL(frame.src).searchParams.get('view');
+    for(const data of [{ready:false,view,height:390},{ready:true,view:oldView,height:999}])
+      window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{type:'grow-profile-modal-height',...data}}));
+  },cancelledView);
+  assert.equal(await page.locator('.grow-profile-modal-card').isVisible(),false,'Unready/old messages cannot reveal the dialog');
   assert.equal(await page.locator('#dbGrowProfileTitle').innerText(),lang==='de'?'Solltemperatur':'Target temperature');
   let frame=page.frameLocator('#dbGrowProfileFrame');await frame.locator('#tempInput').waitFor();
   await page.waitForFunction(expected=>document.querySelector('#dbGrowProfileFrame').contentDocument?.getElementById('tempInput')?.value===expected,beforeTemp);
+  await page.waitForFunction(()=>!document.getElementById('dbGrowProfileModal').classList.contains('is-loading'));
+  const firstHeight=(await page.locator('.grow-profile-modal-card').boundingBox()).height;
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  assert.ok(Math.abs((await page.locator('.grow-profile-modal-card').boundingBox()).height-firstHeight)<2,'First visible layout is already stable');
   assert.equal(await frame.locator('[data-profile-field]:visible').count(),1);assert.equal(await frame.locator('#vpdInput').isVisible(),false);
   assert.ok((await page.locator('.grow-profile-modal-card').boundingBox()).width<=281,'Target editor uses half the previous desktop width');
   assert.ok(await frame.locator('body').evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Narrow target editor does not overflow');
@@ -81,6 +104,7 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   await page.locator('#editVpdTargetBtn').click();
   assert.equal(await page.locator('#dbGrowProfileTitle').innerText(),lang==='de'?'Soll-VPD':'Target VPD');frame=page.frameLocator('#dbGrowProfileFrame');await frame.locator('#vpdInput').waitFor();
   await page.waitForFunction(()=>document.querySelector('#dbGrowProfileFrame').contentDocument?.getElementById('vpdInput')?.value==='1.17');
+  await page.waitForFunction(()=>!document.getElementById('dbGrowProfileModal').classList.contains('is-loading'));
   assert.equal(await frame.locator('[data-profile-field]:visible').count(),1);assert.equal(await frame.locator('#tempInput').isVisible(),false);
   assert.equal(await frame.locator('#vpdCurrent').innerText(),'1.17','Current VPD keeps two decimals');
   assert.ok((await page.locator('.grow-profile-modal-card').boundingBox()).width<=281,'VPD editor stays compact');
@@ -91,6 +115,11 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   await page.locator('.grow-profile-modal-card').screenshot({path:`layout-previews/vpd-editor-${lang}.png`});reject=false;
   await page.locator('#dbGrowProfileCloseBtn').click();
  }
+ profileLoadFail=true;await page.locator('#editVpdTargetBtn').click();
+ const failedFrame=page.frameLocator('#dbGrowProfileFrame');await failedFrame.locator('#pageStatus.err').waitFor();
+ await page.waitForFunction(()=>!document.getElementById('dbGrowProfileModal').classList.contains('is-loading'));
+ assert.equal(await page.locator('.grow-profile-modal-card').isVisible(),true,'Load errors are revealed rather than hidden forever');
+ await page.locator('#dbGrowProfileCloseBtn').click();profileLoadFail=false;
  await page.setViewportSize({width:1640,height:1000});
  await page.locator('#openGrowProfileBtn').click();const frame=page.frameLocator('#dbGrowProfileFrame');await frame.locator('#phaseInput').waitFor();
  await page.waitForFunction(()=>document.querySelector('#dbGrowProfileFrame').contentDocument?.getElementById('phaseInput')?.value==='1');

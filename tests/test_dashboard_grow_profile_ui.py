@@ -51,7 +51,7 @@ def test_dashboard_opens_grow_profile_as_modal_like_irrigation_plan():
     assert 'role="dialog" aria-modal="true"' in dashboard
     assert "modal.style.display = 'flex';" in dashboard
     assert 'function closeGrowProfileModal()' in dashboard
-    assert "frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}&section=${encodeURIComponent(section)}`;" in dashboard
+    assert "frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}&section=${encodeURIComponent(section)}&view=${growProfileModalToken}`;" in dashboard
     assert 'window.parent.location.href = url' not in dashboard[dashboard.index('function openGrowProfilePage()'):dashboard.index('function applyI18n()')]
     assert "frame.src = 'about:blank';" in dashboard
     assert "loadLatest().catch(() => {});" in dashboard

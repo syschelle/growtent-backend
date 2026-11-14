@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.360
+
+- Reveal target dialogs only after their scoped editor has reported a ready size, with cancellable loading feedback and stale-message fencing.
+
+
 ## v0.359
 
 - Use ändern/change for both target tile buttons, halve target-dialog desktop width to 280 px and show current VPD with two decimals. Specific titles and write behavior are retained.

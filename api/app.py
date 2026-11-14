@@ -43,7 +43,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.359"
+APP_VERSION = "v0.360"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9157,16 +9157,20 @@ def grow_profile_page(request: Request):
               }
             });
           }
-          // Keep the parent dialog as tall as its actual contents, not the full screen.
+          let editorReady=false;
+          let reportEditorReady=()=>{};
+          // Keep the parent dialog hidden until loaded data and scoped fields have their final layout.
           if (document.body.classList.contains('modal-editor') && window.parent !== window) {
             const content = document.querySelector('.content');
             const reportHeight = () => {
               if (!content) return;
               window.parent.postMessage({
                 type:'grow-profile-modal-height',
+                ready:editorReady, view:qs.get('view')||'',
                 height:Math.ceil(content.getBoundingClientRect().height) + 4
               }, window.location.origin);
             };
+            reportEditorReady=()=>{editorReady=true;requestAnimationFrame(reportHeight);};
             if (window.ResizeObserver && content) new ResizeObserver(reportHeight).observe(content);
             window.addEventListener('load', reportHeight);
             window.addEventListener('resize', reportHeight);
@@ -9383,7 +9387,7 @@ def grow_profile_page(request: Request):
           $('backBtn').addEventListener('click',ev=>{ ev.preventDefault(); const url=`/app?page=dashboard&tent=${encodeURIComponent(String(tentId))}`; if(window.parent&&window.parent!==window) window.parent.location.href=url; else window.location.href=url; });
           (async()=>{
             applyI18n();
-            if(!tentId){ setStatus(T.loadFailed,'err'); return; }
+            if(!tentId){ setStatus(T.loadFailed,'err'); reportEditorReady(); return; }
             try{
               const who=await fetch('/auth/whoami',{cache:'no-store'}).then(r=>r.json());
               if(who?.role!=='admin'){ $('editor').style.display='none'; setStatus(T.denied,'err'); return; }
@@ -9394,6 +9398,7 @@ def grow_profile_page(request: Request):
               if(!ready){ $('editor').style.display='none'; const n=$('notReady'); n.style.display='block'; n.textContent=T.notReady; setStatus('',''); return; }
               await loadProfile();
             }catch{ setStatus(T.loadFailed,'err'); }
+            finally{reportEditorReady();}
           })();
         </script>
       </body>
@@ -9732,6 +9737,10 @@ def dashboard_page(request: Request):
     grow_profile_modal = '''
         <div id="dbGrowProfileModal" class="grow-profile-modal" role="dialog" aria-modal="true"
              aria-labelledby="dbGrowProfileTitle" aria-hidden="true" style="display:none;">
+          <div id="dbGrowProfileLoading" class="grow-profile-loading" role="status" aria-live="polite">
+            <span id="dbGrowProfileLoadingText">Loading…</span>
+            <button id="dbGrowProfileLoadingCloseBtn" type="button" aria-label="Close" title="Close">✕</button>
+          </div>
           <div class="grow-profile-modal-card card">
             <div class="grow-profile-modal-header">
               <div class="grow-profile-modal-headings">
@@ -10014,6 +10023,10 @@ def dashboard_page(request: Request):
             height:auto; overflow:hidden;
             padding:11px; margin:0; border:1px solid var(--grid);
           }
+          .grow-profile-modal.is-loading .grow-profile-modal-card { visibility:hidden; pointer-events:none; }
+          .grow-profile-loading { display:none; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); align-items:center; gap:14px; padding:9px 12px; border:1px solid var(--grid); border-radius:10px; background:var(--card); }
+          .grow-profile-modal.is-loading .grow-profile-loading { display:flex; }
+          #dbGrowProfileLoadingCloseBtn { width:auto !important; min-width:36px; min-height:36px; padding:5px 9px; }
           .grow-profile-modal-header {
             display:flex; align-items:center; justify-content:space-between;
             gap:12px; padding:0 2px 10px;
@@ -10523,6 +10536,8 @@ def dashboard_page(request: Request):
               growProfileTitle: 'Grow profile',
               close: 'Close',
               editGrowProfile: 'Adjust',
+              growProfileLoading: 'Loading…',
+              growProfileLoadError: 'Editor could not be loaded.',
               changeTarget: 'change',
               editTemperatureTarget: 'Target temperature',
               editVpdTarget: 'Target VPD',
@@ -10704,6 +10719,8 @@ def dashboard_page(request: Request):
               growProfileTitle: 'Grow-Profil',
               close: 'Schließen',
               editGrowProfile: 'Anpassen',
+              growProfileLoading: 'Wird geladen…',
+              growProfileLoadError: 'Editor konnte nicht geladen werden.',
               changeTarget: 'ändern',
               editTemperatureTarget: 'Solltemperatur',
               editVpdTarget: 'Soll-VPD',
@@ -10847,6 +10864,7 @@ def dashboard_page(request: Request):
 
           let growProfileModalLastFocus = null;
           let growProfileModalSection = 'profile';
+          let growProfileModalToken = 0;
           function growProfileEditorTitle(){
             return tr(growProfileModalSection==='temperature'?'editTemperatureTarget':growProfileModalSection==='vpd'?'editVpdTarget':'growProfileTitle');
           }
@@ -10855,7 +10873,10 @@ def dashboard_page(request: Request):
             const modal = document.getElementById('dbGrowProfileModal');
             const frame = document.getElementById('dbGrowProfileFrame');
             if (!modal || modal.style.display === 'none') return;
+            ++growProfileModalToken;
             modal.style.display = 'none';
+            modal.classList.remove('is-loading');
+            modal.setAttribute('aria-busy','false');
             modal.setAttribute('aria-hidden', 'true');
             if (frame) { frame.src = 'about:blank'; frame.style.height = ''; }
             document.body.style.overflow = '';
@@ -10876,7 +10897,12 @@ def dashboard_page(request: Request):
             if (!modal || !frame) return;
             growProfileModalLastFocus = document.activeElement;
             growProfileModalSection=section;
+            ++growProfileModalToken;
             modal.classList.toggle('target-editor',section==='temperature'||section==='vpd');
+            modal.classList.add('is-loading');
+            modal.setAttribute('aria-busy','true');
+            txt('dbGrowProfileLoadingText',tr('growProfileLoading'));
+            frame.style.height='100px';
             txt('dbGrowProfileTitle',growProfileEditorTitle());
             frame.title=growProfileEditorTitle();
             const title = document.getElementById('dbGrowProfileTentName');
@@ -10884,8 +10910,8 @@ def dashboard_page(request: Request):
             modal.style.display = 'flex';
             modal.setAttribute('aria-hidden', 'false');
             document.body.style.overflow = 'hidden';
-            frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}&section=${encodeURIComponent(section)}`;
-            document.getElementById('dbGrowProfileCloseBtn')?.focus();
+            frame.src = `/grow-profile?embed=1&modal=1&tent=${encodeURIComponent(String(currentTentId))}&section=${encodeURIComponent(section)}&view=${growProfileModalToken}`;
+            document.getElementById('dbGrowProfileLoadingCloseBtn')?.focus();
           }
 
           function applyI18n(){
@@ -10894,6 +10920,9 @@ def dashboard_page(request: Request):
             txt('editTemperatureTargetBtn',tr('changeTarget'));
             txt('editVpdTargetBtn',tr('changeTarget'));
             txt('dbGrowProfileTitle',growProfileEditorTitle());
+            txt('dbGrowProfileLoadingText',tr('growProfileLoading'));
+            const loadingClose=document.getElementById('dbGrowProfileLoadingCloseBtn');
+            if(loadingClose){loadingClose.title=tr('close');loadingClose.setAttribute('aria-label',tr('close'));}
             const closeGrowProfileBtn = document.getElementById('dbGrowProfileCloseBtn');
             if (closeGrowProfileBtn) {
               closeGrowProfileBtn.title = tr('close');
@@ -13951,6 +13980,14 @@ def dashboard_page(request: Request):
           document.getElementById('editTemperatureTargetBtn')?.addEventListener('click',()=>openGrowProfileEditor('temperature'));
           document.getElementById('editVpdTargetBtn')?.addEventListener('click',()=>openGrowProfileEditor('vpd'));
           document.getElementById('dbGrowProfileCloseBtn')?.addEventListener('click', closeGrowProfileModal);
+          document.getElementById('dbGrowProfileLoadingCloseBtn')?.addEventListener('click', closeGrowProfileModal);
+          document.getElementById('dbGrowProfileFrame')?.addEventListener('load',()=>{
+            const modal=document.getElementById('dbGrowProfileModal');
+            const frame=document.getElementById('dbGrowProfileFrame');
+            if(modal?.style.display!=='flex'||!modal.classList.contains('is-loading'))return;
+            try{if(frame?.contentDocument?.getElementById('editor'))return;}catch{}
+            txt('dbGrowProfileLoadingText',tr('growProfileLoadError'));
+          });
           window.addEventListener('message', (event) => {
             const frame = document.getElementById('dbGrowProfileFrame');
             if (event.origin !== window.location.origin || event.source !== frame?.contentWindow) return;
@@ -13958,10 +13995,16 @@ def dashboard_page(request: Request):
               closeGrowProfileModal();
             } else if (event.data?.type === 'grow-profile-modal-height' &&
                        document.getElementById('dbGrowProfileModal')?.style.display === 'flex') {
+              if(event.data.ready!==true || event.data.view!==String(growProfileModalToken))return;
               const height = Number(event.data.height);
               if (Number.isFinite(height) && height > 0 && height < 5000) {
                 // CSS max-height limits this further on narrow/short viewports.
                 frame.style.height = `${Math.max(100, Math.ceil(height))}px`;
+                const modal=document.getElementById('dbGrowProfileModal');
+                const wasLoading=modal.classList.contains('is-loading');
+                modal.classList.remove('is-loading');
+                modal.setAttribute('aria-busy','false');
+                if(wasLoading && document.activeElement?.id==='dbGrowProfileLoadingCloseBtn')document.getElementById('dbGrowProfileCloseBtn')?.focus();
               }
             }
           });
