@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.363
+
+- Move Adjust beside the current phase and replace the iframe editor with a compact native phase/date dialog, retaining verified partial HMAC writes and explicit date deletion.
+
 ## v0.362
 
 - Edit VPD in 0.01 kPa steps and retain two displayed decimal places without accidental writes caused by formatting.
