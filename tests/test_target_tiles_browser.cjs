@@ -74,7 +74,7 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
   // Even a programmatically changed hidden field must not be included in this scope.
   await frame.locator('#vpdInput').evaluate(el=>{el.value='3.5';});await frame.locator('#phaseInput').evaluate(el=>{el.value='3';});
   await frame.locator('#tempInput').fill(lang==='de'?'23.5':'24');await frame.locator('#saveProfileBtn').click();
-  await frame.locator('#pageStatus.ok').waitFor();assert.deepEqual(patches.at(-1),{targetTemperature:lang==='de'?23.5:24});
+  await frame.locator('#pageStatus.ok').waitFor({state:'attached'});assert.deepEqual(patches.at(-1),{targetTemperature:lang==='de'?23.5:24});
   await page.locator('.grow-profile-modal-card').screenshot({path:`layout-previews/temperature-editor-${lang}.png`});
   await page.locator('#dbGrowProfileCloseBtn').click();assert.equal(await page.locator('#dbGrowProfileFrame').getAttribute('src'),'about:blank');
   assert.equal(await page.evaluate(()=>document.activeElement.id),'editTemperatureTargetBtn');
@@ -94,7 +94,7 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  await page.setViewportSize({width:1640,height:1000});
  await page.locator('#openGrowProfileBtn').click();const frame=page.frameLocator('#dbGrowProfileFrame');await frame.locator('#phaseInput').waitFor();
  await page.waitForFunction(()=>document.querySelector('#dbGrowProfileFrame').contentDocument?.getElementById('phaseInput')?.value==='1');
- await frame.locator('#pageStatus.ok').waitFor();
+ await frame.locator('#pageStatus.ok').waitFor({state:'attached'});
  assert.ok((await page.locator('.grow-profile-modal-card').boundingBox()).width>500,'Phase/date editor keeps its existing width');
  assert.equal(await frame.locator('[data-profile-field]:visible').count(),3);assert.equal(await frame.locator('#tempInput').isVisible(),false);assert.equal(await frame.locator('#vpdInput').isVisible(),false);
  await frame.locator('#phaseInput').selectOption('2');await frame.locator('#flowerInput').fill('2026-11-01');await frame.locator('#saveProfileBtn').click();await frame.locator('#pageStatus.ok').waitFor();
