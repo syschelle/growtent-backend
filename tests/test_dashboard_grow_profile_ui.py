@@ -138,7 +138,7 @@ def test_detached_editor_keeps_controller_api_in_celsius():
     assert 'id="tempInput" type="number" min="18" max="30" step="0.5"' in page
     assert 'id="vpdInput" type="number" min="0.5" max="3.5" step="0.01"' in page
     assert "matchesStep(temp,0.5,18)" in page
-    assert "matchesStep(vpd,0.1,0.5)" in page
+    assert "matchesStep(vpd,0.01,0.5)" in page
 
 
 def test_dashboard_adjust_button_is_inside_status_tile_after_status_text_and_not_in_phase_card():
