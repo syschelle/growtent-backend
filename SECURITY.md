@@ -21,3 +21,7 @@ New tile controls are rendered only for administrator sessions and use the exist
 ## v0.359 labels
 
 Only the visible target-button labels change; specific dialog names, permission/readiness gates, scoped payloads and authenticated write paths remain unchanged.
+
+## v0.360 modal readiness
+
+Dialog size/readiness messages still require the expected same origin and iframe source and now also match the active navigation view identifier. This identifier prevents stale UI updates and is not an authentication credential. Administrator and HMAC write enforcement are unchanged. Loading can be dismissed, and load failures do not authorize writes.
