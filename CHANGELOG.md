@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.367
+
+- Include timestamp-specific temperature and VPD targets in both JSON history exports.
+- Preserve null for missing/invalid historical targets without current-setting backfill.
+
 ## v0.366
 
 - Add browser-local Setup chart ranges for temperature, humidity and VPD.

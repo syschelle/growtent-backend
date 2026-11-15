@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.366
+ghcr.io/syschelle/growtent-backend-api:v0.367
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.366 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.366 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.367 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.367 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.366 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.367 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1103,3 +1103,7 @@ Temperature history suggests target ±5 °C (±9 °F). Without a target, it uses
 ## Configurable chart ranges (v0.366)
 
 Setup → Charts stores axis preferences locally in this browser for all tents. Temperature is a half-span around the target in °C (converted automatically for °F); humidity is a total minimum width in percentage points; VPD is a total minimum width in kPa around its target. Missing targets use the midpoint of available plotted readings. Zero selects automatic scaling. Defaults are ±5 °C, 10 percentage points and automatic VPD. Larger excursions always expand the axes; readings, statistics, exports and ESP control are unchanged. Preferences apply at the next chart refresh and are not part of server backups or synchronized to other browsers.
+
+## Historical targets in JSON exports (v0.367)
+
+Each exported history point includes `temperature_target` (°C) and `vpd_target` (kPa), read from `settings.grow.targetTemperature` and `settings.grow.targetVPD` in that same stored ESP sample. The dashboard JSON download and `/api/history` share these additive fields. Missing or invalid targets remain null; the backend never substitutes the current/latest setting or rewrites historical data. Existing measurement fields and the 50-point limit are unchanged.
