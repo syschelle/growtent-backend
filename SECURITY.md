@@ -65,3 +65,7 @@ Only the explanatory dialog text changes. The backend still downloads a file loc
 ## v0.370 VPD reference view
 
 The table is a read-only browser projection of existing authorized latest-state responses. It adds no data/write endpoint, network poll or control decision. Only numeric allowlisted fields are read; table content uses DOM textContent. Invalid/stale timestamps and climate flags remove the live marker. Calculated cells cannot overwrite the central ESP regulation VPD.
+
+## v0.371 VPD tile layout
+
+Only action placement changes. Existing read-only table behavior and administrator/readiness restrictions for target edits are unchanged.

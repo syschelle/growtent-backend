@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.370"
+APP_VERSION = "v0.371"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -10098,7 +10098,9 @@ def dashboard_page(request: Request):
           #status .status-ok { color:#22c55e; font-weight:700; }
           #status .status-err { color:#ef4444; font-weight:700; }
           .target-dialog { box-sizing:border-box; width:min(280px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; margin:auto; padding:12px; border:1px solid var(--grid); border-radius:12px; background:var(--card); color:var(--text); }
-          .vpd-table-button { margin-top:7px; padding:5px 9px; font-size:.8rem; }
+          .vpd-card-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; padding-top:6px; }
+          .vpd-card-actions .target-adjust-action { margin-top:0; padding-top:0; }
+          .vpd-card-actions .vpd-table-button { width:auto; min-height:26px; margin:0; padding:3px 8px; font-size:.76rem; }
           .vpd-table-dialog { width:min(1280px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); }
           .vpd-table-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
           .vpd-table-head button { width:auto; flex:0 0 auto; padding:6px 10px; }
@@ -10296,8 +10298,8 @@ def dashboard_page(request: Request):
             </div>
             <div class=\"value\" id=\"vpd\">-</div>
             <div class=\"small\" id=\"vpdTarget\">Target: -</div>
-            <button id=\"openVpdTableBtn\" type=\"button\" class=\"vpd-table-button\">VPD table</button>
-            __VPD_TARGET_ACTION__
+            <div class=\"vpd-card-actions\"><button id=\"openVpdTableBtn\" type=\"button\" class=\"vpd-table-button\">VPD table</button>
+            __VPD_TARGET_ACTION__</div>
             <!-- gauge removed -->
           </div>
           <div class=\"card\">

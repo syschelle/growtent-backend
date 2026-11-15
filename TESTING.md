@@ -1,4 +1,4 @@
-# Testing — v0.370
+# Testing — v0.371
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -80,3 +80,7 @@ The existing production export browser test now checks the concise German AI/Cha
 ## Live VPD table (v0.370)
 
 `node tests/test_vpd_table.mjs` verifies the production reference formula, independent expected value, leaf offset, central channel ownership, stale/null/freshness flags, range bounds and existing-poll hooks. `render_vpd_table.py` plus `test_vpd_table_browser.cjs` exercise actual production assets: 525 cells, exact ESP summary, offset-dependent reference without altering the control value, missing offset, stale expiration, tent races, out-of-range readings, initial marker centering, DE/EN, C/F, light/dark and desktop/mobile layouts, close/Escape and absence of additional polling/control requests. CI includes screenshots and existing Python/PostgreSQL/chart/editor/export/CodeQL checks. Physical plant-response validation is not required for this read-only reference view.
+
+## Compact VPD actions (v0.371)
+
+The production VPD browser test additionally verifies a shared action row at 1640/800/390px, compact button width, no overlap and a maximum 34px footer height. Existing table/dialog, target readiness and formula checks remain required.
