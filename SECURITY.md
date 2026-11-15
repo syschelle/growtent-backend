@@ -49,3 +49,7 @@ Climate axis suggestions only affect presentation. Data, exports, control decisi
 ## v0.366 chart preferences
 
 Chart ranges are non-sensitive browser-local presentation settings. Stored JSON is type/range validated, never inserted as HTML and cannot alter controller configuration or measured data. No new write API or authorization behavior is introduced.
+
+## v0.367 history target fields
+
+JSON history projections add only the recorded climate targets, normalized to finite numbers or null. No secrets, extra controller requests or new authorization paths are introduced. Stored measurements and settings are not modified.

@@ -136,3 +136,43 @@ def test_invalid_vpd_does_not_trigger_backend_exhaust_network_io(value):
     ns["_read_exhaust_shelly_output"]=forbidden;ns["_set_exhaust_shelly_output"]=forbidden
     ns["_try_run_exhaust_vpd_control"]({"id":2,"exhaust_vpd_plan":{"enabled":True}},sample(value,**{"settings.shelly.exhaust.ip":"192.0.2.1"}))
     assert not db.statements
+
+
+def test_history_exports_keep_timestamp_specific_targets_without_rewriting_rows():
+    ts=datetime.now(timezone.utc)
+    rows=[(ts+timedelta(seconds=i),sample(**extra)) for i,extra in enumerate([
+        {"settings.grow.targetTemperature":22,"settings.grow.targetVPD":1.17},
+        {"settings.grow.targetTemperature":23.5,"settings.grow.targetVPD":1.20},
+        {},
+        {"settings.grow.targetTemperature":0,"settings.grow.targetVPD":0},
+    ])]
+    before=copy.deepcopy(rows);db=Database(rows);ns=functions(db)
+    expected=[(22,1.17),(23.5,1.2),(None,None),(0,0)]
+    projections=[ns["history_state"](2,filter_spikes=0)["points"],
+        json.loads(ns["export_history_csv"](2).body)["points"],
+        ns["api_history_for_device"]("test-device",limit=50)["points"]]
+    for points in projections:
+        assert [(p["temperature_target"],p["vpd_target"]) for p in points]==expected
+        assert [p["vpd"] for p in points]==[0.94]*4
+    assert db.rows==before
+    assert all(sql.lstrip().startswith("SELECT") for sql,_ in db.statements)
+
+
+@pytest.mark.parametrize("value",[None,True,False,"", " ","invalid",float("nan"),float("inf"),{},[]])
+def test_history_exports_invalid_targets_as_null(value):
+    ns=functions(Database([(datetime.now(timezone.utc),sample(**{
+        "settings.grow.targetTemperature":value,"settings.grow.targetVPD":value}))]))
+    for points in [json.loads(ns["export_history_csv"](2).body)["points"],ns["api_history_for_device"]("test-device",limit=50)["points"]]:
+        assert points[0]["temperature_target"] is None
+        assert points[0]["vpd_target"] is None
+        json.dumps(points,allow_nan=False)
+
+
+def test_history_targets_accept_numeric_strings_and_do_not_copy_latest_aliases():
+    rows=[(datetime.now(timezone.utc),sample(**{
+        "settings.grow.targetTemperature":"22.5","settings.grow.targetVPD":"1.17"})),
+        (datetime.now(timezone.utc),sample(**{
+        "settings.targetTemperature":28,"settings.targetVPD":3,"settings.grow.targetVPD":-1}))]
+    points=json.loads(functions(Database(rows))["export_history_csv"](2).body)["points"]
+    assert points[0]["temperature_target"]==22.5 and points[0]["vpd_target"]==1.17
+    assert points[1]["temperature_target"] is None and points[1]["vpd_target"] is None

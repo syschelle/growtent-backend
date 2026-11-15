@@ -49,7 +49,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.366"
+APP_VERSION = "v0.367"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5428,6 +5428,10 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
             hum_raw = None
         vpd_raw = _esp_raw_vpd(d)
         control_vpd = _esp_control_vpd(d)
+        temperature_target = _finite_sensor_number(d.get("settings.grow.targetTemperature"))
+        vpd_target = _finite_sensor_number(d.get("settings.grow.targetVPD"))
+        if vpd_target is not None and vpd_target < 0:
+            vpd_target = None
 
         soil_sensors = []
         raw_soil_sensors = d.get("soil.sensors")
@@ -5446,6 +5450,8 @@ def history_state(tent_id: int, minutes: int = 360, filter_spikes: int = 1):
                 "humidity_raw": hum_raw,
                 "vpd_raw": vpd_raw,
                 "vpd_cur": control_vpd,
+                "temperature_target": temperature_target,
+                "vpd_target": vpd_target,
                 "temperature_smoothed": _finite_sensor_number(d.get("sensors.smoothed.temperatureC")),
                 "humidity_smoothed": _finite_sensor_number(d.get("sensors.smoothed.humidityPct")),
                 "vpd_smoothed": control_vpd,
@@ -5617,6 +5623,8 @@ def api_history_for_device(device_id: str | None, hours: int | None = None, limi
                 "temperature": p.get("temperature"),
                 "humidity": p.get("humidity"),
                 "vpd": p.get("vpd"),
+                "temperature_target": p.get("temperature_target"),
+                "vpd_target": p.get("vpd_target"),
                 "temperature_raw": p.get("temperature_raw"),
                 "humidity_raw": p.get("humidity_raw"),
                 "vpd_raw": p.get("vpd_raw"),
@@ -5652,6 +5660,8 @@ def export_history_csv(tent_id: int, range_key: str = "24h"):
             "temperature": p.get("temperature"),
             "humidity": p.get("humidity"),
             "vpd": p.get("vpd"),
+            "temperature_target": p.get("temperature_target"),
+            "vpd_target": p.get("vpd_target"),
             "temperature_raw": p.get("temperature_raw"),
             "humidity_raw": p.get("humidity_raw"),
             "vpd_raw": p.get("vpd_raw"),
