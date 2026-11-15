@@ -25,10 +25,36 @@
   return{phase,week,late,extended:week>5,min:range[0],max:range[1]};
  }
  function inPhase(value,range){return value!==null&&Number.isFinite(value)&&range.min!==undefined&&value>=range.min&&value<=range.max;}
+ // Prefer actual switch state; only simple, fresh daily schedules are a fallback.
+ function lightState(data,schedule,now=Date.now()){
+  const value=data?.['cur.shelly.light.isOn'];
+  if(value===true||value===1||value==='true'||value==='1')return 'day';
+  if(value===false||value===0||value==='false'||value==='0')return 'night';
+  const age=now-Date.parse(schedule?.checked_at);
+  if(schedule?.ok!==true||!Number.isFinite(age)||age<0||age>600000)return 'unknown';
+  const matches=schedule.matches;
+  if(!Array.isArray(matches)||matches.length!==2||!['on','off'].every(a=>matches.filter(m=>m.action===a).length===1))return 'unknown';
+  if(!matches.every(m=>{const parts=String(m.timespec||'').trim().split(/\s+/);return parts.length===6&&parts.slice(3).every(p=>p==='*');}))return 'unknown';
+  const on=number(schedule.on_minutes),off=number(schedule.off_minutes);
+  if(!Number.isInteger(on)||!Number.isInteger(off)||on<0||off<0||on>=1440||off>=1440||on===off)return 'unknown';
+  const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Berlin',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(now));
+  const minute=Number(parts.find(p=>p.type==='hour').value)*60+Number(parts.find(p=>p.type==='minute').value);
+  return ((minute-on+1440)%1440<(off-on+1440)%1440)?'day':'night';
+ }
+ function humidityTracker(){
+  let state=null;
+  return (tent,s,night,now)=>{
+   const at=Date.parse(s.capturedAt);
+   if(!night||!s.valid||s.humidity<70){state=null;return false;}
+   if(!state||state.tent!==String(tent)||at<state.last||at-state.last>120000)state={tent:String(tent),since:at,last:at};
+   if(at>state.last)state.last=at;
+   return state.last-state.since>=300000;
+  };
+ }
  let controller=null;
  function mount({getContext,document:doc=globalThis.document,clock=()=>Date.now(),setTimer=globalThis.setInterval}){
   const dialog=doc.getElementById('vpdTableDialog'),button=doc.getElementById('openVpdTableBtn');if(!dialog||!button)return;
-  let latest=null,centerMarker=false,lastRenderedTent=null;
+  let latest=null,centerMarker=false,lastRenderedTent=null;const humidWarning=humidityTracker();
   function render(){
    const ctx=getContext(),de=ctx.language==='de',unit=ctx.unit==='F'?'F':'C';
    const labels=de?{title:'VPD-Tabelle',close:'Schließen',temp:'Temperatur',humidity:'Luftfeuchtigkeit',control:'IST-VPD',target:'Soll-VPD',offset:'Blatt-Offset',reference:'Referenz aus T/rF',current:'Aktuelle Werte',missing:'Keine aktuellen gültigen ESP-Klimawerte.',noOffset:'Blatt-Offset fehlt: Referenzwerte nicht verfügbar.',outside:'Aktueller Messpunkt liegt außerhalb des Tabellenbereichs.',hint:'Referenzwerte aus Temperatur, Luftfeuchtigkeit und Blatt-Offset.',legend:'VPD-Referenzbereiche (kPa), keine automatische Sollwertvorgabe.',caption:'Temperatur × relative Luftfeuchtigkeit – Referenz-VPD in kPa'}:
@@ -37,18 +63,24 @@
    if(lastRenderedTent!==String(ctx.tent)){centerMarker=true;lastRenderedTent=String(ctx.tent);}
    const s=latest&&String(latest.tent)===String(ctx.tent)?snapshot(latest.data,latest.at,clock()):snapshot({},null,clock());
    const marker=s.valid?nearest(s.temperature,s.humidity):null;
-   const range=phaseRange(latest?.data,s.valid&&String(latest?.tent)===String(ctx.tent));
+   const sameTent=String(latest?.tent)===String(ctx.tent);
+   const light=s.valid&&sameTent?lightState(latest.data,ctx.lightSchedule,clock()):'unknown';
+   const night=light==='night';
+   const warning=humidWarning(ctx.tent,s,night,clock());
+   const nightText=de?'Nachtphase':'Night phase';
+   const nightAssessment=nightText+(warning?(de?' · Luftfeuchtigkeit seit ≥5 Min. ≥70 %':' · Humidity ≥70% for ≥5 min'):'');
+   const range=night?{reason:'night'}:phaseRange(latest?.data,s.valid&&sameTent);
    const assessment=doc.getElementById('vpdRangeAssessment');
-   if(assessment){const text=range.reason?(range.reason==='drying'?(de?'Trocknung': 'Drying'):(de?'Referenzbereich offen':'Reference unavailable')):(inPhase(s.vpd,range)?(de?'Im Referenzbereich':'Within reference range'):(de?'Außerhalb des Referenzbereichs':'Outside reference range'));assessment.textContent=text;assessment.title=text;}
+   if(assessment){const text=night?nightAssessment:range.reason?(range.reason==='drying'?(de?'Trocknung': 'Drying'):(de?'Referenzbereich offen':'Reference unavailable')):(inPhase(s.vpd,range)?(de?'Im Referenzbereich':'Within reference range'):(de?'Außerhalb des Referenzbereichs':'Outside reference range'));assessment.textContent=text;assessment.title=text;}
    const current=doc.getElementById('vpd');
    if(current){for(const name of ['outer','low','mid','high','unknown'])current.classList.remove('vpd-band-'+name);current.classList.add('vpd-band-'+band(s.vpd));}
    if(!dialog.open)return;
    const format=(v,d=2)=>v===null?'—':v.toLocaleString(de?'de-DE':'en-GB',{minimumFractionDigits:d,maximumFractionDigits:d});
    const temp=v=>v===null?null:unit==='F'?v*1.8+32:v;
-   const phaseText=range.reason?(range.reason==='drying'?(de?'Trocknung – kein Phasenbereich markiert.':'Drying – no phase range highlighted.'):(de?'Phase/Woche offen – kein Phasenbereich markiert.':'Phase/week unavailable – no phase range highlighted.')):
+   const phaseText=night?nightText:range.reason?(range.reason==='drying'?(de?'Trocknung – kein Phasenbereich markiert.':'Drying – no phase range highlighted.'):(de?'Phase/Woche offen – kein Phasenbereich markiert.':'Phase/week unavailable – no phase range highlighted.')):
     `${range.phase===1?(de?'Vegetativ':'Vegetative'):(de?'Blüte':'Flowering')} · ${de?'Woche':'Week'} ${range.week} · ${range.late?(de?'spät':'late'):(de?'früh':'early')} · ${format(range.min)}–${format(range.max)} kPa`;
    doc.getElementById('vpdTablePhase').textContent=phaseText;
-   doc.getElementById('vpdTablePhaseAssessment').textContent=range.reason?'':(inPhase(s.vpd,range)?(de?'IST-VPD im Referenzbereich.':'ESP control value within reference range.'):(de?'IST-VPD außerhalb des Referenzbereichs.':'ESP control value outside reference range.'));
+   doc.getElementById('vpdTablePhaseAssessment').textContent=night?nightAssessment:range.reason?'':(inPhase(s.vpd,range)?(de?'IST-VPD im Referenzbereich.':'ESP control value within reference range.'):(de?'IST-VPD außerhalb des Referenzbereichs.':'ESP control value outside reference range.'));
    doc.getElementById('vpdPhaseRangeKey').textContent=de?'Umrandung: aktueller Phasenbereich':'Outline: current phase range';
 
    const summary=doc.getElementById('vpdTableReadings');summary.replaceChildren();
@@ -81,5 +113,5 @@
   controller={update(tent,data,at){if(String(tent)!==String(getContext().tent))return;latest={tent,data:{...data},at};render();},invalidate(tent){if(String(tent)===String(getContext().tent)){latest=null;render();}},refresh:render};
   render();return controller;
  }
- return {calculate,snapshot,nearest,band,phaseRange,inPhase,mount,update(...args){controller?.update(...args);},invalidate(...args){controller?.invalidate(...args);},refresh(){controller?.refresh();}};
+ return {calculate,snapshot,nearest,band,phaseRange,inPhase,lightState,humidityTracker,mount,update(...args){controller?.update(...args);},invalidate(...args){controller?.invalidate(...args);},refresh(){controller?.refresh();}};
 });
