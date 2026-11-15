@@ -16,23 +16,18 @@ assert.equal(api.band(0.7),'low');assert.equal(api.band(1.17),'mid');assert.equa
 const source=fs.readFileSync(new URL('../api/app.py',import.meta.url),'utf8');assert.ok(source.includes('GrowTentVpdTable?.update(requestedTentId,j.latest||{},j.captured_at)'));assert.ok(source.includes('GrowTentVpdTable?.invalidate(requestedTentId)'));
 console.log('VPD table reference formula, offset, central ESP source, stale/null handling, nearest grid, ranges and backend polling hooks passed');
 // Final user-supplied legend: late vegetation and early flower share 0.8–1.2.
-const phase=(p,w,settings)=>api.phaseRange({'settings.grow.currentPhase':p,'settings.grow.currentPhaseWeek':w,'settings.grow.currentGrowWeek':99},settings);
+const phase=(p,w)=>api.phaseRange({'settings.grow.currentPhase':p,'settings.grow.currentPhaseWeek':w,'settings.grow.currentGrowWeek':99});
 for(const [p,w,min,max]of [[1,1,0.4,0.8],[1,2,0.4,0.8],[1,3,0.8,1.2],[1,7,0.8,1.2],[1,40,0.8,1.2],[2,1,0.8,1.2],[2,2,0.8,1.2],[2,3,1.2,1.6],[2,12,1.2,1.6]]){
  const r=phase(p,w);assert.equal(r.min,min);assert.equal(r.max,max);assert.equal(r.phase,p);
 }
 assert.equal(phase(1,7).extended,true);assert.equal(phase(2,1).late,false);
-assert.equal(phase(1,3,{vegetative:5,flower:3}).max,0.8);
-assert.equal(phase(2,3,{vegetative:5,flower:4}).max,1.2);
 for(const w of [null,0,-1,1.5,true,''])assert.equal(phase(1,w).reason,'unknown');
 assert.equal(phase(3,2).reason,'drying');assert.equal(phase(7,1).reason,'unknown');
 assert.equal(api.phaseRange({'settings.grow.currentPhase':1,'settings.grow.currentGrowWeek':4}).reason,'unknown');
-assert.equal(api.phaseRange({'settings.grow.currentPhase':1,'settings.grow.currentPhaseWeek':2},{vegetative:3,flower:3},false).reason,'unknown');
-const memory=new Map(),storage={getItem:k=>memory.get(k)??null};
-assert.deepEqual(api.loadPhaseSettings(2,storage),{vegetative:3,flower:3});
-memory.set('gt_vpd_phase_split_2','{"vegetative":5,"flower":4}');assert.deepEqual(api.loadPhaseSettings(2,storage),{vegetative:5,flower:4});assert.equal(api.loadPhaseSettings(3,storage).vegetative,3);
-for(const bad of ['invalid','null','{"vegetative":0,"flower":53}','{"vegetative":true,"flower":"4"}']){memory.set('gt_vpd_phase_split_2',bad);assert.deepEqual(api.loadPhaseSettings(2,storage),{vegetative:3,flower:3});}
+assert.equal(api.phaseRange({'settings.grow.currentPhase':1,'settings.grow.currentPhaseWeek':2},false).reason,'unknown');
+assert.equal('loadPhaseSettings' in api,false);
 assert.equal(api.inPhase(0.8,phase(1,3)),true);assert.equal(api.inPhase(1.17,phase(1,3)),true);assert.equal(api.inPhase(null,phase(1,3)),false);
-console.log('Phase-aware reference: latest legend, week boundaries, extended phases, no guessed week, drying/stale, configurable per-tent splits passed');
+console.log('Phase-aware reference: latest legend, week boundaries, extended phases, no guessed week, drying/stale, display-only defaults passed');
 
 // Table colour follows the displayed two-decimal value at every boundary.
 assert.equal(api.calculate(33,60,-1.5).toFixed(2),'1.60');

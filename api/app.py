@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.376"
+APP_VERSION = "v0.377"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9846,7 +9846,7 @@ def dashboard_page(request: Request):
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
         __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
-        <script src=\"/static/vpd-table.js?v=0.375\"></script>
+        <script src=\"/static/vpd-table.js?v=0.377\"></script>
         <style>
           :root {
             --bg:#0f172a;
@@ -9916,7 +9916,7 @@ def dashboard_page(request: Request):
           .pot-strain-link:hover { filter:none; box-shadow:none; text-decoration:none; }
           button { padding:7px 11px; border-radius:9px; border:1px solid rgba(14,165,233,.45); background:linear-gradient(180deg, rgba(14,165,233,.22), rgba(2,132,199,.18)); color:var(--text); font-size:.8rem; font-weight:700; box-shadow:0 2px 8px rgba(2,6,23,.2); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; cursor:pointer; }
           body.role-pending button:not(#viewModeBtn):not(#mobileNavToggle):not(.pot-strain-link),
-          body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle):not(.pot-strain-link):not(#openVpdTableBtn):not(#closeVpdTableBtn):not(#vpdPhaseSaveBtn) {
+          body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle):not(.pot-strain-link):not(#openVpdTableBtn):not(#closeVpdTableBtn) {
             pointer-events:none; opacity:.55; cursor:not-allowed;
           }
           body.role-pending #espOpenBtn, body.role-pending #espStatsBtn, body.role-pending #pollErrorsBtn,
@@ -10126,11 +10126,6 @@ def dashboard_page(request: Request):
           #vpdTablePhaseAssessment { margin:0 0 8px; font-size:.85rem; }
           #vpdReferenceTable td[data-phase-range] { outline:2px solid #15803d; outline-offset:-2px; }
           #vpdReferenceTable.vpd-reference-active td:not([data-phase-range]):not([data-current]) { opacity:.5; }
-          .vpd-phase-config { margin:10px 0; font-size:.85rem; }
-          .vpd-phase-config form { margin-top:8px; display:flex; align-items:end; flex-wrap:wrap; gap:10px; }
-          .vpd-phase-config label { display:grid; gap:4px; max-width:220px; }
-          .vpd-phase-config input { max-width:90px; }
-          .vpd-phase-config button { width:auto; }
           #vpdPhaseRangeKey { outline:2px solid #15803d; outline-offset:-2px; }
           .vpd-table-legend { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0; font-size:.8rem; }
           .vpd-table-legend span { padding:4px 8px; border-radius:5px; }
@@ -10467,13 +10462,6 @@ def dashboard_page(request: Request):
           <p id=\"vpdTablePhaseAssessment\"></p>
           <dl id=\"vpdTableReadings\" class=\"vpd-table-readings\"></dl>
           <p id=\"vpdTableState\" class=\"small\" role=\"status\"></p>
-          <details class=\"vpd-phase-config\"><summary id=\"vpdPhaseConfigTitle\">Adjust week mapping</summary>
-            <p id=\"vpdPhaseConfigHint\" class=\"small\"></p>
-            <form id=\"vpdPhaseConfig\"><label><span id=\"vpdVegetativeLateLabel\">Vegetative: late from week</span><input id=\"vpdVegetativeLateWeek\" type=\"number\" min=\"2\" max=\"52\" step=\"1\" required></label>
-              <label><span id=\"vpdFlowerLateLabel\">Flowering: late from week</span><input id=\"vpdFlowerLateWeek\" type=\"number\" min=\"2\" max=\"52\" step=\"1\" required></label>
-              <button id=\"vpdPhaseSaveBtn\" type=\"submit\">Save display</button><span id=\"vpdPhaseConfigStatus\" role=\"status\"></span>
-            </form>
-          </details>
           <p id=\"vpdTableGridCaption\" class=\"small\"></p>
           <div class=\"vpd-table-scroll\" tabindex=\"0\"><table id=\"vpdReferenceTable\"></table></div>
           <p id=\"vpdTableLegendText\" class=\"small\"></p>
@@ -14415,7 +14403,7 @@ def dashboard_page(request: Request):
             }
             document.querySelectorAll('button').forEach(btn => {
               const id = btn.id || '';
-              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || id === 'openVpdTableBtn' || id === 'closeVpdTableBtn' || id === 'vpdPhaseSaveBtn' || btn.classList.contains('pot-strain-link'));
+              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || id === 'openVpdTableBtn' || id === 'closeVpdTableBtn' || btn.classList.contains('pot-strain-link'));
               btn.disabled = isGuestMode && !keep;
             });
             syncGrowProfileAction();
