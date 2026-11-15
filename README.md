@@ -2,18 +2,27 @@
 
 GrowTent Backend is a Docker-based backend and web UI for monitoring and operating one or more GrowTent controllers. It collects controller telemetry, stores history in PostgreSQL, provides dashboard charts and status cards, and offers control functions for compatible Shelly devices, relays, irrigation water pumps, and camera previews.
 
-The project is intended for controller firmware/API versions compatible with the `syschelle/GrowTent` controller project. Basic functions such as Docker startup, login, setup, and configuration backup can work without a controller. Dashboard values, relay actions, Shelly data, camera previews, and irrigation actions depend on the endpoints and payload fields delivered by the connected controller.
+The project is intended for controller firmware/API versions compatible with the [GrowTent](https://github.com/syschelle/GrowTent) and [GrowTent-S3](https://github.com/syschelle/GrowTent-S3) controller projects. Basic functions such as Docker startup, login, setup, and configuration backup can work without a controller. Dashboard values, relay actions, Shelly data, camera previews, and irrigation actions depend on the endpoints and payload fields delivered by the connected controller.
 
-<img width="1658" height="964" alt="image" src="https://github.com/user-attachments/assets/52dfa19d-45f6-48e4-a25a-2a151eecc01d" />
+## Dashboard overview
+
+The dashboard combines camera preview, grow phase and dates, energy/cost totals, ESP-confirmed irrigation information, climate measurements, soil moisture, relay/Shelly states and history charts. Target edits, phase/date changes and irrigation actions are restricted to administrators; guests retain read-only monitoring.
+
+![CanopyOps dashboard with climate, irrigation, Shelly devices and history charts](docs/images/canopyops-dashboard.png)
+
+The full-height screenshot shows the English interface on a classic eight-relay controller. ESP32-S3 controllers use their own six-channel pump/relay mapping. Displayed names, readings and addresses are examples.
 
 ---
 
 ## Table of contents
 
 - [What this backend provides](#what-this-backend-provides)
+- [VPD reference table](#vpd-reference-table)
+- [Climate history and analysis export](#climate-history-and-analysis-export)
 - [Architecture](#architecture)
 - [Network and security model](#network-and-security-model)
 - [Grow Profile adjustments (administrator)](#grow-profile-adjustments-administrator)
+- [ESP-owned irrigation and synchronization](#esp-owned-irrigation-and-synchronization)
 - [Irrigation hardware: normal water pumps](#irrigation-hardware-normal-water-pumps)
 - [Compose files](#compose-files)
 - [Environment and secrets](#environment-and-secrets)
@@ -26,10 +35,12 @@ The project is intended for controller firmware/API versions compatible with the
 - [Expected controller capabilities](#expected-controller-capabilities)
 - [Shelly integration](#shelly-integration)
 - [Camera and go2rtc integration](#camera-and-go2rtc-integration)
+- [ESP Heap history: 24-hour diagnostic export](#esp-heap-history-24-hour-diagnostic-export)
 - [Data storage, retention, backup, and restore](#data-storage-retention-backup-and-restore)
 - [Useful URLs and API endpoints](#useful-urls-and-api-endpoints)
 - [Operational checks](#operational-checks)
 - [Troubleshooting](#troubleshooting)
+- [Release information and validation](#release-information-and-validation)
 
 ---
 
@@ -51,6 +62,9 @@ Main features:
 - optional Sensor.Community/Luftdaten DNMS-compatible live air sensor display
 - up to three dedicated ESP8266 soil moisture sensor IPs per tent
 - optional per-tent Growlight power-drop warning via Pushover with configurable Watt threshold; normal light-off transitions are ignored
+- read-only live VPD reference table for administrators and guests, with phase/week highlighting
+- ESP-owned irrigation planning, signed next-run confirmation and durable event-based notifications
+- compact JSON analysis downloads for selected time ranges
 - relay and irrigation actions for compatible controllers
 - water-pump test actions for configured pump channels
 - camera preview support through internal go2rtc access
@@ -63,7 +77,7 @@ Main features:
 ---
 
 
-### v0.330 security defaults
+### Security defaults
 
 The API host port is bound to loopback by default:
 
@@ -79,6 +93,58 @@ Project ZIP download is disabled by default (`PROJECT_DOWNLOAD_ENABLED=false`). 
 
 Even when normal dashboard authentication is globally disabled, Setup, `/config/*`, project downloads, poll diagnostics and API documentation still require an authenticated administrator session. Administrator login always validates real credentials.
 
+## VPD reference table
+
+Open **VPD table / VPD-Tabelle** from the VPD tile. This read-only dialog is available to guests and administrators; it does not change ESP settings, phase/week assignments or target values.
+
+![Live VPD table with Actual VPD, leaf offset and phase reference highlighting](docs/images/vpd-table.png)
+
+The table covers 20–40 °C and 25–85% relative humidity in 2.5-percentage-point humidity steps. It displays exact current temperature, humidity, **Actual VPD / IST-VPD**, target VPD, leaf offset and a separately calculated reference from temperature/humidity. Reference cells use the ESP-compatible saturation-pressure calculation with the configured leaf offset, without advancing any control filter.
+
+The current valid reading highlights the nearest grid cell, temperature row and humidity column. The marker is rounded to the grid; the actual ESP regulation value remains the authoritative measurement and may differ from the calculated reference because of smoothing. Missing offsets leave reference cells unavailable. Invalid, stale, missing or out-of-range readings do not receive an active marker.
+
+Phase/week metadata from the existing ESP snapshot selects the outlined reference band:
+
+| ESP phase | Weeks 1–2 | Week 3 onward |
+| --- | --- | --- |
+| Vegetative | 0.4–0.8 kPa | 0.8–1.2 kPa |
+| Flowering | 0.8–1.2 kPa | 1.2–1.6 kPa |
+| Drying, unknown phase/week or stale data | No phase band | No phase band |
+
+Extended phases retain their own late-phase band until the ESP phase actually changes. There are no week-mapping controls or browser overrides. These are display references, not automatic targets. Colour bands follow the displayed two-decimal reference value, including 1.60 kPa in the upper reference band. The VPD tile also shows a compact reference-range assessment when valid data is available.
+
+The dialog reuses existing latest-state data, with no extra ESP/Shelly polling or write requests. It supports German/English, Celsius/Fahrenheit labels, keyboard close and mobile scrolling. Guest access to the table does not grant target-editing privileges.
+
+## Climate history and analysis export
+
+### ESP-owned VPD channel
+
+The VPD tile, fullscreen camera metric, VPD history, statistics and history exports use `sensors.cur.vpdKpa` from the ESP. The backend does not recalculate or smooth that measurement from temperature/humidity or replace it with raw/older readings. Missing, invalid or explicitly stale climate data produces `null` and a chart gap. Raw VPD remains a separate diagnostic value; compatibility smoothed-VPD fields alias the control value.
+
+Stored history is not rewritten. Old samples already synthesized by an older backend cannot retrospectively prove ESP provenance; no historical backfill is attempted. `backend.vpd.source` identifies channel selection, not cryptographic provenance.
+
+### Chart ranges
+
+**Setup → Charts** stores browser-local axis preferences shared across tents in that browser:
+
+- Temperature: half-span around the target in °C, converted for °F; default ±5 °C.
+- Humidity: total minimum span in percentage points; default 10, shifted within 0–100% near the edges.
+- VPD: total minimum span in kPa around the target; default automatic.
+
+Zero selects automatic scaling. Missing targets use the midpoint of valid plotted readings. Axes expand for larger excursions. Preferences apply on the next refresh and are not included in server backups or synchronized to other browsers; measurements, statistics and exports stay unchanged.
+
+### JSON analysis download
+
+**Export JSON / JSON exportieren** opens a period selector for 1, 6, 12, 24 or 48 hours (default 24 hours) and downloads a compact `.json` attachment suitable for analysis with tools such as ChatGPT. Nothing is uploaded automatically.
+
+`GET /api/export/analysis?tent_id=<id>&range=24h` reads existing stored history. The `growtent.analysis.v1` format includes windowed average/minimum/maximum/valid sample counts for control/raw climate measurements, humidifier power and adaptive smoothing factors. Targets, including leaf offset, retain first/last values and observed changes; gaps and omitted event details are explicitly reported. Unknown/stale values remain unknown.
+
+Default windows are 2 minutes, or 4 minutes for 48 hours, with at most 720 points. If required, windows widen to keep the UTF-8 file within 1,000,000 bytes; `sizeAdapted` and `bucketSeconds` describe the result. Observed switch changes are backend samples, not exact physical event timestamps; short pulses between polls may be missed. Sampling gaps break switch continuity. Downloads exclude IP addresses, secrets and original payloads.
+
+Existing `/api/export` and `/api/history` retain their 50-sample schemas. History points include `temperature_target` in °C and `vpd_target` in kPa from the same stored sample; missing historical targets remain null instead of inheriting today's setting.
+
+---
+
 ## Architecture
 
 The default Docker stack contains three services.
@@ -91,11 +157,10 @@ The default Docker stack contains three services.
 
 Normal browser access:
 
+Prefer the public HTTPS URL of your reverse proxy. Direct `http://<server-ip>:8088` access requires an explicitly non-loopback `GT_API_BIND_ADDRESS`; plain-HTTP login sessions also require `SESSION_COOKIE_SECURE=false`.
+
 ```text
-
-> **v0.330:** direct `http://<server-ip>:8088` access only works when `GT_API_BIND_ADDRESS=0.0.0.0` (or another non-loopback bind address) and, for plain HTTP login sessions, `SESSION_COOKIE_SECURE=false`. Prefer HTTPS through a reverse proxy.
-
-http://<server-ip>:8088
+http://127.0.0.1:8088
 ```
 
 Common pages:
@@ -117,7 +182,7 @@ On the selected tent dashboard, the **Adjust / Anpassen** action within the stat
 
 The dashboard modal has compact aligned controls and a content-sized height, while preserving touch-friendly input rows on small screens.
 
-The action is visible only to administrators while the controller is online (`Status: OK`) and the per-tent Backend Write API is fully configured in Setup (enabled, controller URL and HMAC secret). Each Grow Profile setting has its own **Send** action. Temperature uses 0.5 °C increments and target VPD 0.1 kPa; flowering and drying dates can only be explicitly deleted via JSON `null`.
+The action is visible only to administrators while the controller is online (`Status: OK`) and the per-tent Backend Write API is fully configured in Setup (enabled, controller URL and HMAC secret). Target temperature and VPD also have compact **change / ändern** dialogs directly on their measurement tiles. The **Adjust / Anpassen** dialog beside the phase handles phase and dates. Each Grow Profile setting has its own **Send** action. Temperature uses 0.5 °C increments. Target VPD uses 0.01 kPa increments and two decimal places, within 0.50–3.50 kPa. Flowering and drying dates can only be explicitly deleted via JSON `null`.
 
 The backend signs writes using HMAC-SHA256 and confirms both stored and runtime controller values before showing success. Guests cannot see the action or modal and receive HTTP 403 for the Grow Profile editor and write API. No extra controller polling runs while the modal is closed.
 
@@ -172,12 +237,23 @@ ports:
   - "127.0.0.1:8088:8080"
 ```
 
-For LAN access, keep:
+For intentional direct LAN access, set `GT_API_BIND_ADDRESS` to the host's LAN address or `0.0.0.0` in `.env` and restrict access through the host/network firewall. Keep the loopback default when using a host-based HTTPS reverse proxy.
 
-```yaml
-ports:
-  - "8088:8080"
-```
+---
+
+## ESP-owned irrigation and synchronization
+
+The ESP is the only automatic irrigation scheduler. The backend edits the controller's persistent plan through HMAC, retains manual full-cycle requests and sends Pushover notifications from durably ingested ESP events. Use compatible firmware supporting the signed plan/event protocol, idempotent manual starts and next-run metadata; basic telemetry alone is insufficient.
+
+In Setup, enable Backend Write API for the tent, set the controller URL (normally `http://<esp-ip>:8080`) and enter the same 64-character hexadecimal secret configured on the ESP. The ESP must allow the TCP source IPv4 address it actually sees; with Docker NAT this is commonly the Docker host's LAN IP. HMAC provides authentication, integrity and replay protection; HTTP traffic is not encrypted.
+
+Open **Irrigation plan / Bewässerungsplan**, review the ESP's confirmed settings or explicitly load and review a previous backend snapshot, then save. The ESP retains authority over timing, Drying, enabled pumps, Flood interlocks, storage and overlap checks. Independent backend automatic scheduling must remain disabled.
+
+The dashboard shows the signed ESP next-run forecast for both six- and eight-relay layouts. Disabled, unavailable and stale states are labelled; the backend neither guesses a replacement date nor triggers automatic watering. Known last-watering history is transferred only from available records, never estimated.
+
+Signed plan confirmation and event/ACK errors are independent. An event warning does not invalidate an otherwise confirmed plan; offline/authentication failures remain read-only and display diagnostics. Confirmation times are displayed in Europe/Berlin. A queued/accepted manual command is not evidence of physical completion: the backend tracks its durable command identity and event result, without unsigned legacy fallback.
+
+See [TESTING.md](TESTING.md) and [SECURITY.md](SECURITY.md) for delivery semantics and open device validation.
 
 ---
 
@@ -223,10 +299,10 @@ Default API image:
 ghcr.io/syschelle/growtent-backend-api:latest
 ```
 
-Pinned image example:
+Pinned image example (replace `YOUR_RELEASE_TAG` with an existing published release tag):
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.377
+ghcr.io/syschelle/growtent-backend-api:YOUR_RELEASE_TAG
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -315,11 +391,11 @@ Start the stack:
 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
-The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
+The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly; replace `YOUR_RELEASE_TAG` with an existing published release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.377 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.377 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:YOUR_RELEASE_TAG docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:YOUR_RELEASE_TAG docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -448,7 +524,7 @@ Important administrator behavior:
 - the legacy single-admin fields remain only as an internal rollback compatibility mirror and are no longer shown as editable admin credentials
 - each administrator can independently use password-only login or enable their own TOTP 2FA
 - the last active administrator cannot be disabled or deleted
-- upgrades from pre-v0.322 migrate the existing single admin automatically and preserve its password hash, TOTP secret and recovery-code hashes
+- upgrades from the legacy single-admin layout migrate the existing single admin automatically and preserve its password hash, TOTP secret and recovery-code hashes
 - old configuration backups without an `admins` section are restored as a single administrator and migrated automatically
 - after the first admin password exists, `/install` and `/api/install` return `404`
 - leaving the password field empty keeps the current password unchanged
@@ -672,7 +748,7 @@ Security note: configuration backup exports do not include plaintext Shelly pass
 Create a PostgreSQL dump:
 
 ```bash
-docker exec -t gt_db pg_dump -U growtent -d growtent > growtent-backup.sql
+docker exec gt_db sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > growtent-backup.sql
 ```
 
 Restore a dump:
@@ -907,7 +983,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.377 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:YOUR_RELEASE_TAG docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -982,7 +1058,7 @@ docker logs --tail=100 gt_db
 Check the API database URL:
 
 ```bash
-docker inspect gt_api --format '{{range .Config.Env}}{{println .}}{{end}}' | grep DATABASE_URL
+docker exec gt_api python -c 'import os; print("DATABASE_URL configured:", bool(os.environ.get("DATABASE_URL")))'
 ```
 
 There is no safe default database URL. The value must come from your deployment-specific `.env` file and should match your `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` settings.
@@ -1064,96 +1140,8 @@ Grow environments combine water, electricity, pumps, heaters, lights, and automa
 - test manually before enabling unattended operation
 - verify fail-safe behavior for pumps, lights, fans, and heaters
 
-## ESP-owned irrigation (v0.354)
+## Release information and validation
 
-The ESP is the only automatic irrigation scheduler. The backend edits its plan over HMAC, retains manual start controls, and sends Pushover notifications from durably ingested ESP events. Install matching firmware v0.5.10 first. Open the plan dialog, verify existing ESP settings or explicitly load/review the previous backend snapshot, then save. Offline values are marked stale and cannot be saved as confirmed.
+Release-specific changes belong in the root `RELEASE_NOTES_*.md` file and [GitHub Releases](https://github.com/syschelle/growtent-backend/releases). Keep one current release-notes file matching `APP_VERSION` in `api/app.py`; older notes remain in Git history and published releases. Do not delete tags/releases or rewrite history when replacing the current notes.
 
-See [release notes](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.354.md), [testing](TESTING.md) and [security](SECURITY.md) for migration, delivery semantics and remaining hardware checks.
-
-## Next irrigation display (v0.355)
-
-The dashboard displays the signed ESP-owned next-run time for both six- and eight-relay layouts. Install firmware v0.5.12 for this metadata. Disabled, unavailable and stale states are labelled; the backend does not calculate a replacement schedule or trigger automatic watering. See [RELEASE_NOTES_v0.355.md](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.355.md).
-
-## Irrigation synchronization status (v0.356)
-
-Signed plan confirmation and event/ACK errors are independent. Event warnings do not disable a confirmed plan; actual offline/authentication failures remain read-only and show diagnostics. Confirmation times are displayed in Europe/Berlin. Firmware v0.5.13 adds the same next-run date/time display to the ESP itself. See [RELEASE_NOTES_v0.356.md](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.356.md).
-
-## Dashboard target editors (v0.363)
-
-Administrators can edit target temperature and VPD directly from their measurement tiles. Each button opens a dialog for that target only; Adjust sits beside the current phase in the Grow Phase tile and opens a native dialog for phase and dates. Controls require configured backend writes and an available controller/status. The existing HMAC Grow Profile path remains in use. See [RELEASE_NOTES_v0.363.md](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.363.md).
-
-In v0.363 both target tile buttons read **ändern** (German) or **change** (English); their dialogs keep the specific target name.
-
-Target-only dialogs use a compact 280 px maximum width in v0.363; the native phase/date dialog has a compact 320 px maximum width. Current VPD is displayed with two decimal places.
-
-Target-temperature and VPD editors now use small native dialogs directly in the dashboard, without an editor iframe, opening loader or height adjustment. The current tent’s existing target value is used immediately; a missing value is read once from the protected profile endpoint. Save still uses the existing backend/HMAC path.
-
-VPD target edits use 0.01 kPa steps and two displayed decimal places in v0.363 (for example 1.17 or 1.20). Numeric API payloads and the 0.50–3.50 kPa range are unchanged.
-
-## ESP-owned VPD channel (v0.364)
-
-The VPD tile, camera-popup metric, VPD history curve, average/min/max and history exports use `sensors.cur.vpdKpa`, the ESP regulation channel. The backend does not recalculate or smooth VPD from temperature/humidity and does not substitute raw, legacy/current aliases or older samples. Missing/invalid values and explicit climate-invalid/stale flags produce null and a chart gap rather than zero. `sensors.smoothed.vpdKpa` and export `vpd_smoothed` remain compatibility aliases of the control value. Raw VPD stays a separate diagnostic field; the VPD chart keeps its existing single VPD curve, average and target labels. No ESP update is required, and Adaptive Climate Smoothing, targets and hysteresis are unchanged.
-
-Stored history JSON is not rewritten. Read projections prefer the existing stored current channel, so old charts can change to that channel rather than the formerly preferred backend calculation. If an older backend already synthesized a missing current value before storing it, its original ESP provenance cannot be reconstructed automatically; no historical backfill is attempted. `backend.vpd.source` describes the selected channel (`esp_current` or `unavailable`), not cryptographic provenance. Temperature/humidity continuity behavior remains unchanged.
-
-## Climate chart scale (v0.365)
-
-Temperature history suggests target ±5 °C (±9 °F). Without a target, it uses the midpoint of valid raw/current readings. Humidity suggests a 10-percentage-point window centered on its data, shifted within 0–100% near the edges. Both charts expand automatically for larger excursions; samples, averages and exports are unchanged. VPD chart scaling is unchanged.
-
-## Configurable chart ranges (v0.366)
-
-Setup → Charts stores axis preferences locally in this browser for all tents. Temperature is a half-span around the target in °C (converted automatically for °F); humidity is a total minimum width in percentage points; VPD is a total minimum width in kPa around its target. Missing targets use the midpoint of available plotted readings. Zero selects automatic scaling. Defaults are ±5 °C, 10 percentage points and automatic VPD. Larger excursions always expand the axes; readings, statistics, exports and ESP control are unchanged. Preferences apply at the next chart refresh and are not part of server backups or synchronized to other browsers.
-
-## Historical targets in JSON exports (v0.367)
-
-Each exported history point includes `temperature_target` (°C) and `vpd_target` (kPa), read from `settings.grow.targetTemperature` and `settings.grow.targetVPD` in that same stored ESP sample. The dashboard JSON download and `/api/history` share these additive fields. Missing or invalid targets remain null; the backend never substitutes the current/latest setting or rewrites historical data. Existing measurement fields and the 50-point limit are unchanged.
-
-## Compact analysis file export (v0.368)
-
-The dashboard JSON export opens a period selector (1/6/12/24/48 hours, default 24h) and downloads a `.json` attachment. The read-only `/api/export/analysis?tent_id=2&range=24h` endpoint uses existing historical payloads only. Default windows are 2 minutes, or 4 minutes for 48h, with at most 720 points. Files are limited to 1,000,000 UTF-8 bytes by widening windows when necessary (`sizeAdapted`, actual `bucketSeconds`). Old `/api/export` and `/api/history` retain their existing 50-sample schemas.
-
-`growtent.analysis.v1` includes per-window average/min/max/valid sample count for control/raw temperature, humidity, VPD, humidifier watts and adaptive smoothing factors. Targets (including leaf offset) have first/last values plus observed changes. Unknown/stale readings remain unknown, empty windows remain present and gaps above `gapThresholdSeconds` are listed. Observed switch changes are not physical event timestamps: short pulses between backend polls can be missed. Unknown state and sampling gaps break switch continuity. Each window retains up to 4 target-change details and 8 switch-transition details; complete observed counts remain available and `eventDetailsOmitted` explicitly reports omitted detail entries. The download contains no IP addresses, authentication secrets or original payloads. No recording cadence or ESP behavior changes.
-
-## Export explanation (v0.369)
-
-The export dialog briefly explains that the file is intended for data analysis with an AI such as ChatGPT. Download behavior and analysis file contents are unchanged; no automatic upload is performed.
-
-## Live VPD reference table (v0.370)
-
-The VPD tile opens a read-only table covering 20–40 °C and 25–85% relative humidity (2.5-point steps). The nearest grid cell, temperature row and humidity column highlight current valid ESP readings; exact temperature, humidity, ESP control VPD, target VPD, leaf offset and a separately labeled T/RH reference appear above the grid. Cells use the ESP-compatible saturation-pressure formula with the configured leaf offset, without any control-filter state. Numerical color bands are reference ranges, not automatic targets or growing-phase recommendations.
-
-The ESP regulation value is always shown directly, never replaced by the calculated reference. Existing `/latest` responses feed the view; no extra sensor/Shelly polling or write calls are made. Missing offsets show unavailable reference cells; stale/invalid, missing, tent-switched and out-of-range readings never receive an active marker. The dialog supports German/English, Celsius/Fahrenheit labels, keyboard close, automatic initial marker centering and mobile scrolling.
-
-## Compact VPD tile actions (v0.371)
-
-VPD table and target change share one compact footer row, with the table on the left and change on the right. This removes the additional full-width table-button row without changing table or target behavior.
-
-## Phase-aware VPD reference (v0.372)
-
-The table reads `settings.grow.currentPhase` and `settings.grow.currentPhaseWeek` from the existing ESP snapshot. The latest user-supplied classic legend supplies the reference ranges: early vegetative 0.4–0.8 kPa; late vegetative and early flowering 0.8–1.2 kPa; late flowering 1.2–1.6 kPa. Default stage mapping is weeks 1–2 early, week 3 onward late. This week mapping is application configuration, not a week prescription from the reference document.
-
-An extended vegetative or flowering phase retains its own late range beyond the nominal five-week plan. Only an actual ESP phase change switches to another phase. Missing/invalid phase weeks, unknown phases, stale readings and drying do not select a reference range. Outlined grid cells show the selected reference band; the exact ESP regulation value is compared separately and remains unchanged.
-
-The table is display-only. Phase/week reference ranges use weeks 1–2 early and week 3 onward late. No week-mapping controls or browser overrides remain as of v0.377. Optional ESP target automation is not implemented by the table.
-
-## Release notes policy
-
-Keep exactly one versioned release-notes file in the repository root: `RELEASE_NOTES_<current-version>.md`, matching `APP_VERSION` in `api/app.py`. When bumping the version, replace the previous file rather than accumulating notes. Historical notes remain available in Git history and published GitHub Releases. Never delete tags/releases or rewrite Git history for this cleanup.
-
-Run `python scripts/check_release_notes.py` before pushing. Branch/PR and release builds enforce this invariant; tag builds also require the tag to match the source version.
-
-## VPD table colour rounding (v0.373)
-
-Table colours follow the displayed two-decimal reference value, including the orange upper boundary at 1.60 kPa. ESP control calculations are unchanged.
-
-## v0.375 VPD tile assessment
-
-The tile reuses the read-only phase/week reference with compact inline DE/EN text. Stale data and drying do not claim an in-range value. ESP regulation and write security remain unchanged. Browser coverage checks closed-dialog updates and stale expiry.
-
-## v0.376 guest VPD table
-
-Guest table open/close and browser-local week mapping controls are exempt from guest pointer blocking, matching the existing JavaScript allowlist. Controller write restrictions remain unchanged. Browser regressions cover guest table access and blocked VPD target editing.
-
-## v0.377 display-only VPD table
-
-The current table labels the central measurement IST-VPD (Actual VPD), has no week-mapping controls or persistence, and ignores previous browser overrides. It retains phase/week reference highlighting with the default week-3 boundary and no extended-phase suffix. Guest access and ESP control remain unchanged. Earlier week-configuration sections describe historical versions only.
+Run `python scripts/check_release_notes.py` before pushing. [TESTING.md](TESTING.md) records validation and remaining hardware checks; [SECURITY.md](SECURITY.md) documents security boundaries. Additional deployment guidance remains in [DEPLOY_IMAGES.md](DEPLOY_IMAGES.md) and [INSTALL_BACKEND_EN.md](INSTALL_BACKEND_EN.md).
