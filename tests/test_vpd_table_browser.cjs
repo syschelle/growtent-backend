@@ -26,7 +26,7 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
   const geometry=await page.locator('.vpd-card-actions').evaluate(row=>{const a=row.querySelector('#openVpdTableBtn').getBoundingClientRect(),b=row.querySelector('#editVpdTargetBtn').getBoundingClientRect(),c=row.closest('.card').getBoundingClientRect();return{ay:a.y,by:b.y,aw:a.width,cw:c.width,right:a.right,next:b.left,height:row.getBoundingClientRect().height};});
   assert.ok(Math.abs(geometry.ay-geometry.by)<2,'VPD actions share a row');assert.ok(geometry.aw<geometry.cw/2,'Table action stays compact');assert.ok(geometry.right<=geometry.next,'Actions do not overlap');assert.ok(geometry.height<=34,'One compact footer row');
  }
- const before=requests;await page.locator('#openVpdTableBtn').click();assert.equal(await page.locator('#vpdReferenceTable tbody tr').count(),21);assert.equal(await page.locator('#vpdReferenceTable tbody td').count(),525);assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),1);assert.match(await page.locator('#vpdTableReadings').textContent(),/IST-VPD1,16 kPa/);
+ const before=requests;await page.locator('#openVpdTableBtn').click();assert.equal(await page.locator('#vpdReferenceTable tbody tr').count(),16);assert.equal(await page.locator('#vpdReferenceTable tbody td').count(),400);assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),1);assert.match(await page.locator('#vpdTableReadings').textContent(),/IST-VPD1,16 kPa/);
  assert.match(await page.locator('#vpdTablePhase').textContent(),/Woche 1.*0,40–0,80/);
  assert.ok(await page.locator('#vpdReferenceTable td[data-phase-range]').count()>0);
  for(const [phase,week,pattern]of [[1,3,/0,80–1,20/],[1,7,/Woche 7.*0,80–1,20/],[2,1,/0,80–1,20/],[2,3,/1,20–1,60/]]){
@@ -40,9 +40,14 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
  assert.doesNotMatch(await page.locator('#vpdTablePhase').textContent(),/verlängert|gleicher Phasenbereich/);
  await page.evaluate(()=>{localStorage.setItem('gt_vpd_phase_split_2','{"vegetative":5}');GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3},new Date(clock).toISOString());});
  assert.match(await page.locator('#vpdTablePhase').textContent(),/0,80–1,20/);
+ await page.evaluate(()=>{ctx.unit='F';GrowTentVpdTable.refresh();});
+ assert.equal(await page.locator('#vpdReferenceTable tbody th').first().textContent(),'68,0');
+ assert.equal(await page.locator('#vpdReferenceTable tbody th').last().textContent(),'95,0');
+ assert.match(await page.locator('#vpdTableReadings').textContent(),/Blatt-Offset-2,70 °F/);
+ await page.evaluate(()=>{ctx.unit='C';GrowTentVpdTable.refresh();});
  const initial=await page.locator('#vpdReferenceTable td[data-current]').textContent();
  await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=0;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.notEqual(await page.locator('#vpdReferenceTable td[data-current]').textContent(),initial);assert.match(await page.locator('#vpdTableReadings').textContent(),/IST-VPD1,16 kPa/);
- await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=null;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);assert.match(await page.locator('#vpdTableState').textContent(),/Blatt-Offset fehlt/);assert.equal(await page.locator('#vpdReferenceTable td.vpd-band-unknown').count(),525);
+ await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=null;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);assert.match(await page.locator('#vpdTableState').textContent(),/Blatt-Offset fehlt/);assert.equal(await page.locator('#vpdReferenceTable td.vpd-band-unknown').count(),400);
  await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=-1.5;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());clock+=120001;timer();});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);assert.match(await page.locator('#vpdTableState').textContent(),/Keine aktuellen/);assert.equal(await page.locator('#vpdReferenceTable td[data-phase-range]').count(),0);
  await page.evaluate(()=>{ctx.tent=3;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());timer();});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);
  await page.evaluate(()=>{GrowTentVpdTable.update(3,{...sample,'sensors.cur.temperatureC':18},new Date(clock).toISOString());});assert.match(await page.locator('#vpdTableState').textContent(),/außerhalb/);assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);

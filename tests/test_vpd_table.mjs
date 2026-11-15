@@ -72,3 +72,14 @@ ctx.language='en';mounted.refresh();assert.match(nodes.get('vpdRangeAssessment')
 wall+=120001;tick();assert.equal(nodes.get('vpdRangeAssessment').textContent,'Reference unavailable');
 wall+=1;mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true},new Date(wall).toISOString());assert.equal(nodes.get('vpdRangeAssessment').textContent,'Outside reference range');
 console.log('Production dashboard render: DE/EN night humidity notice, stale expiry and daytime assessment passed');
+
+// Same physical 20–35 C grid under both unit preferences; offsets are differences.
+assert.deepEqual(api.nearest(35,50),{temperature:35,humidity:50});
+assert.equal(api.nearest(35.01,50),null);
+assert.equal(api.nearest(40,50),null);
+assert.equal(api.temperatureDisplay(20,'F'),68);
+assert.equal(api.temperatureDisplay(35,'F'),95);
+assert.equal(api.temperatureDisplay(-1.5,'F',true),-2.7);
+assert.equal(api.temperatureDisplay(-1.5,'C',true),-1.5);
+assert.equal(api.temperatureDisplay(null,'F'),null);
+console.log('20–35 C / 68–95 F table bounds and Fahrenheit temperature differences passed');
