@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.369
+
+- Replace the detailed export hint with a short AI/ChatGPT analysis purpose explanation in German and English.
+
 ## v0.368
 
 - Download compact 1/6/12/24/48-hour JSON analysis files, default 24h with 2-minute windows.

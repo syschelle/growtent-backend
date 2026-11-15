@@ -57,3 +57,7 @@ JSON history projections add only the recorded climate targets, normalized to fi
 ## v0.368 analysis download
 
 The new read-only analysis export follows existing dashboard history authentication. It accepts only fixed 1–48h ranges, uses bound SQL parameters, emits a fixed metric/target allowlist and never includes stored payloads, IPs, tokens or HMAC secrets. Attachment filenames use numeric tent IDs and a server timestamp. Responses are no-store and bounded to 1,000,000 bytes by adapting window sizes. No writes or ESP requests are performed.
+
+## v0.369 export wording
+
+Only the explanatory dialog text changes. The backend still downloads a file locally and does not send data to ChatGPT or any other AI service. Existing export access and file-content safeguards remain unchanged.

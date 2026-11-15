@@ -1,4 +1,4 @@
-# Testing — v0.368
+# Testing — v0.369
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -72,3 +72,7 @@ The production JS chart test covers browser preferences, defaults, corrupt/inval
 ## Compact analysis export (v0.368)
 
 `test_analysis_export.py` exercises production aggregation and the download handler: 24h/8640 samples to 720 windows, extrema, valid counts, all ranges, empty windows, gaps, unknown/stale Shelly states, target changes, event-detail limits with full observed counts, nonfinite input, time boundaries, attachment headers, bounded SELECT-only SQL, unsupported periods and unknown tents. A busy-day fixture verifies the 1,000,000-byte guard and preserved sample counts/extrema. `render_analysis_export.py` and `test_analysis_export_browser.cjs` verify the actual button/dialog, default/48h selection, JSON attachment download, failed response recovery, cancel/Escape and DE/EN desktop/mobile layout. Existing Python/PostgreSQL/chart/browser/CodeQL checks remain required. No live controller calls are made.
+
+## Export explanation (v0.369)
+
+The existing production export browser test now checks the concise German AI/ChatGPT purpose hint after changing the period. Existing DE/EN dialog/download checks remain in place. Export aggregation, file bounds and backend recording are unchanged.
