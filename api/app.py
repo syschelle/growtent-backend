@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.378"
+APP_VERSION = "v0.379"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -10122,7 +10122,6 @@ def dashboard_page(request: Request):
           #vpdTablePhase { margin:10px 0 4px; font-weight:700; }
           .vpd-value-row { display:flex; align-items:baseline; gap:8px; min-width:0; }
           .vpd-value-row .value { flex:none; }
-          #vpd { border-radius:6px; padding:0 6px; }
           #vpdRangeAssessment { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.72rem; }
           #vpdTablePhaseAssessment { margin:0 0 8px; font-size:.85rem; }
           #vpdReferenceTable td[data-phase-range] { outline:2px solid #15803d; outline-offset:-2px; }
@@ -10160,6 +10159,11 @@ def dashboard_page(request: Request):
           #temp { color:#22d3ee; }
           #hum { color:#a78bfa; }
           #vpd { color:#f59e0b; }
+          #vpd.vpd-band-outer { background:transparent; color:#f8bbd0; }
+          #vpd.vpd-band-low { background:transparent; color:#a7dedb; }
+          #vpd.vpd-band-mid { background:transparent; color:#f9df62; }
+          #vpd.vpd-band-high { background:transparent; color:#f7ad65; }
+          #vpd.vpd-band-unknown { background:transparent; color:var(--muted); }
           #extTemp { color:#10b981; }
           #soilSensorsCards:empty { display:none; }
           .soil-sensors-grid { grid-template-columns:repeat(3, minmax(0,1fr)); align-items:start; }
