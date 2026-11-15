@@ -1,4 +1,4 @@
-# Testing — v0.380
+# Testing — v0.381
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -126,3 +126,9 @@ Dashboard-specific CSS uses the shared band colors for text with a transparent b
 Node regressions cover switch-state priority, daily schedule fallback, midnight boundaries, invalid/stale schedules and five-minute humidity continuity/reset. VPD remains visible; nighttime table phase highlighting is suppressed.
 
 Local v0.380 validation: VPD table/night-state/dashboard-render and VPD UI Node suites passed; release-notes check, Python syntax compilation and whitespace checks passed. Python pytest and browser fixture rendering could not run because pytest is not installed in this environment; visual browser validation remains open.
+
+## v0.381 table range and Fahrenheit
+
+Node regressions cover the 35 °C marker boundary and 68–95 °F conversion, including leaf-offset differences and null values. Browser assertions expect 16 rows/400 cells and converted Fahrenheit row headers/offset.
+
+Local v0.381: VPD table and VPD UI Node suites, release-notes checker and whitespace checks passed. Browser assertions were updated but could not run because the Playwright Chromium executable is absent.

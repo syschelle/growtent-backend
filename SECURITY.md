@@ -1,4 +1,4 @@
-# Security — v0.380
+# Security — v0.381
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -105,3 +105,7 @@ Presentation-only correction; authentication, permissions and controller writes 
 ## v0.380 night phase
 
 Night assessment and humidity notice are browser-only displays. No writes, new endpoints, permissions or push notifications are introduced.
+
+## v0.381 table range and Fahrenheit
+
+Only reference table range and displayed temperature units change. ESP values, calculation units, permissions and controller writes are unchanged.

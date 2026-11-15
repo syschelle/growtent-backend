@@ -13,7 +13,8 @@
   return {valid,temperature:valid?t:null,humidity:valid?rh:null,vpd:valid?vpd:null,
    target:target!==null&&target>=0?target:null,offset:number(data['settings.grow.offsetLeafTemperature']),capturedAt:capturedAt||null};
  }
- function nearest(t,rh){if(t===null||rh===null||t<20||t>40||rh<25||rh>85)return null;return{temperature:Math.round(t),humidity:Math.round(rh/2.5)*2.5};}
+ function nearest(t,rh){if(t===null||rh===null||t<20||t>35||rh<25||rh>85)return null;return{temperature:Math.round(t),humidity:Math.round(rh/2.5)*2.5};}
+ function temperatureDisplay(v,unit,difference=false){return v===null?null:unit==='F'?v*1.8+(difference?0:32):v;}
  function band(v){if(v!==null)v=Number(v.toFixed(2));return v===null?'unknown':v<0.4||v>1.6?'outer':v<0.8?'low':v<1.2?'mid':'high';}
  function phaseRange(data,available=true){
   if(!available)return{reason:'unknown'};
@@ -76,7 +77,7 @@
    if(current){for(const name of ['outer','low','mid','high','unknown'])current.classList.remove('vpd-band-'+name);current.classList.add('vpd-band-'+band(s.vpd));}
    if(!dialog.open)return;
    const format=(v,d=2)=>v===null?'—':v.toLocaleString(de?'de-DE':'en-GB',{minimumFractionDigits:d,maximumFractionDigits:d});
-   const temp=v=>v===null?null:unit==='F'?v*1.8+32:v;
+   const temp=v=>temperatureDisplay(v,unit);
    const phaseText=night?nightText:range.reason?(range.reason==='drying'?(de?'Trocknung – kein Phasenbereich markiert.':'Drying – no phase range highlighted.'):(de?'Phase/Woche offen – kein Phasenbereich markiert.':'Phase/week unavailable – no phase range highlighted.')):
     `${range.phase===1?(de?'Vegetativ':'Vegetative'):(de?'Blüte':'Flowering')} · ${de?'Woche':'Week'} ${range.week} · ${range.late?(de?'spät':'late'):(de?'früh':'early')} · ${format(range.min)}–${format(range.max)} kPa`;
    doc.getElementById('vpdTablePhase').textContent=phaseText;
@@ -84,7 +85,7 @@
    doc.getElementById('vpdPhaseRangeKey').textContent=de?'Umrandung: aktueller Phasenbereich':'Outline: current phase range';
 
    const summary=doc.getElementById('vpdTableReadings');summary.replaceChildren();
-   const data=[[labels.temp,format(temp(s.temperature),1)+' °'+unit],[labels.humidity,format(s.humidity,1)+' %'],[labels.control,format(s.vpd)+' kPa'],[labels.target,format(s.target)+' kPa'],[labels.offset,format(s.offset)+' °C'],[labels.reference,format(calculate(s.temperature,s.humidity,s.offset))+' kPa']];
+   const data=[[labels.temp,format(temp(s.temperature),1)+' °'+unit],[labels.humidity,format(s.humidity,1)+' %'],[labels.control,format(s.vpd)+' kPa'],[labels.target,format(s.target)+' kPa'],[labels.offset,format(temperatureDisplay(s.offset,unit,true))+' °'+unit],[labels.reference,format(calculate(s.temperature,s.humidity,s.offset))+' kPa']];
    for(const[label,value]of data){const item=doc.createElement('div'),dt=doc.createElement('dt'),dd=doc.createElement('dd');dt.textContent=label;dd.textContent=value;item.append(dt,dd);summary.append(item);}
    const note=[!s.valid?labels.missing:'',s.offset===null?labels.noOffset:'',s.valid&&!marker?labels.outside:''].filter(Boolean).join(' ');
    doc.getElementById('vpdTableState').textContent=note;
@@ -98,7 +99,7 @@
    const humidities=Array.from({length:25},(_,i)=>85-i*2.5);
    for(const rh of humidities){const th=doc.createElement('th');th.scope='col';th.textContent=format(rh,1);if(marker&&marker.humidity===rh)th.className='vpd-current-axis';hr.append(th);}head.append(hr);table.append(head);
    const body=doc.createElement('tbody');
-   for(let t=20;t<=40;t++){
+   for(let t=20;t<=35;t++){
     const row=doc.createElement('tr'),th=doc.createElement('th');th.scope='row';th.textContent=format(temp(t),unit==='F'?1:0);if(marker&&marker.temperature===t)th.className='vpd-current-axis';row.append(th);
     for(const rh of humidities){const td=doc.createElement('td'),v=calculate(t,rh,s.offset);td.textContent=format(v);td.className='vpd-band-'+band(v);if(inPhase(v===null?null:Math.round(v*100)/100,range))td.dataset.phaseRange='true';td.title=`${format(temp(t),1)} °${unit} / ${format(rh,1)} %: ${format(v)} kPa`;
      if(marker&&s.offset!==null&&marker.temperature===t&&marker.humidity===rh){td.dataset.current='true';td.setAttribute('aria-current','true');td.textContent+=' ★';}
@@ -113,5 +114,5 @@
   controller={update(tent,data,at){if(String(tent)!==String(getContext().tent))return;latest={tent,data:{...data},at};render();},invalidate(tent){if(String(tent)===String(getContext().tent)){latest=null;render();}},refresh:render};
   render();return controller;
  }
- return {calculate,snapshot,nearest,band,phaseRange,inPhase,lightState,humidityTracker,mount,update(...args){controller?.update(...args);},invalidate(...args){controller?.invalidate(...args);},refresh(){controller?.refresh();}};
+ return {calculate,snapshot,nearest,temperatureDisplay,band,phaseRange,inPhase,lightState,humidityTracker,mount,update(...args){controller?.update(...args);},invalidate(...args){controller?.invalidate(...args);},refresh(){controller?.refresh();}};
 });
