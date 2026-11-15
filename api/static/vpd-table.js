@@ -14,7 +14,7 @@
    target:target!==null&&target>=0?target:null,offset:number(data['settings.grow.offsetLeafTemperature']),capturedAt:capturedAt||null};
  }
  function nearest(t,rh){if(t===null||rh===null||t<20||t>40||rh<25||rh>85)return null;return{temperature:Math.round(t),humidity:Math.round(rh/2.5)*2.5};}
- function band(v){return v===null?'unknown':v<0.4||v>1.6?'outer':v<0.8?'low':v<1.2?'mid':'high';}
+ function band(v){if(v!==null)v=Number(v.toFixed(2));return v===null?'unknown':v<0.4||v>1.6?'outer':v<0.8?'low':v<1.2?'mid':'high';}
  function loadPhaseSettings(tent,storage){
   const defaults={vegetative:3,flower:3};
   try{const value=JSON.parse(storage.getItem('gt_vpd_phase_split_'+String(tent))||'{}');

@@ -33,3 +33,9 @@ memory.set('gt_vpd_phase_split_2','{"vegetative":5,"flower":4}');assert.deepEqua
 for(const bad of ['invalid','null','{"vegetative":0,"flower":53}','{"vegetative":true,"flower":"4"}']){memory.set('gt_vpd_phase_split_2',bad);assert.deepEqual(api.loadPhaseSettings(2,storage),{vegetative:3,flower:3});}
 assert.equal(api.inPhase(0.8,phase(1,3)),true);assert.equal(api.inPhase(1.17,phase(1,3)),true);assert.equal(api.inPhase(null,phase(1,3)),false);
 console.log('Phase-aware reference: latest legend, week boundaries, extended phases, no guessed week, drying/stale, configurable per-tent splits passed');
+
+// Table colour follows the displayed two-decimal value at every boundary.
+assert.equal(api.calculate(33,60,-1.5).toFixed(2),'1.60');
+assert.equal(api.band(api.calculate(33,60,-1.5)),'high');
+for(const [v,expected]of [[0.3949,'outer'],[0.3951,'low'],[0.7949,'low'],[0.7951,'mid'],[1.1949,'mid'],[1.1951,'high'],[1.6049,'high'],[1.6051,'outer']])assert.equal(api.band(v),expected);
+console.log('Displayed VPD rounding and colour boundary regressions passed');

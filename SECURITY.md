@@ -73,3 +73,7 @@ Only action placement changes. Existing read-only table behavior and administrat
 ## v0.372 phase-aware references
 
 Phase/week references and stage split preferences are display-only. Phase data comes from the current authorized ESP snapshot; unknown/stale data selects no phase band. Per-tent localStorage values are integer/range validated and are not controller settings. No target writes, phase changes or new network endpoints are introduced.
+
+## v0.373 table colours
+
+Only reference-table colour classification changes. Controller readings, authorization, HMAC writes and physical control remain unchanged.
