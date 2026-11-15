@@ -1068,19 +1068,19 @@ Grow environments combine water, electricity, pumps, heaters, lights, and automa
 
 The ESP is the only automatic irrigation scheduler. The backend edits its plan over HMAC, retains manual start controls, and sends Pushover notifications from durably ingested ESP events. Install matching firmware v0.5.10 first. Open the plan dialog, verify existing ESP settings or explicitly load/review the previous backend snapshot, then save. Offline values are marked stale and cannot be saved as confirmed.
 
-See [release notes](RELEASE_NOTES_v0.354.md), [testing](TESTING.md) and [security](SECURITY.md) for migration, delivery semantics and remaining hardware checks.
+See [release notes](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.354.md), [testing](TESTING.md) and [security](SECURITY.md) for migration, delivery semantics and remaining hardware checks.
 
 ## Next irrigation display (v0.355)
 
-The dashboard displays the signed ESP-owned next-run time for both six- and eight-relay layouts. Install firmware v0.5.12 for this metadata. Disabled, unavailable and stale states are labelled; the backend does not calculate a replacement schedule or trigger automatic watering. See RELEASE_NOTES_v0.355.md.
+The dashboard displays the signed ESP-owned next-run time for both six- and eight-relay layouts. Install firmware v0.5.12 for this metadata. Disabled, unavailable and stale states are labelled; the backend does not calculate a replacement schedule or trigger automatic watering. See [RELEASE_NOTES_v0.355.md](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.355.md).
 
 ## Irrigation synchronization status (v0.356)
 
-Signed plan confirmation and event/ACK errors are independent. Event warnings do not disable a confirmed plan; actual offline/authentication failures remain read-only and show diagnostics. Confirmation times are displayed in Europe/Berlin. Firmware v0.5.13 adds the same next-run date/time display to the ESP itself. See RELEASE_NOTES_v0.356.md.
+Signed plan confirmation and event/ACK errors are independent. Event warnings do not disable a confirmed plan; actual offline/authentication failures remain read-only and show diagnostics. Confirmation times are displayed in Europe/Berlin. Firmware v0.5.13 adds the same next-run date/time display to the ESP itself. See [RELEASE_NOTES_v0.356.md](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.356.md).
 
 ## Dashboard target editors (v0.363)
 
-Administrators can edit target temperature and VPD directly from their measurement tiles. Each button opens a dialog for that target only; Adjust sits beside the current phase in the Grow Phase tile and opens a native dialog for phase and dates. Controls require configured backend writes and an available controller/status. The existing HMAC Grow Profile path remains in use. See [RELEASE_NOTES_v0.363.md](RELEASE_NOTES_v0.363.md).
+Administrators can edit target temperature and VPD directly from their measurement tiles. Each button opens a dialog for that target only; Adjust sits beside the current phase in the Grow Phase tile and opens a native dialog for phase and dates. Controls require configured backend writes and an available controller/status. The existing HMAC Grow Profile path remains in use. See [RELEASE_NOTES_v0.363.md](https://github.com/syschelle/growtent-backend/blob/f890b302c80409515b053e784e6c3bfb527b5dc8/RELEASE_NOTES_v0.363.md).
 
 In v0.363 both target tile buttons read **ändern** (German) or **change** (English); their dialogs keep the specific target name.
 
@@ -1135,3 +1135,9 @@ The table reads `settings.grow.currentPhase` and `settings.grow.currentPhaseWeek
 An extended vegetative or flowering phase retains its own late range beyond the nominal five-week plan. Only an actual ESP phase change switches to another phase. Missing/invalid phase weeks, unknown phases, stale readings and drying do not select a reference range. Outlined grid cells show the selected reference band; the exact ESP regulation value is compared separately and remains unchanged.
 
 The expandable week-mapping controls in the table let each tent use independent late-stage start weeks (2–52). They persist locally in this browser, are not server backup settings and never send ESP writes or alter the actual target. Optional target automation remains outside this release.
+
+## Release notes policy
+
+Keep exactly one versioned release-notes file in the repository root: `RELEASE_NOTES_<current-version>.md`, matching `APP_VERSION` in `api/app.py`. When bumping the version, replace the previous file rather than accumulating notes. Historical notes remain available in Git history and published GitHub Releases. Never delete tags/releases or rewrite Git history for this cleanup.
+
+Run `python scripts/check_release_notes.py` before pushing. Branch/PR and release builds enforce this invariant; tag builds also require the tag to match the source version.

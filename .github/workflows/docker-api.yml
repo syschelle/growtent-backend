@@ -25,6 +25,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify current-only release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: python3 scripts/check_release_notes.py --tag "$RELEASE_TAG"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
