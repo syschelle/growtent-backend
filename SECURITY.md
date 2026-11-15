@@ -77,3 +77,7 @@ Phase/week references and stage split preferences are display-only. Phase data c
 ## v0.373 table colours
 
 Only reference-table colour classification changes. Controller readings, authorization, HMAC writes and physical control remain unchanged.
+
+## v0.374 hint text
+
+German display copy only; security and controller behaviour are unchanged.

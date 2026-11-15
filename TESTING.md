@@ -1,4 +1,4 @@
-# Testing — v0.373
+# Testing — v0.374
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -96,3 +96,7 @@ Production module tests cover the latest confirmed legend, default/custom early/
 ## v0.373 VPD colour boundaries
 
 Run `node tests/test_vpd_table.mjs`. Regression coverage checks the reported 33 °C / 60% / −1.5 °C cell (displayed 1.60 kPa) and both sides of all rounded colour boundaries. Controller calculations remain unchanged.
+
+## v0.374 hint text
+
+Existing VPD table tests remain applicable; only the German explanatory sentence changes.
