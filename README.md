@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.368
+ghcr.io/syschelle/growtent-backend-api:v0.369
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.368 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.368 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.369 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.369 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.368 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.369 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1113,3 +1113,7 @@ Each exported history point includes `temperature_target` (°C) and `vpd_target`
 The dashboard JSON export opens a period selector (1/6/12/24/48 hours, default 24h) and downloads a `.json` attachment. The read-only `/api/export/analysis?tent_id=2&range=24h` endpoint uses existing historical payloads only. Default windows are 2 minutes, or 4 minutes for 48h, with at most 720 points. Files are limited to 1,000,000 UTF-8 bytes by widening windows when necessary (`sizeAdapted`, actual `bucketSeconds`). Old `/api/export` and `/api/history` retain their existing 50-sample schemas.
 
 `growtent.analysis.v1` includes per-window average/min/max/valid sample count for control/raw temperature, humidity, VPD, humidifier watts and adaptive smoothing factors. Targets (including leaf offset) have first/last values plus observed changes. Unknown/stale readings remain unknown, empty windows remain present and gaps above `gapThresholdSeconds` are listed. Observed switch changes are not physical event timestamps: short pulses between backend polls can be missed. Unknown state and sampling gaps break switch continuity. Each window retains up to 4 target-change details and 8 switch-transition details; complete observed counts remain available and `eventDetailsOmitted` explicitly reports omitted detail entries. The download contains no IP addresses, authentication secrets or original payloads. No recording cadence or ESP behavior changes.
+
+## Export explanation (v0.369)
+
+The export dialog briefly explains that the file is intended for data analysis with an AI such as ChatGPT. Download behavior and analysis file contents are unchanged; no automatic upload is performed.

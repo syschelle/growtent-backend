@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.368"
+APP_VERSION = "v0.369"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -14298,13 +14298,11 @@ def dashboard_page(request: Request):
           let analysisExportTent = null;
           function analysisExportLabels(){
             const de=currentLang==='de';
-            const range=document.getElementById('analysisExportRange').value;
-            const minutes=range==='48h'?4:2;
             document.getElementById('analysisExportTitle').textContent=de?'JSON exportieren':'Export JSON';
             document.getElementById('analysisExportRangeLabel').textContent=de?'Zeitraum':'Period';
             document.getElementById('analysisExportHint').textContent=de?
-              `Eine kompakte Datei mit normalerweise ${minutes}-Minuten-Fenstern: Durchschnitt, Min/Max, Sollwerte und beobachtete Schaltwechsel. Datenlücken bleiben erkennbar. Bei Bedarf werden die Fenster für unter 1 MB vergrößert.`:
-              `One compact file with ${minutes}-minute windows: average, min/max, targets and observed switch changes. Data gaps remain visible. Windows may widen to keep the file below 1 MB.`;
+              'Dieser Export ist für die Datenanalyse mit einer KI, z. B. ChatGPT, gedacht.':
+              'This export is intended for data analysis with an AI, such as ChatGPT.';
             document.getElementById('analysisExportCancel').textContent=de?'Abbrechen':'Cancel';
             document.getElementById('analysisExportDownload').textContent=de?'Herunterladen':'Download';
           }
