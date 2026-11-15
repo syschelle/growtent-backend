@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.371"
+APP_VERSION = "v0.372"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9846,7 +9846,7 @@ def dashboard_page(request: Request):
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
         __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
-        <script src=\"/static/vpd-table.js?v=0.370\"></script>
+        <script src=\"/static/vpd-table.js?v=0.372\"></script>
         <style>
           :root {
             --bg:#0f172a;
@@ -10119,6 +10119,16 @@ def dashboard_page(request: Request):
           #vpdReferenceTable .vpd-current-axis { background:#1d4ed8; color:#fff; }
           #vpdReferenceTable td[data-current] { box-shadow:inset 0 0 0 3px #111827,inset 0 0 0 5px #fff; font-weight:800; }
           .vpd-band-outer { background:#f8bbd0; color:#1f2937; }.vpd-band-low { background:#a7dedb; color:#1f2937; }.vpd-band-mid { background:#f9df62; color:#1f2937; }.vpd-band-high { background:#f7ad65; color:#1f2937; }.vpd-band-unknown { color:var(--muted); }
+          #vpdTablePhase { margin:10px 0 4px; font-weight:700; }
+          #vpdTablePhaseAssessment { margin:0 0 8px; font-size:.85rem; }
+          #vpdReferenceTable td[data-phase-range] { outline:2px solid #15803d; outline-offset:-2px; }
+          #vpdReferenceTable.vpd-reference-active td:not([data-phase-range]):not([data-current]) { opacity:.5; }
+          .vpd-phase-config { margin:10px 0; font-size:.85rem; }
+          .vpd-phase-config form { margin-top:8px; display:flex; align-items:end; flex-wrap:wrap; gap:10px; }
+          .vpd-phase-config label { display:grid; gap:4px; max-width:220px; }
+          .vpd-phase-config input { max-width:90px; }
+          .vpd-phase-config button { width:auto; }
+          #vpdPhaseRangeKey { outline:2px solid #15803d; outline-offset:-2px; }
           .vpd-table-legend { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0; font-size:.8rem; }
           .vpd-table-legend span { padding:4px 8px; border-radius:5px; }
           @media(max-width:800px){.vpd-table-readings{grid-template-columns:repeat(3,minmax(0,1fr));}}
@@ -10450,12 +10460,21 @@ def dashboard_page(request: Request):
 
         <dialog id=\"vpdTableDialog\" class=\"target-dialog vpd-table-dialog\" aria-labelledby=\"vpdTableTitle\">
           <div class=\"vpd-table-head\"><h2 id=\"vpdTableTitle\">VPD table</h2><button type=\"button\" id=\"closeVpdTableBtn\">Close</button></div>
+          <p id=\"vpdTablePhase\" aria-live=\"polite\"></p>
+          <p id=\"vpdTablePhaseAssessment\"></p>
           <dl id=\"vpdTableReadings\" class=\"vpd-table-readings\"></dl>
           <p id=\"vpdTableState\" class=\"small\" role=\"status\"></p>
+          <details class=\"vpd-phase-config\"><summary id=\"vpdPhaseConfigTitle\">Adjust week mapping</summary>
+            <p id=\"vpdPhaseConfigHint\" class=\"small\"></p>
+            <form id=\"vpdPhaseConfig\"><label><span id=\"vpdVegetativeLateLabel\">Vegetative: late from week</span><input id=\"vpdVegetativeLateWeek\" type=\"number\" min=\"2\" max=\"52\" step=\"1\" required></label>
+              <label><span id=\"vpdFlowerLateLabel\">Flowering: late from week</span><input id=\"vpdFlowerLateWeek\" type=\"number\" min=\"2\" max=\"52\" step=\"1\" required></label>
+              <button id=\"vpdPhaseSaveBtn\" type=\"submit\">Save display</button><span id=\"vpdPhaseConfigStatus\" role=\"status\"></span>
+            </form>
+          </details>
           <p id=\"vpdTableGridCaption\" class=\"small\"></p>
           <div class=\"vpd-table-scroll\" tabindex=\"0\"><table id=\"vpdReferenceTable\"></table></div>
           <p id=\"vpdTableLegendText\" class=\"small\"></p>
-          <div class=\"vpd-table-legend\"><span class=\"vpd-band-outer\">&lt;0.4 / &gt;1.6</span><span class=\"vpd-band-low\">0.4–0.8</span><span class=\"vpd-band-mid\">0.8–1.2</span><span class=\"vpd-band-high\">1.2–1.6</span></div>
+          <div class=\"vpd-table-legend\"><span id=\"vpdPhaseRangeKey\">Current phase range</span><span class=\"vpd-band-outer\">&lt;0.4 / &gt;1.6</span><span class=\"vpd-band-low\">0.4–0.8</span><span class=\"vpd-band-mid\">0.8–1.2</span><span class=\"vpd-band-high\">1.2–1.6</span></div>
           <p id=\"vpdTableHint\" class=\"small\"></p>
         </dialog>
 
@@ -14393,7 +14412,7 @@ def dashboard_page(request: Request):
             }
             document.querySelectorAll('button').forEach(btn => {
               const id = btn.id || '';
-              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || id === 'openVpdTableBtn' || id === 'closeVpdTableBtn' || btn.classList.contains('pot-strain-link'));
+              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || id === 'openVpdTableBtn' || id === 'closeVpdTableBtn' || id === 'vpdPhaseSaveBtn' || btn.classList.contains('pot-strain-link'));
               btn.disabled = isGuestMode && !keep;
             });
             syncGrowProfileAction();

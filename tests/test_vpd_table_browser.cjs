@@ -4,7 +4,7 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
  await page.route('**/*',route=>{requests++;return route.fulfill({contentType:'text/html; charset=utf-8',body:f.html});});await page.goto('http://vpd-table.test/dashboard');await page.addScriptTag({content:f.js});
  await page.evaluate(()=>{document.body.classList.remove('role-pending','role-guest');document.body.classList.add('role-admin');window.ctx={tent:2,language:'de',unit:'C'};window.clock=Date.now();window.timer=null;
   GrowTentVpdTable.mount({getContext:()=>ctx,clock:()=>clock,setTimer:fn=>timer=fn});
-  window.sample={'sensors.cur.temperatureC':23.8,'sensors.cur.humidityPct':52.6,'sensors.cur.vpdKpa':1.16,'settings.grow.targetVPD':1.17,'settings.grow.offsetLeafTemperature':-1.5};
+  window.sample={'sensors.cur.temperatureC':23.8,'sensors.cur.humidityPct':52.6,'sensors.cur.vpdKpa':1.16,'settings.grow.targetVPD':1.17,'settings.grow.offsetLeafTemperature':-1.5,'settings.grow.currentPhase':1,'settings.grow.currentPhaseWeek':1};
   GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
  // Both VPD actions share one compact footer row instead of two stacked rows.
  await page.locator('#editVpdTargetBtn').evaluate(el=>el.style.display='inline-block');
@@ -14,10 +14,23 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
   assert.ok(Math.abs(geometry.ay-geometry.by)<2,'VPD actions share a row');assert.ok(geometry.aw<geometry.cw/2,'Table action stays compact');assert.ok(geometry.right<=geometry.next,'Actions do not overlap');assert.ok(geometry.height<=34,'One compact footer row');
  }
  const before=requests;await page.locator('#openVpdTableBtn').click();assert.equal(await page.locator('#vpdReferenceTable tbody tr').count(),21);assert.equal(await page.locator('#vpdReferenceTable tbody td').count(),525);assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),1);assert.match(await page.locator('#vpdTableReadings').textContent(),/ESP-Regel-VPD1,16 kPa/);
+ assert.match(await page.locator('#vpdTablePhase').textContent(),/Woche 1.*0,40–0,80/);
+ assert.ok(await page.locator('#vpdReferenceTable td[data-phase-range]').count()>0);
+ for(const [phase,week,pattern]of [[1,3,/0,80–1,20/],[1,7,/verlängert/],[2,1,/0,80–1,20/],[2,3,/1,20–1,60/]]){
+  await page.evaluate(({phase,week})=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhase':phase,'settings.grow.currentPhaseWeek':week},new Date(clock).toISOString()),{phase,week});
+  assert.match(await page.locator('#vpdTablePhase').textContent(),pattern);
+ }
+ await page.evaluate(()=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhase':3},new Date(clock).toISOString()));assert.match(await page.locator('#vpdTablePhase').textContent(),/Trocknung/);assert.equal(await page.locator('#vpdReferenceTable td[data-phase-range]').count(),0);
+ await page.evaluate(()=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':null,'settings.grow.currentGrowWeek':4},new Date(clock).toISOString()));assert.match(await page.locator('#vpdTablePhase').textContent(),/offen/);assert.equal(await page.locator('#vpdReferenceTable td[data-phase-range]').count(),0);
+ await page.evaluate(()=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3},new Date(clock).toISOString()));
+ await page.locator('#vpdPhaseConfigTitle').click();await page.locator('#vpdVegetativeLateWeek').fill('5');await page.locator('#vpdPhaseSaveBtn').click();assert.match(await page.locator('#vpdTablePhase').textContent(),/0,40–0,80/);assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('gt_vpd_phase_split_2')).vegetative),5);
+ const saved=await page.evaluate(()=>localStorage.getItem('gt_vpd_phase_split_2'));await page.locator('#vpdVegetativeLateWeek').fill('1');await page.locator('#vpdPhaseSaveBtn').click();assert.equal(await page.evaluate(()=>localStorage.getItem('gt_vpd_phase_split_2')),saved);
+ await page.evaluate(()=>{document.getElementById('vpdVegetativeLateWeek').value='5';GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
+ await page.locator('#vpdPhaseConfigTitle').click();
  const initial=await page.locator('#vpdReferenceTable td[data-current]').textContent();
  await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=0;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.notEqual(await page.locator('#vpdReferenceTable td[data-current]').textContent(),initial);assert.match(await page.locator('#vpdTableReadings').textContent(),/ESP-Regel-VPD1,16 kPa/);
  await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=null;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);assert.match(await page.locator('#vpdTableState').textContent(),/Blatt-Offset fehlt/);assert.equal(await page.locator('#vpdReferenceTable td.vpd-band-unknown').count(),525);
- await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=-1.5;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());clock+=120001;timer();});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);assert.match(await page.locator('#vpdTableState').textContent(),/Keine aktuellen/);
+ await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=-1.5;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());clock+=120001;timer();});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);assert.match(await page.locator('#vpdTableState').textContent(),/Keine aktuellen/);assert.equal(await page.locator('#vpdReferenceTable td[data-phase-range]').count(),0);
  await page.evaluate(()=>{ctx.tent=3;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());timer();});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);
  await page.evaluate(()=>{GrowTentVpdTable.update(3,{...sample,'sensors.cur.temperatureC':18},new Date(clock).toISOString());});assert.match(await page.locator('#vpdTableState').textContent(),/außerhalb/);assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);
  fs.mkdirSync('layout-previews',{recursive:true});
@@ -29,5 +42,5 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
   await page.screenshot({path:`layout-previews/vpd-table-${language}-${width}.png`});
  }
  await page.locator('#closeVpdTableBtn').click();assert.equal(await page.locator('#vpdTableDialog').evaluate(el=>el.open),false);assert.equal(requests,before,'No polling or control calls from table');
- console.log('Live VPD table: central value/offset/reference, markers, stale/missing data, tent races, outside range, auto-scroll, DE/EN C/F and responsive light/dark passed');await browser.close();
+ console.log('Phase/week highlights, extended phases, configurable browser-only splits, unknown/drying states; live VPD table: central value/offset/reference, markers, stale/missing data, tent races, outside range, auto-scroll, DE/EN C/F and responsive light/dark passed');await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

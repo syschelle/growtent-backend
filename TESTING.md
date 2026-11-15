@@ -1,4 +1,4 @@
-# Testing — v0.371
+# Testing — v0.372
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -84,3 +84,7 @@ The existing production export browser test now checks the concise German AI/Cha
 ## Compact VPD actions (v0.371)
 
 The production VPD browser test additionally verifies a shared action row at 1640/800/390px, compact button width, no overlap and a maximum 34px footer height. Existing table/dialog, target readiness and formula checks remain required.
+
+## Phase-aware table (v0.372)
+
+Production module tests cover the latest confirmed legend, default/custom early/late boundaries, extended phases without implicit phase transitions, phase-week-only selection, missing/invalid weeks, drying/stale values and validated per-tent browser settings. The production browser test exercises adaptive outlined cells and labels, extended vegetative week 7, actual flowering phase changes, missing weeks/drying, saved split changes, invalid input and zero extra network/control requests. Existing formula, current-marker, responsive, Python/PostgreSQL and CodeQL checks remain required.

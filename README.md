@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.371
+ghcr.io/syschelle/growtent-backend-api:v0.372
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.371 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.371 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.372 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.372 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.371 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.372 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1127,3 +1127,11 @@ The ESP regulation value is always shown directly, never replaced by the calcula
 ## Compact VPD tile actions (v0.371)
 
 VPD table and target change share one compact footer row, with the table on the left and change on the right. This removes the additional full-width table-button row without changing table or target behavior.
+
+## Phase-aware VPD reference (v0.372)
+
+The table reads `settings.grow.currentPhase` and `settings.grow.currentPhaseWeek` from the existing ESP snapshot. The latest user-supplied classic legend supplies the reference ranges: early vegetative 0.4–0.8 kPa; late vegetative and early flowering 0.8–1.2 kPa; late flowering 1.2–1.6 kPa. Default stage mapping is weeks 1–2 early, week 3 onward late. This week mapping is application configuration, not a week prescription from the reference document.
+
+An extended vegetative or flowering phase retains its own late range beyond the nominal five-week plan. Only an actual ESP phase change switches to another phase. Missing/invalid phase weeks, unknown phases, stale readings and drying do not select a reference range. Outlined grid cells show the selected reference band; the exact ESP regulation value is compared separately and remains unchanged.
+
+The expandable week-mapping controls in the table let each tent use independent late-stage start weeks (2–52). They persist locally in this browser, are not server backup settings and never send ESP writes or alter the actual target. Optional target automation remains outside this release.

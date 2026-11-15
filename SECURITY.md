@@ -69,3 +69,7 @@ The table is a read-only browser projection of existing authorized latest-state 
 ## v0.371 VPD tile layout
 
 Only action placement changes. Existing read-only table behavior and administrator/readiness restrictions for target edits are unchanged.
+
+## v0.372 phase-aware references
+
+Phase/week references and stage split preferences are display-only. Phase data comes from the current authorized ESP snapshot; unknown/stale data selects no phase band. Per-tent localStorage values are integer/range validated and are not controller settings. No target writes, phase changes or new network endpoints are introduced.
