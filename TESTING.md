@@ -1,4 +1,4 @@
-# Testing — v0.381
+# Testing — v0.382
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -132,3 +132,7 @@ Local v0.380 validation: VPD table/night-state/dashboard-render and VPD UI Node 
 Node regressions cover the 35 °C marker boundary and 68–95 °F conversion, including leaf-offset differences and null values. Browser assertions expect 16 rows/400 cells and converted Fahrenheit row headers/offset.
 
 Local v0.381: VPD table and VPD UI Node suites, release-notes checker and whitespace checks passed. Browser assertions were updated but could not run because the Playwright Chromium executable is absent.
+
+## v0.382 Fahrenheit temperature target dialog
+
+Production JavaScript regression checks cover C/F specs, current/input conversion, supported target grid and canonical Celsius submission/confirmation. Browser validation remains open because Chromium is absent.

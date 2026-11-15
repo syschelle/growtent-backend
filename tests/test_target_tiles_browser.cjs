@@ -27,7 +27,7 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  });
  const page=await context.newPage();await page.goto('http://backend.test/dashboard?embed=1');
  await page.addScriptTag({content:`
- let currentUserRole='admin',currentTentId=3,currentEspOnline=true,currentStatusOk=true,currentLang='de';
+ let currentUserRole='admin',currentTentId=3,currentEspOnline=true,currentStatusOk=true,currentLang='de',currentTempUnit='C';
  let currentTentMeta=${JSON.stringify(tent)};
  window.refreshCalls=0;
  ${fixture.i18n_js}
@@ -155,6 +155,22 @@ const fixture=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
  readFail=true;await page.locator('#openGrowProfileBtn').click();await page.locator('#dbProfileStatus.error').waitFor();assert.equal(await page.locator('#dbProfileSave').isDisabled(),true);assert.equal(await page.locator('#dbProfilePhase').inputValue(),'');await page.locator('#dbProfileCancel').click();readFail=false;
  await page.locator('#openGrowProfileBtn').click();await page.waitForFunction(()=>!document.getElementById('dbProfilePhase').disabled);await page.locator('#dbProfilePhase').selectOption('2');
  const prior=patches.length;await page.evaluate(()=>{setTargetEditState({tent:4});document.getElementById('dbProfileForm').requestSubmit();});assert.equal(patches.length,prior);await page.locator('#dbProfileCancel').click();await page.evaluate(()=>setTargetEditState({tent:3}));
+ // Fahrenheit dialog must convert display input to the existing Celsius PATCH.
+ await page.evaluate(()=>{currentTempUnit='F';setTargetSnapshot(23,1.2);});
+ await page.locator('#editTemperatureTargetBtn').click();
+ assert.equal(await page.locator('#dbTargetUnit').innerText(),'°F');
+ assert.equal(await page.locator('#dbTargetCurrent').innerText(),'73.4');
+ assert.equal(await page.locator('#dbTargetInput').inputValue(),'73.4');
+ assert.equal(await page.locator('#dbTargetInput').getAttribute('min'),'64.4');
+ assert.equal(await page.locator('#dbTargetInput').getAttribute('max'),'86');
+ assert.equal(await page.locator('#dbTargetInput').getAttribute('step'),'0.9');
+ await page.locator('#dbTargetInput').fill('74');assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);
+ await page.locator('#dbTargetInput').fill('74.3');await page.locator('#dbTargetSave').click();await page.locator('#dbTargetStatus.success').waitFor();
+ assert.deepEqual(patches.at(-1),{targetTemperature:23.5});
+ assert.equal(await page.locator('#dbTargetCurrent').innerText(),'74.3');
+ await page.locator('#dbTargetCancel').click();
+ await page.locator('#editTemperatureTargetBtn').click();assert.equal(await page.locator('#dbTargetInput').inputValue(),'74.3');assert.equal(await page.locator('#dbTargetSave').isDisabled(),true);
+ await page.locator('#dbTargetCancel').click();
  assert.ok(await page.evaluate(()=>window.refreshCalls>0));
  await page.goto('http://backend.test/dashboard?embed=1&guest=1');for(const id of [...ids,'dbTargetDialog','dbProfileDialog'])assert.equal(await page.locator('#'+id).count(),0,'Guest HTML excludes editing');
  console.log('Native target dialogs: instant sizing/cache, guarded read fallback, exact verified PATCH, limits, errors, cancellation, permissions and phase/date compatibility passed');

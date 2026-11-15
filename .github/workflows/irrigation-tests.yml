@@ -34,6 +34,7 @@ jobs:
       - run: python -m pip install -r api/requirements.txt pytest
       - run: python -m compileall -q api
       - run: python -m pytest -q
+      - run: node tests/test_target_temperature_units.mjs
       - run: node tests/test_vpd_ui.mjs
       - run: node tests/test_vpd_table.mjs
 
