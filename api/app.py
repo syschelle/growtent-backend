@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.369"
+APP_VERSION = "v0.370"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9846,6 +9846,7 @@ def dashboard_page(request: Request):
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
         __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
+        <script src=\"/static/vpd-table.js?v=0.370\"></script>
         <style>
           :root {
             --bg:#0f172a;
@@ -10097,6 +10098,29 @@ def dashboard_page(request: Request):
           #status .status-ok { color:#22c55e; font-weight:700; }
           #status .status-err { color:#ef4444; font-weight:700; }
           .target-dialog { box-sizing:border-box; width:min(280px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; margin:auto; padding:12px; border:1px solid var(--grid); border-radius:12px; background:var(--card); color:var(--text); }
+          .vpd-table-button { margin-top:7px; padding:5px 9px; font-size:.8rem; }
+          .vpd-table-dialog { width:min(1280px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); }
+          .vpd-table-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+          .vpd-table-head button { width:auto; flex:0 0 auto; padding:6px 10px; }
+          .vpd-table-readings { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; margin:12px 0; }
+          .vpd-table-readings>div { padding:8px; background:var(--bg); border-radius:8px; min-width:0; }
+          .vpd-table-readings dt { color:var(--muted); font-size:.78rem; }
+          .vpd-table-readings dd { margin:4px 0 0; font-weight:700; }
+          .vpd-table-scroll { position:relative; max-height:52vh; overflow:auto; border:1px solid var(--grid); }
+          #vpdReferenceTable { border-collapse:separate; border-spacing:0; width:100%; font-size:.75rem; font-variant-numeric:tabular-nums; }
+          #vpdReferenceTable caption { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+          #vpdReferenceTable td,#vpdReferenceTable th { min-width:46px; padding:6px 5px; text-align:center; border-right:1px solid rgba(0,0,0,.15); border-bottom:1px solid rgba(0,0,0,.15); white-space:nowrap; }
+          #vpdReferenceTable th { background:var(--card); }
+          #vpdReferenceTable thead th { position:sticky; top:0; z-index:2; }
+          #vpdReferenceTable tbody th { position:sticky; left:0; z-index:1; }
+          #vpdReferenceTable thead th:first-child { left:0; z-index:3; }
+          #vpdReferenceTable .vpd-current-axis { background:#1d4ed8; color:#fff; }
+          #vpdReferenceTable td[data-current] { box-shadow:inset 0 0 0 3px #111827,inset 0 0 0 5px #fff; font-weight:800; }
+          .vpd-band-outer { background:#f8bbd0; color:#1f2937; }.vpd-band-low { background:#a7dedb; color:#1f2937; }.vpd-band-mid { background:#f9df62; color:#1f2937; }.vpd-band-high { background:#f7ad65; color:#1f2937; }.vpd-band-unknown { color:var(--muted); }
+          .vpd-table-legend { display:flex; gap:10px; flex-wrap:wrap; margin:8px 0; font-size:.8rem; }
+          .vpd-table-legend span { padding:4px 8px; border-radius:5px; }
+          @media(max-width:800px){.vpd-table-readings{grid-template-columns:repeat(3,minmax(0,1fr));}}
+          @media(max-width:480px){.vpd-table-readings{grid-template-columns:repeat(2,minmax(0,1fr));}}
           .target-dialog::backdrop { background:rgba(2,6,23,.72); }
           .target-dialog form { display:grid; gap:10px; margin:0; }
           .target-dialog h2 { margin:0; font-size:1.1rem; }
@@ -10272,6 +10296,7 @@ def dashboard_page(request: Request):
             </div>
             <div class=\"value\" id=\"vpd\">-</div>
             <div class=\"small\" id=\"vpdTarget\">Target: -</div>
+            <button id=\"openVpdTableBtn\" type=\"button\" class=\"vpd-table-button\">VPD table</button>
             __VPD_TARGET_ACTION__
             <!-- gauge removed -->
           </div>
@@ -10419,6 +10444,17 @@ def dashboard_page(request: Request):
             <div id=\"analysisExportStatus\" class=\"small\" role=\"status\"></div>
             <div class=\"target-dialog-actions\"><button id=\"analysisExportCancel\" type=\"button\">Cancel</button><button id=\"analysisExportDownload\" type=\"submit\">Download</button></div>
           </form>
+        </dialog>
+
+        <dialog id=\"vpdTableDialog\" class=\"target-dialog vpd-table-dialog\" aria-labelledby=\"vpdTableTitle\">
+          <div class=\"vpd-table-head\"><h2 id=\"vpdTableTitle\">VPD table</h2><button type=\"button\" id=\"closeVpdTableBtn\">Close</button></div>
+          <dl id=\"vpdTableReadings\" class=\"vpd-table-readings\"></dl>
+          <p id=\"vpdTableState\" class=\"small\" role=\"status\"></p>
+          <p id=\"vpdTableGridCaption\" class=\"small\"></p>
+          <div class=\"vpd-table-scroll\" tabindex=\"0\"><table id=\"vpdReferenceTable\"></table></div>
+          <p id=\"vpdTableLegendText\" class=\"small\"></p>
+          <div class=\"vpd-table-legend\"><span class=\"vpd-band-outer\">&lt;0.4 / &gt;1.6</span><span class=\"vpd-band-low\">0.4–0.8</span><span class=\"vpd-band-mid\">0.8–1.2</span><span class=\"vpd-band-high\">1.2–1.6</span></div>
+          <p id=\"vpdTableHint\" class=\"small\"></p>
         </dialog>
 
         __GROW_PROFILE_MODAL__
@@ -11190,6 +11226,7 @@ def dashboard_page(request: Request):
             txt('openGrowProfileBtn', tr('editGrowProfile'));
             txt('editTemperatureTargetBtn',tr('changeTarget'));
             txt('editVpdTargetBtn',tr('changeTarget'));
+            window.GrowTentVpdTable?.refresh();
             renderTargetDialog();renderProfileDialog();
             txt('sourceText', '');
             txt('navTitle', tr('nav'));
@@ -13596,8 +13633,13 @@ def dashboard_page(request: Request):
 
           async function loadLatest(){
             const requestedTentId=currentTentId;
-            const r = await fetch(`/tents/${requestedTentId}/latest`, { cache:'no-store' });
-            const j = await r.json();
+            let j;
+            try {
+              const r = await fetch(`/tents/${requestedTentId}/latest`, { cache:'no-store' });
+              if (!r.ok) throw new Error('latest unavailable');
+              j = await r.json();
+              window.GrowTentVpdTable?.update(requestedTentId,j.latest||{},j.captured_at);
+            } catch(error) {window.GrowTentVpdTable?.invalidate(requestedTentId);throw error;}
             let d = j.latest || {};
             if (!shellyMainDirectTs && j?.captured_at) shellyMainDirectTs = j.captured_at;
 
@@ -14294,6 +14336,8 @@ def dashboard_page(request: Request):
             window.location.href = `/tents/${encodeURIComponent(String(currentTentId))}/heap/export.csv`;
           });
 
+          window.GrowTentVpdTable?.mount({getContext:()=>({tent:currentTentId,language:currentLang,unit:currentTempUnit})});
+
           // Compact analysis export; only reads existing backend history.
           let analysisExportTent = null;
           function analysisExportLabels(){
@@ -14347,7 +14391,7 @@ def dashboard_page(request: Request):
             }
             document.querySelectorAll('button').forEach(btn => {
               const id = btn.id || '';
-              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || btn.classList.contains('pot-strain-link'));
+              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || id === 'openVpdTableBtn' || id === 'closeVpdTableBtn' || btn.classList.contains('pot-strain-link'));
               btn.disabled = isGuestMode && !keep;
             });
             syncGrowProfileAction();
