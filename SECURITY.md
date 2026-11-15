@@ -81,3 +81,7 @@ Only reference-table colour classification changes. Controller readings, authori
 ## v0.374 hint text
 
 German display copy only; security and controller behaviour are unchanged.
+
+## v0.375 VPD tile assessment
+
+The tile reuses the read-only phase/week reference with compact inline DE/EN text. Stale data and drying do not claim an in-range value. ESP regulation and write security remain unchanged. Browser coverage checks closed-dialog updates and stale expiry.

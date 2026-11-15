@@ -6,6 +6,12 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
   GrowTentVpdTable.mount({getContext:()=>ctx,clock:()=>clock,setTimer:fn=>timer=fn});
   window.sample={'sensors.cur.temperatureC':23.8,'sensors.cur.humidityPct':52.6,'sensors.cur.vpdKpa':1.16,'settings.grow.targetVPD':1.17,'settings.grow.offsetLeafTemperature':-1.5,'settings.grow.currentPhase':1,'settings.grow.currentPhaseWeek':1};
   GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
+ assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Außerhalb des Referenzbereichs');
+ await page.evaluate(()=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3},new Date(clock).toISOString()));
+ assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Im Referenzbereich');
+ await page.evaluate(()=>{clock+=120001;timer();});
+ assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Referenzbereich offen');
+ await page.evaluate(()=>{clock-=120001;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
  // Both VPD actions share one compact footer row instead of two stacked rows.
  await page.locator('#editVpdTargetBtn').evaluate(el=>el.style.display='inline-block');
  for(const width of [1640,800,390]){

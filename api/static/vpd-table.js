@@ -41,11 +41,13 @@
    const labels=de?{title:'VPD-Tabelle',close:'Schließen',temp:'Temperatur',humidity:'Luftfeuchtigkeit',control:'ESP-Regel-VPD',target:'Soll-VPD',offset:'Blatt-Offset',reference:'Referenz aus T/rF',current:'Aktuelle Werte',missing:'Keine aktuellen gültigen ESP-Klimawerte.',noOffset:'Blatt-Offset fehlt: Referenzwerte nicht verfügbar.',outside:'Aktueller Messpunkt liegt außerhalb des Tabellenbereichs.',hint:'Referenzwerte aus Temperatur, Luftfeuchtigkeit und Blatt-Offset.',legend:'VPD-Referenzbereiche (kPa), keine automatische Sollwertvorgabe.',caption:'Temperatur × relative Luftfeuchtigkeit – Referenz-VPD in kPa'}:
     {title:'VPD table',close:'Close',temp:'Temperature',humidity:'Relative humidity',control:'ESP control VPD',target:'Target VPD',offset:'Leaf offset',reference:'Reference from T/RH',current:'Current readings',missing:'No current valid ESP climate readings.',noOffset:'Leaf offset unavailable: reference values unavailable.',outside:'Current readings are outside the table range.',hint:'Reference values from temperature, humidity and leaf offset. ESP control VPD is unchanged and may differ due to smoothing. The marker is rounded to the nearest grid cell.',legend:'VPD reference bands (kPa), not automatic target settings.',caption:'Temperature × relative humidity – reference VPD in kPa'};
    button.textContent=labels.title;doc.getElementById('vpdTableTitle').textContent=labels.title;doc.getElementById('closeVpdTableBtn').textContent=labels.close;
-   if(!dialog.open)return;
    if(lastRenderedTent!==String(ctx.tent)){centerMarker=true;lastRenderedTent=String(ctx.tent);}
    const s=latest&&String(latest.tent)===String(ctx.tent)?snapshot(latest.data,latest.at,clock()):snapshot({},null,clock());
    const marker=s.valid?nearest(s.temperature,s.humidity):null;
    const settings=loadPhaseSettings(ctx.tent,storage),range=phaseRange(latest?.data,settings,s.valid&&String(latest?.tent)===String(ctx.tent));
+   const assessment=doc.getElementById('vpdRangeAssessment');
+   if(assessment){const text=range.reason?(range.reason==='drying'?(de?'Trocknung': 'Drying'):(de?'Referenzbereich offen':'Reference unavailable')):(inPhase(s.vpd,range)?(de?'Im Referenzbereich':'Within reference range'):(de?'Außerhalb des Referenzbereichs':'Outside reference range'));assessment.textContent=text;assessment.title=text;}
+   if(!dialog.open)return;
    const format=(v,d=2)=>v===null?'—':v.toLocaleString(de?'de-DE':'en-GB',{minimumFractionDigits:d,maximumFractionDigits:d});
    const temp=v=>v===null?null:unit==='F'?v*1.8+32:v;
    const phaseText=range.reason?(range.reason==='drying'?(de?'Trocknung – kein Phasenbereich markiert.':'Drying – no phase range highlighted.'):(de?'Phase/Woche offen – kein Phasenbereich markiert.':'Phase/week unavailable – no phase range highlighted.')):
@@ -96,7 +98,7 @@
    try{storage.setItem('gt_vpd_phase_split_'+String(ctx.tent),JSON.stringify({vegetative:Number(vegetative.value),flower:Number(flower.value)}));msg.textContent=ctx.language==='de'?'Anzeige gespeichert.':'Display saved.';render();}
    catch{msg.textContent=ctx.language==='de'?'Speichern fehlgeschlagen.':'Save failed.';}
   });
-  setTimer(()=>{if(dialog.open)render();},5000);
+  setTimer(()=>render(),5000);
   controller={update(tent,data,at){if(String(tent)!==String(getContext().tent))return;latest={tent,data:{...data},at};render();},invalidate(tent){if(String(tent)===String(getContext().tent)){latest=null;render();}},refresh:render};
   render();return controller;
  }
