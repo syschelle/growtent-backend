@@ -10101,13 +10101,14 @@ def dashboard_page(request: Request):
           .vpd-table-button { margin-top:7px; padding:5px 9px; font-size:.8rem; }
           .vpd-table-dialog { width:min(1280px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); }
           .vpd-table-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+          .vpd-table-head button { width:auto; flex:0 0 auto; padding:6px 10px; }
           .vpd-table-readings { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; margin:12px 0; }
           .vpd-table-readings>div { padding:8px; background:var(--bg); border-radius:8px; min-width:0; }
           .vpd-table-readings dt { color:var(--muted); font-size:.78rem; }
           .vpd-table-readings dd { margin:4px 0 0; font-weight:700; }
           .vpd-table-scroll { position:relative; max-height:52vh; overflow:auto; border:1px solid var(--grid); }
           #vpdReferenceTable { border-collapse:separate; border-spacing:0; width:100%; font-size:.75rem; font-variant-numeric:tabular-nums; }
-          #vpdReferenceTable caption { text-align:left; padding:7px; background:var(--card); }
+          #vpdReferenceTable caption { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
           #vpdReferenceTable td,#vpdReferenceTable th { min-width:46px; padding:6px 5px; text-align:center; border-right:1px solid rgba(0,0,0,.15); border-bottom:1px solid rgba(0,0,0,.15); white-space:nowrap; }
           #vpdReferenceTable th { background:var(--card); }
           #vpdReferenceTable thead th { position:sticky; top:0; z-index:2; }
@@ -10449,6 +10450,7 @@ def dashboard_page(request: Request):
           <div class=\"vpd-table-head\"><h2 id=\"vpdTableTitle\">VPD table</h2><button type=\"button\" id=\"closeVpdTableBtn\">Close</button></div>
           <dl id=\"vpdTableReadings\" class=\"vpd-table-readings\"></dl>
           <p id=\"vpdTableState\" class=\"small\" role=\"status\"></p>
+          <p id=\"vpdTableGridCaption\" class=\"small\"></p>
           <div class=\"vpd-table-scroll\" tabindex=\"0\"><table id=\"vpdReferenceTable\"></table></div>
           <p id=\"vpdTableLegendText\" class=\"small\"></p>
           <div class=\"vpd-table-legend\"><span class=\"vpd-band-outer\">&lt;0.4 / &gt;1.6</span><span class=\"vpd-band-low\">0.4–0.8</span><span class=\"vpd-band-mid\">0.8–1.2</span><span class=\"vpd-band-high\">1.2–1.6</span></div>

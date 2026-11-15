@@ -37,6 +37,7 @@
    doc.getElementById('vpdTableState').textContent=note;
    doc.getElementById('vpdTableHint').textContent=labels.hint;
    doc.getElementById('vpdTableLegendText').textContent=labels.legend;
+   doc.getElementById('vpdTableGridCaption').textContent=labels.caption;
    const table=doc.getElementById('vpdReferenceTable'),scroll=table.parentElement,top=scroll.scrollTop,left=scroll.scrollLeft;table.replaceChildren();
    const caption=doc.createElement('caption');caption.textContent=labels.caption;table.append(caption);
    const head=doc.createElement('thead'),hr=doc.createElement('tr'),corner=doc.createElement('th');corner.textContent='°'+unit+' / %';corner.scope='col';hr.append(corner);
