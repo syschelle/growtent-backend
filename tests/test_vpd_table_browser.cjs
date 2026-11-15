@@ -6,6 +6,13 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
   GrowTentVpdTable.mount({getContext:()=>ctx,clock:()=>clock,setTimer:fn=>timer=fn});
   window.sample={'sensors.cur.temperatureC':23.8,'sensors.cur.humidityPct':52.6,'sensors.cur.vpdKpa':1.16,'settings.grow.targetVPD':1.17,'settings.grow.offsetLeafTemperature':-1.5};
   GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
+ // Both VPD actions share one compact footer row instead of two stacked rows.
+ await page.locator('#editVpdTargetBtn').evaluate(el=>el.style.display='inline-block');
+ for(const width of [1640,800,390]){
+  await page.setViewportSize({width,height:1000});
+  const geometry=await page.locator('.vpd-card-actions').evaluate(row=>{const a=row.querySelector('#openVpdTableBtn').getBoundingClientRect(),b=row.querySelector('#editVpdTargetBtn').getBoundingClientRect(),c=row.closest('.card').getBoundingClientRect();return{ay:a.y,by:b.y,aw:a.width,cw:c.width,right:a.right,next:b.left,height:row.getBoundingClientRect().height};});
+  assert.ok(Math.abs(geometry.ay-geometry.by)<2,'VPD actions share a row');assert.ok(geometry.aw<geometry.cw/2,'Table action stays compact');assert.ok(geometry.right<=geometry.next,'Actions do not overlap');assert.ok(geometry.height<=34,'One compact footer row');
+ }
  const before=requests;await page.locator('#openVpdTableBtn').click();assert.equal(await page.locator('#vpdReferenceTable tbody tr').count(),21);assert.equal(await page.locator('#vpdReferenceTable tbody td').count(),525);assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),1);assert.match(await page.locator('#vpdTableReadings').textContent(),/ESP-Regel-VPD1,16 kPa/);
  const initial=await page.locator('#vpdReferenceTable td[data-current]').textContent();
  await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=0;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.notEqual(await page.locator('#vpdReferenceTable td[data-current]').textContent(),initial);assert.match(await page.locator('#vpdTableReadings').textContent(),/ESP-Regel-VPD1,16 kPa/);

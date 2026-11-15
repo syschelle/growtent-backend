@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.371
+
+- Place VPD table and change buttons in one compact footer row to avoid extra tile height.
+
 ## v0.370
 
 - Add a live VPD reference table with current-cell marker and exact ESP readings.
