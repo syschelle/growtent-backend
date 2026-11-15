@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.376
+
+- Allow guests to use the read-only VPD table.
+
 ## v0.375
 
 - Add the compact phase-reference assessment beside the current VPD value.

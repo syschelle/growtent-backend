@@ -12,6 +12,13 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
  await page.evaluate(()=>{clock+=120001;timer();});
  assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Referenzbereich offen');
  await page.evaluate(()=>{clock-=120001;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
+ // Guest read-only table controls must be clickable, while write controls stay blocked.
+ await page.evaluate(()=>{document.body.classList.remove('role-admin');document.body.classList.add('role-guest');});
+ for(const id of ['openVpdTableBtn','closeVpdTableBtn','vpdPhaseSaveBtn'])assert.notEqual(await page.locator('#'+id).evaluate(el=>getComputedStyle(el).pointerEvents),'none');
+ assert.equal(await page.locator('#editVpdTargetBtn').evaluate(el=>getComputedStyle(el).pointerEvents),'none');
+ await page.locator('#openVpdTableBtn').click();assert.equal(await page.locator('#vpdTableDialog').evaluate(el=>el.open),true);
+ await page.locator('#closeVpdTableBtn').click();assert.equal(await page.locator('#vpdTableDialog').evaluate(el=>el.open),false);
+ await page.evaluate(()=>{document.body.classList.remove('role-guest');document.body.classList.add('role-admin');});
  // Both VPD actions share one compact footer row instead of two stacked rows.
  await page.locator('#editVpdTargetBtn').evaluate(el=>el.style.display='inline-block');
  for(const width of [1640,800,390]){
