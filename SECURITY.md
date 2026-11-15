@@ -93,3 +93,7 @@ Guest table open/close and browser-local week mapping controls are exempt from g
 ## v0.377 display-only VPD table
 
 The current table labels the central measurement IST-VPD (Actual VPD), has no week-mapping controls or persistence, and ignores previous browser overrides. It retains phase/week reference highlighting with the default week-3 boundary and no extended-phase suffix. Guest access and ESP control remain unchanged. Earlier week-configuration sections describe historical versions only.
+
+## v0.378
+
+Dashboard VPD band coloring is display-only and adds no endpoints, writes or permissions.

@@ -40,6 +40,8 @@
    const range=phaseRange(latest?.data,s.valid&&String(latest?.tent)===String(ctx.tent));
    const assessment=doc.getElementById('vpdRangeAssessment');
    if(assessment){const text=range.reason?(range.reason==='drying'?(de?'Trocknung': 'Drying'):(de?'Referenzbereich offen':'Reference unavailable')):(inPhase(s.vpd,range)?(de?'Im Referenzbereich':'Within reference range'):(de?'Außerhalb des Referenzbereichs':'Outside reference range'));assessment.textContent=text;assessment.title=text;}
+   const current=doc.getElementById('vpd');
+   if(current){for(const name of ['outer','low','mid','high','unknown'])current.classList.remove('vpd-band-'+name);current.classList.add('vpd-band-'+band(s.vpd));}
    if(!dialog.open)return;
    const format=(v,d=2)=>v===null?'—':v.toLocaleString(de?'de-DE':'en-GB',{minimumFractionDigits:d,maximumFractionDigits:d});
    const temp=v=>v===null?null:unit==='F'?v*1.8+32:v;
