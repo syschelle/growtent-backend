@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.374
+
+- Shorten the German VPD table hint.
+
 ## v0.373
 
 - Align VPD table colours with displayed two-decimal values at band boundaries.
