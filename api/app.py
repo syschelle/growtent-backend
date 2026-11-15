@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSON
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload
+from services.analysis_export import build_analysis_export, HOURS as ANALYSIS_EXPORT_HOURS
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from services.vpd_channels import (
     finite_number as _finite_sensor_number,
@@ -49,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.367"
+APP_VERSION = "v0.368"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5685,6 +5686,31 @@ def export_history_csv(tent_id: int, range_key: str = "24h"):
     )
 
 
+def export_analysis_json(tent_id: int, range_key: str = "24h"):
+    if range_key not in ANALYSIS_EXPORT_HOURS:
+        raise HTTPException(status_code=400, detail="Unsupported export range")
+    if get_tent_by_id(tent_id) is None:
+        raise HTTPException(status_code=404, detail="Tent not found")
+    hours = ANALYSIS_EXPORT_HOURS[range_key]
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(hours=hours)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT captured_at, payload FROM tent_state WHERE tent_id=%s AND captured_at >= %s AND captured_at < %s ORDER BY captured_at ASC", (tent_id,start,end))
+            rows = cur.fetchall()
+    max_points = 720
+    while True:
+        payload = build_analysis_export(tent_id,rows,end,hours,POLL_INTERVAL_SECONDS,max_points=max_points)
+        payload["sizeAdapted"] = max_points < 720
+        encoded = json.dumps(payload,ensure_ascii=False,separators=(",",":"),allow_nan=False)
+        if len(encoded.encode("utf-8")) <= 1_000_000:
+            break
+        max_points = max(1,max_points//2)
+    filename = f"growtent-{int(tent_id)}_{end.strftime('%Y-%m-%d_%H%MZ')}_{range_key}.json"
+    return Response(content=encoded,
+        media_type="application/json",headers={"Content-Disposition":f'attachment; filename="{filename}"',"Cache-Control":"no-store"})
+
+
 def get_tent_by_id(tent_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -10383,6 +10409,18 @@ def dashboard_page(request: Request):
           </div>
         </div>
 
+        <dialog id=\"analysisExportDialog\" class=\"target-dialog\" aria-labelledby=\"analysisExportTitle\">
+          <form id=\"analysisExportForm\">
+            <h2 id=\"analysisExportTitle\">Export JSON</h2>
+            <label class=\"target-dialog-field\"><span id=\"analysisExportRangeLabel\">Period</span>
+              <select id=\"analysisExportRange\"><option value=\"1h\">1 h</option><option value=\"6h\">6 h</option><option value=\"12h\">12 h</option><option value=\"24h\" selected>24 h</option><option value=\"48h\">48 h</option></select>
+            </label>
+            <p id=\"analysisExportHint\" class=\"small\" style=\"margin:0;\"></p>
+            <div id=\"analysisExportStatus\" class=\"small\" role=\"status\"></div>
+            <div class=\"target-dialog-actions\"><button id=\"analysisExportCancel\" type=\"button\">Cancel</button><button id=\"analysisExportDownload\" type=\"submit\">Download</button></div>
+          </form>
+        </dialog>
+
         __GROW_PROFILE_MODAL__
 
         <div id=\"dbIrPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1200; align-items:center; justify-content:center; padding:16px;\">
@@ -14256,18 +14294,51 @@ def dashboard_page(request: Request):
             window.location.href = `/tents/${encodeURIComponent(String(currentTentId))}/heap/export.csv`;
           });
 
-          const exportBtnEl = document.getElementById('exportCsvBtn');
-          if (exportBtnEl) {
-            exportBtnEl.addEventListener('click', () => {
-              const mins = Number(localStorage.getItem('gt_range_minutes') || '60');
-              let rangeKey = String(mins);
-              if (mins === 1440) rangeKey = '24h';
-              if (mins === 10080) rangeKey = '7d';
-              if (mins > 10080) rangeKey = 'all';
-              const url = `/api/export?tent_id=${encodeURIComponent(String(currentTentId))}&range=${encodeURIComponent(rangeKey)}`;
-              window.open(url, '_blank', 'noopener,noreferrer');
-            });
+          // Compact analysis export; only reads existing backend history.
+          let analysisExportTent = null;
+          function analysisExportLabels(){
+            const de=currentLang==='de';
+            const range=document.getElementById('analysisExportRange').value;
+            const minutes=range==='48h'?4:2;
+            document.getElementById('analysisExportTitle').textContent=de?'JSON exportieren':'Export JSON';
+            document.getElementById('analysisExportRangeLabel').textContent=de?'Zeitraum':'Period';
+            document.getElementById('analysisExportHint').textContent=de?
+              `Eine kompakte Datei mit normalerweise ${minutes}-Minuten-Fenstern: Durchschnitt, Min/Max, Sollwerte und beobachtete Schaltwechsel. Datenlücken bleiben erkennbar. Bei Bedarf werden die Fenster für unter 1 MB vergrößert.`:
+              `One compact file with ${minutes}-minute windows: average, min/max, targets and observed switch changes. Data gaps remain visible. Windows may widen to keep the file below 1 MB.`;
+            document.getElementById('analysisExportCancel').textContent=de?'Abbrechen':'Cancel';
+            document.getElementById('analysisExportDownload').textContent=de?'Herunterladen':'Download';
           }
+          function openAnalysisExport(){
+            if(!currentTentId)return;
+            analysisExportTent=currentTentId;
+            document.getElementById('analysisExportRange').value='24h';
+            document.getElementById('analysisExportStatus').textContent='';
+            analysisExportLabels();
+            document.getElementById('analysisExportDialog').showModal();
+          }
+          async function downloadAnalysisExport(event){
+            event.preventDefault();
+            const button=document.getElementById('analysisExportDownload');
+            if(button.disabled || !analysisExportTent)return;
+            const tent=analysisExportTent,range=document.getElementById('analysisExportRange').value;
+            button.disabled=true;
+            document.getElementById('analysisExportStatus').textContent=currentLang==='de'?'Datei wird erstellt …':'Creating file …';
+            try {
+              const response=await fetch(`/api/export/analysis?tent_id=${encodeURIComponent(tent)}&range=${encodeURIComponent(range)}`,{cache:'no-store'});
+              if(!response.ok)throw new Error(`HTTP ${response.status}`);
+              const blob=await response.blob(),url=URL.createObjectURL(blob),anchor=document.createElement('a');
+              const filename=(response.headers.get('Content-Disposition')||'').match(/filename="([a-zA-Z0-9_.-]+)"/);
+              anchor.href=url;anchor.download=filename?filename[1]:`growtent-${tent}_${range}.json`;
+              document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+              document.getElementById('analysisExportDialog').close();
+            } catch {
+              document.getElementById('analysisExportStatus').textContent=currentLang==='de'?'Export fehlgeschlagen. Bitte erneut versuchen.':'Export failed. Please try again.';
+            } finally {button.disabled=false;}
+          }
+          document.getElementById('exportCsvBtn')?.addEventListener('click',openAnalysisExport);
+          document.getElementById('analysisExportRange')?.addEventListener('change',analysisExportLabels);
+          document.getElementById('analysisExportCancel')?.addEventListener('click',()=>document.getElementById('analysisExportDialog').close());
+          document.getElementById('analysisExportForm')?.addEventListener('submit',downloadAnalysisExport);
 
           function applyGuestModeUi(){
             document.body.classList.remove('role-pending', 'role-guest', 'role-admin');

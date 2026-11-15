@@ -1,5 +1,11 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.368
+
+- Download compact 1/6/12/24/48-hour JSON analysis files, default 24h with 2-minute windows.
+- Preserve min/max, averages, sample counts, targets, observed humidifier changes and explicit data gaps.
+- Bound file size by adapting windows; retain legacy history/export API schemas.
+
 ## v0.367
 
 - Include timestamp-specific temperature and VPD targets in both JSON history exports.
