@@ -1,4 +1,4 @@
-# Security — v0.356
+# Security — v0.379
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -97,3 +97,7 @@ The current table labels the central measurement IST-VPD (Actual VPD), has no we
 ## v0.378
 
 Dashboard VPD band coloring is display-only and adds no endpoints, writes or permissions.
+
+## v0.379 dashboard VPD text color
+
+Presentation-only correction; authentication, permissions and controller writes are unchanged.

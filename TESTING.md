@@ -1,4 +1,4 @@
-# Testing — v0.377
+# Testing — v0.379
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -116,3 +116,7 @@ The current table labels the central measurement IST-VPD (Actual VPD), has no we
 ## v0.378
 
 Current VPD coloring reuses the reference table band function, including two-decimal boundaries and neutral missing/stale state.
+
+## v0.379 dashboard VPD text color
+
+Dashboard-specific CSS uses the shared band colors for text with a transparent background and original spacing. Reference table cell styling and band boundary tests remain applicable.
