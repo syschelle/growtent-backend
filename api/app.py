@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.381"
+APP_VERSION = "v0.382"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -10687,6 +10687,7 @@ def dashboard_page(request: Request):
               targetUnavailable: "The controller is not available for editing.",
               targetNotConfirmed: "The controller did not confirm this value.",
               targetInvalidTemperature: "Use 18–30 °C in 0.5 °C steps.",
+              targetInvalidTemperatureF: "Use 64.4–86 °F in 0.9 °F steps.",
               targetInvalidVpd: "Use 0.50–3.50 kPa in 0.01 kPa steps.",
               changeTarget: 'change',
               editTemperatureTarget: 'Target temperature',
@@ -10879,6 +10880,7 @@ def dashboard_page(request: Request):
               targetUnavailable: "Der Controller ist derzeit nicht zum Ändern verfügbar.",
               targetNotConfirmed: "Der Controller hat diesen Wert nicht bestätigt.",
               targetInvalidTemperature: "18–30 °C in 0,5-°C-Schritten einstellen.",
+              targetInvalidTemperatureF: "64,4–86 °F in 0,9-°F-Schritten einstellen.",
               targetInvalidVpd: "0,50–3,50 kPa in 0,01-kPa-Schritten einstellen.",
               changeTarget: 'ändern',
               editTemperatureTarget: 'Solltemperatur',
@@ -11023,7 +11025,7 @@ def dashboard_page(request: Request):
               targetVPD:first(['settings.grow.targetVPD','settings.targetVPD','target.targetVpdKpa'])};
           }
           function targetSpec(section){
-            if(section==='temperature')return {field:'targetTemperature',min:18,max:30,step:0.5,decimals:1,unit:'°C',label:'editTemperatureTarget',invalid:'targetInvalidTemperature'};
+            if(section==='temperature'){const f=currentTempUnit==='F';return {field:'targetTemperature',min:f?64.4:18,max:f?86:30,step:f?0.9:0.5,decimals:1,unit:f?'°F':'°C',label:'editTemperatureTarget',invalid:f?'targetInvalidTemperatureF':'targetInvalidTemperature'};}
             if(section==='vpd')return {field:'targetVPD',min:0.5,max:3.5,step:0.01,decimals:2,unit:'kPa',label:'editVpdTarget',invalid:'targetInvalidVpd'};
             return null;
           }
@@ -11036,12 +11038,14 @@ def dashboard_page(request: Request):
             const el=document.getElementById('dbTargetStatus');if(el){el.textContent=message;el.className=kind;}
           }
           function targetError(body,fallback){const d=body?.detail;return typeof d==='string'?d:(d?.message||body?.error||fallback);}
-          function formatTargetInput(ctx,value){return ctx.spec.field==='targetVPD'?Number(value).toFixed(2):String(value);}
+          function targetDisplayValue(ctx,value){return ctx.spec.field==='targetTemperature'&&ctx.spec.unit==='°F'?value*1.8+32:value;}
+          function targetCanonicalValue(ctx,value){return ctx.spec.field==='targetTemperature'&&ctx.spec.unit==='°F'?Math.round(((value-32)/1.8)*1e8)/1e8:value;}
+          function formatTargetInput(ctx,value){return ctx.spec.field==='targetVPD'?Number(value).toFixed(2):ctx.spec.unit==='°F'?targetDisplayValue(ctx,Number(value)).toFixed(1):String(value);}
           function targetValueValid(ctx,value){const units=(value-ctx.spec.min)/ctx.spec.step;return Number.isFinite(value)&&value>=ctx.spec.min&&value<=ctx.spec.max&&Math.abs(units-Math.round(units))<1e-9;}
           function syncTargetDialogActions(){
             const ctx=targetDialogContext;if(!ctx)return;
             const input=document.getElementById('dbTargetInput'),raw=input.value,value=Number(raw);
-            document.getElementById('dbTargetSave').disabled=ctx.busy||!ctx.loaded||!ctx.dirty||!canEditTarget(ctx.tentId)||raw===''||value===ctx.current||!targetValueValid(ctx,value);
+            document.getElementById('dbTargetSave').disabled=ctx.busy||!ctx.loaded||!ctx.dirty||!canEditTarget(ctx.tentId)||raw===''||targetCanonicalValue(ctx,value)===ctx.current||!targetValueValid(ctx,value);
             input.disabled=ctx.busy;
             txt('dbTargetCancel',tr(ctx.saved?'close':'cancel'));
           }
@@ -11049,7 +11053,7 @@ def dashboard_page(request: Request):
             const ctx=targetDialogContext;if(!ctx)return;
             txt('dbTargetTitle',tr(ctx.spec.label));txt('dbTargetInputLabel',`${tr(ctx.spec.label)} (${ctx.spec.unit})`);
             txt('dbTargetCurrentLabel',tr('targetCurrent')+':');txt('dbTargetUnit',ctx.spec.unit);
-            txt('dbTargetCurrent',ctx.current===null?'—':ctx.current.toFixed(ctx.spec.decimals));
+            txt('dbTargetCurrent',ctx.current===null?'—':targetDisplayValue(ctx,ctx.current).toFixed(ctx.spec.decimals));
             txt('dbTargetSave',tr('targetSave'));syncTargetDialogActions();
           }
           function closeTargetDialog(){
@@ -11091,8 +11095,9 @@ def dashboard_page(request: Request):
             event.preventDefault();const ctx=targetDialogContext,input=document.getElementById('dbTargetInput');
             if(!ctx||ctx.busy||!ctx.loaded||!ctx.dirty)return;
             if(!canEditTarget(ctx.tentId)){targetStatus(tr('targetUnavailable'),'error');syncTargetDialogActions();return;}
-            const value=Number(input.value);
-            if(input.value===''||!targetValueValid(ctx,value)){targetStatus(tr(ctx.spec.invalid),'error');return;}
+            const displayValue=Number(input.value);
+            if(input.value===''||!targetValueValid(ctx,displayValue)){targetStatus(tr(ctx.spec.invalid),'error');return;}
+            const value=targetCanonicalValue(ctx,displayValue);
             if(value===ctx.current)return;
             ctx.busy=true;targetStatus(tr('targetSaving'));syncTargetDialogActions();
             try{
