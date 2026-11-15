@@ -53,3 +53,7 @@ Chart ranges are non-sensitive browser-local presentation settings. Stored JSON 
 ## v0.367 history target fields
 
 JSON history projections add only the recorded climate targets, normalized to finite numbers or null. No secrets, extra controller requests or new authorization paths are introduced. Stored measurements and settings are not modified.
+
+## v0.368 analysis download
+
+The new read-only analysis export follows existing dashboard history authentication. It accepts only fixed 1–48h ranges, uses bound SQL parameters, emits a fixed metric/target allowlist and never includes stored payloads, IPs, tokens or HMAC secrets. Attachment filenames use numeric tent IDs and a server timestamp. Responses are no-store and bounded to 1,000,000 bytes by adapting window sizes. No writes or ESP requests are performed.

@@ -52,6 +52,8 @@ jobs:
       - run: node tests/test_target_tiles_browser.cjs /tmp/target-editors.json
       - run: python tests/render_chart_settings.py /tmp/chart-settings.json
       - run: node tests/test_chart_settings_browser.cjs /tmp/chart-settings.json
+      - run: python tests/render_analysis_export.py /tmp/analysis-export.json
+      - run: node tests/test_analysis_export_browser.cjs /tmp/analysis-export.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

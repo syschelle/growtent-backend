@@ -97,6 +97,11 @@ def api_export(tent_id: int, range: str = '24h'):
     return legacy.export_history_csv(tent_id, range)
 
 
+@router.get('/api/export/analysis')
+def api_export_analysis(tent_id: int, range: str = '24h'):
+    return legacy.export_analysis_json(tent_id, range)
+
+
 @router.get('/ui/preferences')
 def ui_preferences_get(request: Request):
     return legacy.get_ui_preferences(request)
