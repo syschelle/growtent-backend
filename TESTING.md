@@ -88,3 +88,7 @@ The production VPD browser test additionally verifies a shared action row at 164
 ## Phase-aware table (v0.372)
 
 Production module tests cover the latest confirmed legend, default/custom early/late boundaries, extended phases without implicit phase transitions, phase-week-only selection, missing/invalid weeks, drying/stale values and validated per-tent browser settings. The production browser test exercises adaptive outlined cells and labels, extended vegetative week 7, actual flowering phase changes, missing weeks/drying, saved split changes, invalid input and zero extra network/control requests. Existing formula, current-marker, responsive, Python/PostgreSQL and CodeQL checks remain required.
+
+## Current-only release notes
+
+`python scripts/check_release_notes.py` requires exactly one root release-notes file matching the source version and title. Build/release CI invokes it; tag publishing also verifies tag/source agreement. This repository-only cleanup does not alter firmware or runtime behavior.
