@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.377
+
+- Make the VPD table display-only, rename IST-VPD and simplify the phase header.
+
 ## v0.376
 
 - Allow guests to use the read-only VPD table.

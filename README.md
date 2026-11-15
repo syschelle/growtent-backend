@@ -226,7 +226,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 Pinned image example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.376
+ghcr.io/syschelle/growtent-backend-api:v0.377
 ```
 
 The go2rtc helper image is pinned by default as well, instead of using a moving `latest` tag:
@@ -318,8 +318,8 @@ docker compose -f docker-compose.images.yml up -d --remove-orphans
 The image-based Compose file defaults to the moving latest image. You can also pin a release explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.376 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.376 docker compose -f docker-compose.images.yml up -d --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.377 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.377 docker compose -f docker-compose.images.yml up -d --remove-orphans
 ```
 
 Check status:
@@ -907,7 +907,7 @@ docker compose -f docker-compose.images.yml config | grep image:
 Use a tag that actually exists, preferably a pinned release tag:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.376 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.377 docker compose -f docker-compose.images.yml pull
 ```
 
 ### Initial install page is not available
@@ -1134,7 +1134,7 @@ The table reads `settings.grow.currentPhase` and `settings.grow.currentPhaseWeek
 
 An extended vegetative or flowering phase retains its own late range beyond the nominal five-week plan. Only an actual ESP phase change switches to another phase. Missing/invalid phase weeks, unknown phases, stale readings and drying do not select a reference range. Outlined grid cells show the selected reference band; the exact ESP regulation value is compared separately and remains unchanged.
 
-The expandable week-mapping controls in the table let each tent use independent late-stage start weeks (2–52). They persist locally in this browser, are not server backup settings and never send ESP writes or alter the actual target. Optional target automation remains outside this release.
+The table is display-only. Phase/week reference ranges use weeks 1–2 early and week 3 onward late. No week-mapping controls or browser overrides remain as of v0.377. Optional ESP target automation is not implemented by the table.
 
 ## Release notes policy
 
@@ -1153,3 +1153,7 @@ The tile reuses the read-only phase/week reference with compact inline DE/EN tex
 ## v0.376 guest VPD table
 
 Guest table open/close and browser-local week mapping controls are exempt from guest pointer blocking, matching the existing JavaScript allowlist. Controller write restrictions remain unchanged. Browser regressions cover guest table access and blocked VPD target editing.
+
+## v0.377 display-only VPD table
+
+The current table labels the central measurement IST-VPD (Actual VPD), has no week-mapping controls or persistence, and ignores previous browser overrides. It retains phase/week reference highlighting with the default week-3 boundary and no extended-phase suffix. Guest access and ESP control remain unchanged. Earlier week-configuration sections describe historical versions only.
