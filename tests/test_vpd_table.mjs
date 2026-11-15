@@ -34,3 +34,41 @@ assert.equal(api.calculate(33,60,-1.5).toFixed(2),'1.60');
 assert.equal(api.band(api.calculate(33,60,-1.5)),'high');
 for(const [v,expected]of [[0.3949,'outer'],[0.3951,'low'],[0.7949,'low'],[0.7951,'mid'],[1.1949,'mid'],[1.1951,'high'],[1.6049,'high'],[1.6051,'outer']])assert.equal(api.band(v),expected);
 console.log('Displayed VPD rounding and colour boundary regressions passed');
+
+// Night display: actual light state wins over a fresh daily schedule.
+const at=Date.parse('2026-11-15T22:00:00Z');
+const schedule={ok:true,checked_at:new Date(at).toISOString(),on_minutes:18*60,off_minutes:6*60,matches:[{action:'on',timespec:'0 0 18 * * *'},{action:'off',timespec:'0 0 6 * * *'}]};
+assert.equal(api.lightState({},schedule,at),'day');
+assert.equal(api.lightState({'cur.shelly.light.isOn':false},schedule,at),'night');
+assert.equal(api.lightState({'cur.shelly.light.isOn':true},null,at),'day');
+assert.equal(api.lightState({},schedule,at+600001),'unknown');
+assert.equal(api.lightState({},{...schedule,matches:[{action:'on',timespec:'0 0 18 * * MON'}]},at),'unknown');
+for(const [iso,expected]of [['2026-11-15T05:00:00Z','night'],['2026-11-15T17:00:00Z','day'],['2026-11-16T00:00:00Z','day']]){
+ const n=Date.parse(iso);assert.equal(api.lightState({},{...schedule,checked_at:iso},n),expected);
+}
+assert.equal(api.lightState({},null,at),'unknown');
+const tracker=api.humidityTracker();
+const reading=(elapsed,humidity=70,valid=true)=>({valid,humidity,capturedAt:new Date(at+elapsed).toISOString()});
+for(let elapsed=0;elapsed<300000;elapsed+=60000)assert.equal(tracker(2,reading(elapsed),true,at+elapsed),false);
+assert.equal(tracker(2,reading(300000),true,at+300000),true);
+assert.equal(tracker(2,reading(360000,69.9),true,at+360000),false);
+assert.equal(tracker(2,reading(420000),true,at+420000),false);
+assert.equal(tracker(2,reading(720000),true,at+720000),false); // missing samples reset continuity
+assert.equal(tracker(3,reading(780000),true,at+780000),false);
+assert.equal(tracker(3,reading(840000,70,false),true,at+840000),false);
+assert.equal(tracker(3,reading(900000),false,at+900000),false);
+const frozen=api.humidityTracker();assert.equal(frozen(2,reading(0),true,at),false);assert.equal(frozen(2,reading(0),true,at+300000),false);
+console.log('Night light state, midnight schedule and sustained humidity regressions passed');
+
+// Exercise the production render with the table closed, as on the dashboard.
+const nodes=new Map();
+for(const id of ['vpdTableDialog','openVpdTableBtn','vpdTableTitle','closeVpdTableBtn','vpdRangeAssessment','vpd'])nodes.set(id,{textContent:'',title:'',open:false,addEventListener(){},classList:{remove(){},add(){}}});
+const ctx={tent:2,language:'de',unit:'C'};let wall=at,tick;
+const mounted=api.mount({document:{getElementById:id=>nodes.get(id)},getContext:()=>ctx,clock:()=>wall,setTimer:fn=>tick=fn});
+const nightSample={...payload,'settings.grow.currentPhase':2,'settings.grow.currentPhaseWeek':3,'cur.shelly.light.isOn':false,'sensors.cur.humidityPct':70};
+for(let i=0;i<=5;i++){wall=at+i*60000;mounted.update(2,nightSample,new Date(wall).toISOString());}
+assert.equal(nodes.get('vpdRangeAssessment').textContent,'Nachtphase · Luftfeuchtigkeit seit ≥5 Min. ≥70 %');
+ctx.language='en';mounted.refresh();assert.match(nodes.get('vpdRangeAssessment').textContent,/Night phase.*Humidity/);
+wall+=120001;tick();assert.equal(nodes.get('vpdRangeAssessment').textContent,'Reference unavailable');
+wall+=1;mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true},new Date(wall).toISOString());assert.equal(nodes.get('vpdRangeAssessment').textContent,'Outside reference range');
+console.log('Production dashboard render: DE/EN night humidity notice, stale expiry and daytime assessment passed');

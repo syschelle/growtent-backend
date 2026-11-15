@@ -1,4 +1,4 @@
-# Testing — v0.379
+# Testing — v0.380
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -120,3 +120,9 @@ Current VPD coloring reuses the reference table band function, including two-dec
 ## v0.379 dashboard VPD text color
 
 Dashboard-specific CSS uses the shared band colors for text with a transparent background and original spacing. Reference table cell styling and band boundary tests remain applicable.
+
+## v0.380 night phase
+
+Node regressions cover switch-state priority, daily schedule fallback, midnight boundaries, invalid/stale schedules and five-minute humidity continuity/reset. VPD remains visible; nighttime table phase highlighting is suppressed.
+
+Local v0.380 validation: VPD table/night-state/dashboard-render and VPD UI Node suites passed; release-notes check, Python syntax compilation and whitespace checks passed. Python pytest and browser fixture rendering could not run because pytest is not installed in this environment; visual browser validation remains open.

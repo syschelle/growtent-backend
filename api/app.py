@@ -50,7 +50,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.379"
+APP_VERSION = "v0.380"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -13824,9 +13824,10 @@ def dashboard_page(request: Request):
             const phaseName = phaseLabel(phase);
             const phaseStatsText = `${phaseName !== '-' ? phaseName : 'Phase'}: ${formatGrowDayWeekDate(phaseDay, phaseWeek)}`;
             let lightCycle = lightCycleFromLine(d['settings.shelly.light.line']);
-            if (!lightCycle && hasTextValue(d['settings.shelly.light.ip'])) {
+            if (hasTextValue(d['settings.shelly.light.ip'])) {
               const sched = await readLightScheduleOnDemand(false);
-              lightCycle = lightCycleFromSchedule(sched);
+              lightCycle = lightCycle || lightCycleFromSchedule(sched);
+              window.GrowTentVpdTable?.refresh();
             }
             html('growPhaseStats', `${escHtml(phaseStatsText)}<br><span class="small" style="font-weight:600;">${escHtml(tr('lightCycle'))}: ${escHtml(lightCycle || '-')}</span>`);
 
@@ -14353,7 +14354,7 @@ def dashboard_page(request: Request):
             window.location.href = `/tents/${encodeURIComponent(String(currentTentId))}/heap/export.csv`;
           });
 
-          window.GrowTentVpdTable?.mount({getContext:()=>({tent:currentTentId,language:currentLang,unit:currentTempUnit})});
+          window.GrowTentVpdTable?.mount({getContext:()=>({tent:currentTentId,language:currentLang,unit:currentTempUnit,lightSchedule:lightScheduleCache.tentId===currentTentId?lightScheduleCache.data:null})});
 
           // Compact analysis export; only reads existing backend history.
           let analysisExportTent = null;
