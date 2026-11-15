@@ -1,5 +1,10 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.370
+
+- Add a live VPD reference table with current-cell marker and exact ESP readings.
+- Apply configured leaf offset to reference cells, keep ESP regulation unchanged and handle stale/missing values explicitly.
+
 ## v0.369
 
 - Replace the detailed export hint with a short AI/ChatGPT analysis purpose explanation in German and English.

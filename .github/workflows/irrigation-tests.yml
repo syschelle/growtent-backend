@@ -34,6 +34,7 @@ jobs:
       - run: python -m compileall -q api
       - run: python -m pytest -q
       - run: node tests/test_vpd_ui.mjs
+      - run: node tests/test_vpd_table.mjs
 
   target-editor-ui:
     runs-on: ubuntu-latest
@@ -54,6 +55,8 @@ jobs:
       - run: node tests/test_chart_settings_browser.cjs /tmp/chart-settings.json
       - run: python tests/render_analysis_export.py /tmp/analysis-export.json
       - run: node tests/test_analysis_export_browser.cjs /tmp/analysis-export.json
+      - run: python tests/render_vpd_table.py /tmp/vpd-table.json
+      - run: node tests/test_vpd_table_browser.cjs /tmp/vpd-table.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
