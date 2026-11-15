@@ -85,3 +85,7 @@ German display copy only; security and controller behaviour are unchanged.
 ## v0.375 VPD tile assessment
 
 The tile reuses the read-only phase/week reference with compact inline DE/EN text. Stale data and drying do not claim an in-range value. ESP regulation and write security remain unchanged. Browser coverage checks closed-dialog updates and stale expiry.
+
+## v0.376 guest VPD table
+
+Guest table open/close and browser-local week mapping controls are exempt from guest pointer blocking, matching the existing JavaScript allowlist. Controller write restrictions remain unchanged. Browser regressions cover guest table access and blocked VPD target editing.
