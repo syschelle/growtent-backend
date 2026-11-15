@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.373
+
+- Align VPD table colours with displayed two-decimal values at band boundaries.
+
 ## v0.372
 
 - Highlight phase/week-specific VPD reference ranges using the latest confirmed classic legend.
