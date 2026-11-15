@@ -1,5 +1,11 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.372
+
+- Highlight phase/week-specific VPD reference ranges using the latest confirmed classic legend.
+- Keep extended phases in their own late range and add configurable browser-local per-tent early/late boundaries.
+- Leave ESP phase and actual VPD targets unchanged.
+
 ## v0.371
 
 - Place VPD table and change buttons in one compact footer row to avoid extra tile height.
