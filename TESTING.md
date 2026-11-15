@@ -1,4 +1,4 @@
-# Testing — v0.374
+# Testing — v0.375
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -100,3 +100,7 @@ Run `node tests/test_vpd_table.mjs`. Regression coverage checks the reported 33 
 ## v0.374 hint text
 
 Existing VPD table tests remain applicable; only the German explanatory sentence changes.
+
+## v0.375 VPD tile assessment
+
+The tile reuses the read-only phase/week reference with compact inline DE/EN text. Stale data and drying do not claim an in-range value. ESP regulation and write security remain unchanged. Browser coverage checks closed-dialog updates and stale expiry.

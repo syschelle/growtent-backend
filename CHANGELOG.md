@@ -1,5 +1,9 @@
 # v0.354 — ESP-owned irrigation
 
+## v0.375
+
+- Add the compact phase-reference assessment beside the current VPD value.
+
 ## v0.374
 
 - Shorten the German VPD table hint.
