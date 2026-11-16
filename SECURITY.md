@@ -1,4 +1,4 @@
-# Security — v0.382
+# Security — v0.383
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -113,3 +113,7 @@ Only reference table range and displayed temperature units change. ESP values, c
 ## v0.382 Fahrenheit temperature target dialog
 
 Fahrenheit is converted to canonical Celsius before the existing protected PATCH. Existing administrator/readiness gates and verified Celsius response checks remain authoritative.
+
+## v0.383 nighttime table heading
+
+Only read-only reference heading presentation changes. No controller writes, access checks or measurement sources change.
