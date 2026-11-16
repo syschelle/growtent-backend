@@ -1,4 +1,4 @@
-# Security — v0.384
+# Security — v0.385
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -121,3 +121,7 @@ Only read-only reference heading presentation changes. No controller writes, acc
 ## v0.384 backend PM1 live metrics
 
 PM1 ON represents its permanently connected output. Heatmat remains monitoring-only and directly identified meters have no toggle UI. No source payload/history is rewritten.
+
+## v0.385 analysis export device/context coverage
+
+The read-only export projects only allowlisted stored ESP fields. It adds no live calls or controller writes, does not include IP-bearing device lines, credentials or tokens, and never backfills history from current settings/direct readings.

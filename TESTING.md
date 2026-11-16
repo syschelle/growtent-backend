@@ -1,4 +1,4 @@
-# Testing — v0.384
+# Testing — v0.385
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -144,3 +144,7 @@ Chromium regressions verify DE/EN flowering week 6 reference headings remain vis
 ## v0.384 backend PM1 live metrics
 
 Regression tests exercise Switch/PM1 parsing and the actual direct reader with mock HTTP, including 46.1 W / 40.7 Wh and real zero watts. Production dashboard rendering tests verify ON/green, live energy conversion and absent heatmat toggle.
+
+## v0.385 analysis export device/context coverage
+
+Run `PYTHONPATH=api python -m pytest -q tests/test_analysis_export.py tests/test_analysis_export_devices.py`. All 19 local cases passed: all seven Shelly roles, measured zero, stale/missing freshness, unknown state, gaps, transitions/detail caps, phase/schedule changes, privacy, source immutability and a full-day/all-devices 1 MB endpoint size regression. Existing export download browser tests remain required. See docs/analysis-export.md for the additive schema.
