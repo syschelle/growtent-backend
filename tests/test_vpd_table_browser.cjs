@@ -45,6 +45,15 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
  assert.equal(await page.locator('#vpdReferenceTable tbody th').last().textContent(),'95,0');
  assert.match(await page.locator('#vpdTableReadings').textContent(),/Blatt-Offset-2,70 °F/);
  await page.evaluate(()=>{ctx.unit='C';GrowTentVpdTable.refresh();});
+ // Night retains phase/week reference metadata, with exactly one night label.
+ for(const language of ['de','en']){
+  await page.evaluate(language=>{ctx.language=language;GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhase':2,'settings.grow.currentPhaseWeek':6,'cur.shelly.light.isOn':false},new Date(clock).toISOString());},language);
+  assert.equal(await page.locator('#vpdTablePhase').textContent(),language==='de'?'Blüte · Woche 6 · spät · 1,20–1,60 kPa':'Flowering · Week 6 · late · 1.20–1.60 kPa');
+  assert.equal(await page.locator('#vpdTablePhaseAssessment').textContent(),language==='de'?'Nachtphase':'Night phase');
+  assert.equal((await page.locator('#vpdTableDialog').textContent()).match(language==='de'?/Nachtphase/g:/Night phase/g)?.length,1);
+  assert.equal(await page.locator('#vpdReferenceTable td[data-phase-range]').count(),0);
+ }
+ await page.evaluate(()=>{ctx.language='de';GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3},new Date(clock).toISOString());});
  const initial=await page.locator('#vpdReferenceTable td[data-current]').textContent();
  await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=0;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.notEqual(await page.locator('#vpdReferenceTable td[data-current]').textContent(),initial);assert.match(await page.locator('#vpdTableReadings').textContent(),/IST-VPD1,16 kPa/);
  await page.evaluate(()=>{sample['settings.grow.offsetLeafTemperature']=null;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),0);assert.match(await page.locator('#vpdTableState').textContent(),/Blatt-Offset fehlt/);assert.equal(await page.locator('#vpdReferenceTable td.vpd-band-unknown').count(),400);

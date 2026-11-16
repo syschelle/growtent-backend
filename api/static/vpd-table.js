@@ -70,7 +70,8 @@
    const warning=humidWarning(ctx.tent,s,night,clock());
    const nightText=de?'Nachtphase':'Night phase';
    const nightAssessment=nightText+(warning?(de?' · Luftfeuchtigkeit seit ≥5 Min. ≥70 %':' · Humidity ≥70% for ≥5 min'):'');
-   const range=night?{reason:'night'}:phaseRange(latest?.data,s.valid&&sameTent);
+   const referenceRange=phaseRange(latest?.data,s.valid&&sameTent);
+   const range=night?{reason:'night'}:referenceRange;
    const assessment=doc.getElementById('vpdRangeAssessment');
    if(assessment){const text=night?nightAssessment:range.reason?(range.reason==='drying'?(de?'Trocknung': 'Drying'):(de?'Referenzbereich offen':'Reference unavailable')):(inPhase(s.vpd,range)?(de?'Im Referenzbereich':'Within reference range'):(de?'Außerhalb des Referenzbereichs':'Outside reference range'));assessment.textContent=text;assessment.title=text;}
    const current=doc.getElementById('vpd');
@@ -78,8 +79,8 @@
    if(!dialog.open)return;
    const format=(v,d=2)=>v===null?'—':v.toLocaleString(de?'de-DE':'en-GB',{minimumFractionDigits:d,maximumFractionDigits:d});
    const temp=v=>temperatureDisplay(v,unit);
-   const phaseText=night?nightText:range.reason?(range.reason==='drying'?(de?'Trocknung – kein Phasenbereich markiert.':'Drying – no phase range highlighted.'):(de?'Phase/Woche offen – kein Phasenbereich markiert.':'Phase/week unavailable – no phase range highlighted.')):
-    `${range.phase===1?(de?'Vegetativ':'Vegetative'):(de?'Blüte':'Flowering')} · ${de?'Woche':'Week'} ${range.week} · ${range.late?(de?'spät':'late'):(de?'früh':'early')} · ${format(range.min)}–${format(range.max)} kPa`;
+   const phaseText=referenceRange.reason?(referenceRange.reason==='drying'?(de?'Trocknung – kein Phasenbereich markiert.':'Drying – no phase range highlighted.'):(de?'Phase/Woche offen – kein Phasenbereich markiert.':'Phase/week unavailable – no phase range highlighted.')):
+    `${referenceRange.phase===1?(de?'Vegetativ':'Vegetative'):(de?'Blüte':'Flowering')} · ${de?'Woche':'Week'} ${referenceRange.week} · ${referenceRange.late?(de?'spät':'late'):(de?'früh':'early')} · ${format(referenceRange.min)}–${format(referenceRange.max)} kPa`;
    doc.getElementById('vpdTablePhase').textContent=phaseText;
    doc.getElementById('vpdTablePhaseAssessment').textContent=night?nightAssessment:range.reason?'':(inPhase(s.vpd,range)?(de?'IST-VPD im Referenzbereich.':'ESP control value within reference range.'):(de?'IST-VPD außerhalb des Referenzbereichs.':'ESP control value outside reference range.'));
    doc.getElementById('vpdPhaseRangeKey').textContent=de?'Umrandung: aktueller Phasenbereich':'Outline: current phase range';

@@ -1,4 +1,4 @@
-# Testing — v0.382
+# Testing — v0.383
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -136,3 +136,7 @@ Local v0.381: VPD table and VPD UI Node suites, release-notes checker and whites
 ## v0.382 Fahrenheit temperature target dialog
 
 Production JavaScript regression checks cover C/F specs, current/input conversion, supported target grid and canonical Celsius submission/confirmation. Browser validation remains open because Chromium is absent.
+
+## v0.383 nighttime table heading
+
+Chromium regressions verify DE/EN flowering week 6 reference headings remain visible at night, exactly one night label appears in the dialog, and daytime phase highlighting stays suppressed.
