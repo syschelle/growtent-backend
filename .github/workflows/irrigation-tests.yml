@@ -36,6 +36,7 @@ jobs:
       - run: python -m pytest -q
       - run: node tests/test_target_temperature_units.mjs
       - run: node tests/test_shelly_pm1_ui.mjs
+      - run: node tests/test_shelly_history_gaps.mjs
       - run: node tests/test_vpd_ui.mjs
       - run: node tests/test_vpd_table.mjs
 

@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.385"
+APP_VERSION = "v0.386"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -13113,6 +13113,11 @@ def dashboard_page(request: Request):
           let heatmatHistoryConfigured = false;
           let exhaustHistoryConfigured = false;
 
+          function shellyHistoryPower(point,key){
+            const value=finiteNumber(point?.[key]);
+            return value===null?null:Number(value.toFixed(1));
+          }
+
           function buildSingleChart(canvasId, labels, datasetLabel, values, color, unitLabel, lineTension = 0.25){
             const ctx = document.getElementById(canvasId);
             if (!ctx || typeof Chart === 'undefined') return null;
@@ -14161,29 +14166,14 @@ def dashboard_page(request: Request):
               const converted = convertTempFromC(c);
               return Number.isFinite(converted) ? Number(converted.toFixed(1)) : null;
             });
-            const mainW = points.map(p => {
-              const w = Number(p.mainW);
-              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
-            });
-            const lightW = points.map(p => {
-              const w = Number(p.lightW);
-              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
-            });
-            const humidifierW = points.map(p => {
-              const w = Number(p.humidifierW);
-              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
-            });
-            const heatmatW = points.map(p => {
-              const w = Number(p.heatmatW);
-              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
-            });
-            const heatmatHasHistoryValues = heatmatW.some((value) => Number.isFinite(Number(value)));
+            const mainW = points.map(p => shellyHistoryPower(p,'mainW'));
+            const lightW = points.map(p => shellyHistoryPower(p,'lightW'));
+            const humidifierW = points.map(p => shellyHistoryPower(p,'humidifierW'));
+            const heatmatW = points.map(p => shellyHistoryPower(p,'heatmatW'));
+            const heatmatHasHistoryValues = heatmatW.some((value) => finiteNumber(value)!==null);
             setHeatmatHistoryVisible(heatmatHistoryConfigured || heatmatHasHistoryValues);
-            const exhaustW = points.map(p => {
-              const w = Number(p.exhaustW);
-              return Number.isFinite(w) ? Number(w.toFixed(1)) : null;
-            });
-            const exhaustHasHistoryValues = exhaustW.some((value) => Number.isFinite(Number(value)));
+            const exhaustW = points.map(p => shellyHistoryPower(p,'exhaustW'));
+            const exhaustHasHistoryValues = exhaustW.some((value) => finiteNumber(value)!==null);
             setExhaustHistoryVisible(exhaustHistoryConfigured || exhaustHasHistoryValues);
             const alphaTemp = points.map(p => {
               const a = Number(p.effectiveAlfaTempC);

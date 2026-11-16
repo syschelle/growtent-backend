@@ -1,4 +1,4 @@
-# Testing — v0.385
+# Testing — v0.386
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -148,3 +148,7 @@ Regression tests exercise Switch/PM1 parsing and the actual direct reader with m
 ## v0.385 analysis export device/context coverage
 
 Run `PYTHONPATH=api python -m pytest -q tests/test_analysis_export.py tests/test_analysis_export_devices.py`. All 19 local cases passed: all seven Shelly roles, measured zero, stale/missing freshness, unknown state, gaps, transitions/detail caps, phase/schedule changes, privacy, source immutability and a full-day/all-devices 1 MB endpoint size regression. Existing export download browser tests remain required. See docs/analysis-export.md for the additive schema.
+
+## v0.386 Shelly history gaps
+
+The production history formatter is executed for all five power series with valid numbers, null/missing/empty/boolean readings and true zero. Production mappers must all use the null-safe helper. Existing full backend and browser suites remain required.
