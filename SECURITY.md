@@ -1,4 +1,4 @@
-# Security — v0.383
+# Security — v0.384
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -117,3 +117,7 @@ Fahrenheit is converted to canonical Celsius before the existing protected PATCH
 ## v0.383 nighttime table heading
 
 Only read-only reference heading presentation changes. No controller writes, access checks or measurement sources change.
+
+## v0.384 backend PM1 live metrics
+
+PM1 ON represents its permanently connected output. Heatmat remains monitoring-only and directly identified meters have no toggle UI. No source payload/history is rewritten.

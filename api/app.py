@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSON
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload
+from services.shelly_status import parse_rpc_status
 from services.analysis_export import build_analysis_export, HOURS as ANALYSIS_EXPORT_HOURS
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from services.vpd_channels import (
@@ -50,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.383"
+APP_VERSION = "v0.384"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5759,14 +5760,10 @@ def _get_shelly_direct_state_for_key(payload: dict, tent: dict | None, key: str)
                     r = client.get(f"{base}/rpc/Shelly.GetStatus", auth=a)
                     r.raise_for_status()
                     j = r.json() or {}
-                    sw = (j.get("switch:0") or {})
-                    return {
-                        "isOn": bool(sw.get("output")),
-                        "Watt": sw.get("apower"),
-                        "Wh": (sw.get("aenergy") or {}).get("total"),
-                        "ip": base,
-                        "gen": gen,
-                    }
+                    reading = parse_rpc_status(j)
+                    if reading is None:
+                        continue
+                    return {**reading, "ip": base, "gen": gen}
                 r = client.get(f"{base}/status", auth=a)
                 r.raise_for_status()
                 j = r.json() or {}
@@ -5831,10 +5828,10 @@ def get_main_shelly_direct_state(tent_id: int):
                     r = client.get(f"{base}/rpc/Shelly.GetStatus", auth=a)
                     r.raise_for_status()
                     j = r.json() or {}
-                    sw = (j.get("switch:0") or {})
-                    is_on = bool(sw.get("output"))
-                    watt = sw.get("apower")
-                    wh = (sw.get("aenergy") or {}).get("total")
+                    reading = parse_rpc_status(j)
+                    if reading is None:
+                        raise ValueError("No valid Shelly Switch/PM1 sample")
+                    is_on, watt, wh = reading["isOn"], reading["Watt"], reading["Wh"]
                 else:
                     r = client.get(f"{base}/status", auth=a)
                     r.raise_for_status()
@@ -12032,6 +12029,14 @@ def dashboard_page(request: Request):
             return '';
           }
 
+          function applyDirectShellyReading(data,key,state){
+            if(!state || typeof state.isOn!=='boolean')return;
+            data[`cur.shelly.${key}.isOn`]=state.isOn;
+            data[`cur.shelly.${key}.meteringOnly`]=state.meteringOnly===true;
+            if(finiteNumber(state.Watt)!==null)data[`cur.shelly.${key}.Watt`]=state.Watt;
+            if(finiteNumber(state.Wh)!==null)data[`cur.shelly.${key}.Wh`]=state.Wh;
+          }
+
           function normalizeShellyDeviceFromPayload(d, key){
             const ip = d[`settings.shelly.${key}.ip`];
             if (!ip || String(ip).trim() === '') return null;
@@ -12042,6 +12047,7 @@ def dashboard_page(request: Request):
               gen: d[`settings.shelly.${key}.gen`] ?? '-',
               line: d[`settings.shelly.${key}.line`] ?? '',
               isOn: d[`cur.shelly.${key}.isOn`],
+              meteringOnly: d[`cur.shelly.${key}.meteringOnly`] === true,
               watt: d[`cur.shelly.${key}.Watt`],
               wh: d[`cur.shelly.${key}.Wh`],
               cost: d[`cur.shelly.${key}.Cost`]
@@ -13019,12 +13025,12 @@ def dashboard_page(request: Request):
 
             const cards = devices.map(dev => {
               const state = dev.isOn ? tr('on') : tr('off');
-              const watt = Number.isFinite(Number(dev.watt)) ? Number(dev.watt).toFixed(1) + ' W' : '-';
-              const kwh = Number.isFinite(Number(dev.wh)) ? (Number(dev.wh) / 1000).toFixed(3) + ' kWh' : '-';
-              const eur = Number.isFinite(Number(dev.cost)) ? Number(dev.cost).toFixed(2) + ' €' : '-';
+              const watt = finiteNumber(dev.watt) !== null ? Number(dev.watt).toFixed(1) + ' W' : '-';
+              const kwh = finiteNumber(dev.wh) !== null ? (Number(dev.wh) / 1000).toFixed(3) + ' kWh' : '-';
+              const eur = finiteNumber(dev.cost) !== null ? Number(dev.cost).toFixed(2) + ' €' : '-';
               const cardStateClass = dev.isOn ? 'shelly-card-on' : 'shelly-card-off';
 
-              const canToggle = ['main', 'light', 'humidifier', 'heater', 'fan', 'exhaust'].includes(dev.key);
+              const canToggle = ['main', 'light', 'humidifier', 'heater', 'fan', 'exhaust'].includes(dev.key) && !dev.meteringOnly;
               const url = shellyUrl(dev.ip);
               const rawLine = String(dev.line || '').trim();
               const onMatch = /(?:^|[|])[ ]*ON[ ]*([^|]+)/i.exec(rawLine);
@@ -13684,9 +13690,7 @@ def dashboard_page(request: Request):
                 gotDirectShelly = true;
                 const directCheckedAt = dj?.checked_at || new Date().toISOString();
                 Object.entries(dj.states).forEach(([k, st]) => {
-                  d[`cur.shelly.${k}.isOn`] = st?.isOn;
-                  if (Number.isFinite(Number(st?.Watt))) d[`cur.shelly.${k}.Watt`] = st.Watt;
-                  if (Number.isFinite(Number(st?.Wh))) d[`cur.shelly.${k}.Wh`] = st.Wh;
+                  applyDirectShellyReading(d,k,st);
 
                   // Direct-Shelly activity marker (independent from /latest history):
                   // remember the last poll timestamp where device was active.
