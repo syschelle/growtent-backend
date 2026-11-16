@@ -1,4 +1,4 @@
-# Testing — v0.383
+# Testing — v0.384
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -140,3 +140,7 @@ Production JavaScript regression checks cover C/F specs, current/input conversio
 ## v0.383 nighttime table heading
 
 Chromium regressions verify DE/EN flowering week 6 reference headings remain visible at night, exactly one night label appears in the dialog, and daytime phase highlighting stays suppressed.
+
+## v0.384 backend PM1 live metrics
+
+Regression tests exercise Switch/PM1 parsing and the actual direct reader with mock HTTP, including 46.1 W / 40.7 Wh and real zero watts. Production dashboard rendering tests verify ON/green, live energy conversion and absent heatmat toggle.
