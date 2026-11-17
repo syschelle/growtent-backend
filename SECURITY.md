@@ -1,4 +1,4 @@
-# Security — v0.385
+# Security — v0.386
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -125,3 +125,7 @@ PM1 ON represents its permanently connected output. Heatmat remains monitoring-o
 ## v0.385 analysis export device/context coverage
 
 The read-only export projects only allowlisted stored ESP fields. It adds no live calls or controller writes, does not include IP-bearing device lines, credentials or tokens, and never backfills history from current settings/direct readings.
+
+## v0.386 Shelly history gaps
+
+Presentation-only correction. No history rows are rewritten, controller commands issued or permissions changed.
