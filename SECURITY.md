@@ -1,4 +1,4 @@
-# Security — v0.387
+# Security — v0.388
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -133,3 +133,7 @@ Presentation-only correction. No history rows are rewritten, controller commands
 ## v0.387 desktop Shelly layout
 
 Presentation-only CSS and schedule markup change. Device data, authorization, control endpoints, guest restrictions, and controller logic remain unchanged.
+
+## v0.388 humidity history average
+
+Read-only dashboard calculation on the already displayed humidity series. No new endpoints, permissions, stored data, controller writes or sensor processing changes.

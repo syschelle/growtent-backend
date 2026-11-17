@@ -78,3 +78,35 @@ context.document.getElementById=id=>['tempChart','humChart'].includes(id)?{}:nul
 [tc,hc]=climate([21.8],[57]);assert.equal(tc.options.scales.y.suggestedMin,undefined);assert.equal(hc.options.scales.y.suggestedMin,undefined);
 vm.runInContext("currentTempUnit='F'",context);localStorage.setItem('gt_chart_ranges','{"temperature":2}');[tc]=climate([71.6],[57]);assert.ok(Math.abs(tc.options.scales.y.suggestedMin-68)<1e-9);assert.ok(Math.abs(tc.options.scales.y.suggestedMax-75.2)<1e-9);
 console.log('Saved chart preferences: defaults, corruption, bounds, custom ranges, automatic mode and Fahrenheit passed');
+
+// Humidity average uses only the displayed smoothed series, not raw readings.
+// Rebuilding with a different period must replace the statistics, including gaps.
+const humidityAverage=(hum,raw=hum)=>climate(hum.map(()=>22),hum,hum.map(()=>22),raw)[1];
+function checkHumidity(hum,raw,avg,suffix,legendText){
+ const hc=humidityAverage(hum,raw);
+ const [main,rawDs,right,mean,white]=hc.data.datasets;
+ assert.deepEqual(Array.from(main.data),hum);
+ assert.deepEqual(Array.from(rawDs.data),raw);
+ assert.equal(right.yAxisID,'yR');
+ assert.equal(mean.label,'Durchschnitt %');
+ assert.equal(mean.legendAfter,suffix);
+ assert.deepEqual(Array.from(mean.data),hum.map(()=>avg));
+ assert.deepEqual(Array.from(white.data),hum.map(()=>avg));
+ assert.equal(mean.borderColor,'#ef4444');
+ assert.deepEqual(Array.from(mean.borderDash),[8,8]);
+ assert.equal(white.borderColor,'#ffffff');
+ assert.equal(white.borderDashOffset,8);
+ const legend=hc.options.plugins.legend.labels.generateLabels({data:hc.data});
+ assert.equal(legend[3].text,legendText);
+ assert.equal(legend[4].text,'');
+ assert.equal(hc.options.plugins.legend.labels.filter(legend[4]),false);
+ return hc;
+}
+checkHumidity([56.4,null,58.4],[90,91,92],57.4,' (min 56.4 / max 58.4)','Durchschnitt %: 57.4 (min 56.4 / max 58.4)');
+checkHumidity([null,undefined,'',false,NaN,Infinity,0,20],[50,50,50,50,50,50,50,50],10,' (min 0.0 / max 20.0)','Durchschnitt %: 10.0 (min 0.0 / max 20.0)');
+checkHumidity([null,null],[70,80],null,'','Durchschnitt %: -');
+checkHumidity([0],[50],0,' (min 0.0 / max 0.0)','Durchschnitt %: 0.0 (min 0.0 / max 0.0)');
+checkHumidity([100,100],[99,98],100,' (min 100.0 / max 100.0)','Durchschnitt %: 100.0 (min 100.0 / max 100.0)');
+checkHumidity([49,50,51.1],[49,50,51.1],50,' (min 49.0 / max 51.1)','Durchschnitt %: 50.0 (min 49.0 / max 51.1)');
+assert.ok(source.includes("average: 'Average'"));
+console.log('Humidity history: smoothed-only mean, min/max, missing/invalid values, real zero, one-decimal legend, range rebuild and matching line style passed');

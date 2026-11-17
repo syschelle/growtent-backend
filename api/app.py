@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.387"
+APP_VERSION = "v0.388"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -13342,7 +13342,7 @@ def dashboard_page(request: Request):
                   if(ds.requireLatestValue && last===null)it.text=`${it.text}: -`;
                   if (Number.isFinite(last)) {
                     const abs = Math.abs(last);
-                    const decimals = abs >= 100 ? 0 : (abs >= 10 ? 1 : 2);
+                    const decimals = Number.isInteger(ds.legendDecimals) ? ds.legendDecimals : (abs >= 100 ? 0 : (abs >= 10 ? 1 : 2));
                     it.text = `${it.text}: ${last.toFixed(decimals)}`;
                     if (typeof ds.legendAfter === 'string' && ds.legendAfter.trim()) {
                       it.text = `${it.text} ${ds.legendAfter.trim()}`;
@@ -13529,6 +13529,16 @@ def dashboard_page(request: Request):
 
             const humCtx = document.getElementById('humChart');
             if (humCtx) {
+              const humValid = (Array.isArray(hum) ? hum : [])
+                .map(finiteNumber)
+                .filter((value) => Number.isFinite(value));
+              const humMin = humValid.length ? Math.min(...humValid) : null;
+              const humMax = humValid.length ? Math.max(...humValid) : null;
+              const humMinMaxSuffix = (Number.isFinite(humMin) && Number.isFinite(humMax))
+                ? ` (min ${humMin.toFixed(1)} / max ${humMax.toFixed(1)})`
+                : '';
+              const humAvg = calcSeriesAverage(hum, 1);
+              const humAvgLine = labels.map(() => (Number.isFinite(humAvg) ? humAvg : null));
               const humRange = climateChartRange([hum, humRawSeries], null, chartRanges.humidity / 2, 0, 100);
               humChart = new Chart(humCtx, {
                 type: 'line',
@@ -13537,7 +13547,9 @@ def dashboard_page(request: Request):
                   datasets: [
                     { label: `${tr('humidity')} %`, data: hum, borderColor: '#a78bfa', tension: 0.25, pointRadius: 0, pointHoverRadius: 5, pointHitRadius: 18, yAxisID: 'y' },
                     { label: `${tr('rawValue')} ${tr('humidity')} %`, data: humRawSeries, borderColor: '#c4b5fd', borderDash: [6,4], tension: 0.2, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 12, yAxisID: 'y' },
-                    { label: '', data: hum, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' }
+                    { label: '', data: hum, borderColor: 'rgba(0,0,0,0)', backgroundColor: 'rgba(0,0,0,0)', tension: 0.25, pointRadius: 0, pointHoverRadius: 0, pointHitRadius: 0, yAxisID: 'yR' },
+                    { label: `${tr('average')} %`, legendAfter: humMinMaxSuffix, legendDecimals: 1, requireLatestValue: true, data: humAvgLine, borderColor: '#ef4444', borderDash: [8,8], borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' },
+                    { label: '', data: humAvgLine, borderColor: '#ffffff', borderDash: [8,8], borderDashOffset: 8, borderWidth: 2, tension: 0, pointRadius: 0, pointHoverRadius: 0, yAxisID: 'y' }
                   ]
                 },
                 options: {
