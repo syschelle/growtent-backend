@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.386"
+APP_VERSION = "v0.387"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9934,6 +9934,26 @@ def dashboard_page(request: Request):
           #shellyDevices { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }
           #shellyDevices .card { min-width:0; display:flex; flex-direction:column; }
           #shellyDevices .small { word-break:break-word; }
+          #shellyDevices .shelly-schedule { white-space:nowrap; font-weight:400; }
+          /* Desktop: one column per configured Shelly, never a second row.
+             Scroll this grid only if the available width cannot fit readable cards. */
+          @media (min-width: 1025px){
+            body:not(.force-mobile) .content { min-width:0; }
+            body:not(.force-mobile) #shellyDevices {
+              grid-template-columns:none;
+              grid-auto-flow:column;
+              grid-auto-columns:minmax(160px,1fr);
+              overflow-x:auto;
+              padding-bottom:4px;
+            }
+            body:not(.force-mobile) #shellyDevices .card-head,
+            body:not(.force-mobile) #shellyDevices .value,
+            body:not(.force-mobile) #shellyDevices .shelly-actions { flex-wrap:wrap; }
+            body:not(.force-mobile) #shellyDevices .card-head > div { min-width:0; }
+            body:not(.force-mobile) #shellyDevices .label { overflow-wrap:anywhere; }
+            body:not(.force-mobile) #shellyDevices .shelly-schedule { white-space:normal; }
+            body:not(.force-mobile) #shellyDevices .shelly-actions button { max-width:100%; overflow-wrap:anywhere; }
+          }
           .label { font-size:.8rem; color:var(--muted); }
           .value { font-size:1.4rem; font-weight:700; margin-top:4px; }
           .small { font-size:.85rem; color:var(--small); }
@@ -13039,7 +13059,7 @@ def dashboard_page(request: Request):
                 ? `${onMatch ? `${tr('scheduleOn')} ${onMatch[1].trim()}` : ''}${(onMatch && offMatch) ? ' | ' : ''}${offMatch ? `${tr('scheduleOff')} ${offMatch[1].trim()}` : ''}`
                 : '';
               const scheduleRight = scheduleText
-                ? `<span class="small" style="white-space:nowrap; font-weight:400;">${scheduleText}</span>`
+                ? `<span class="small shelly-schedule">${scheduleText}</span>`
                 : '';
               const switchTs = shellyLastSwitches?.[dev.key] || null;
               const activityTs = shellyLastActivity?.[dev.key] || null;

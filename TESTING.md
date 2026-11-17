@@ -1,4 +1,4 @@
-# Testing — v0.386
+# Testing — v0.387
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -152,3 +152,7 @@ Run `PYTHONPATH=api python -m pytest -q tests/test_analysis_export.py tests/test
 ## v0.386 Shelly history gaps
 
 The production history formatter is executed for all five power series with valid numbers, null/missing/empty/boolean readings and true zero. Production mappers must all use the null-safe helper. Existing full backend and browser suites remain required.
+
+## v0.387 desktop Shelly layout
+
+The browser regression uses actual dashboard CSS and Shelly rendering with synthetic devices. It checks one equal-width/equal-height desktop row at 1920, 1730, 1440, 1280 and 1100 px in German and English; grid-local scrolling only when required; 900 px tablet, 390 px mobile and forced mobile behavior; empty/dynamic device counts and preserved monitoring-only/controllable actions. Equivalent checks passed locally in Chromium via Python Playwright. The Node browser runner is wired into CI but was not executed locally (Node Playwright unavailable). No live controller or deployment test is implied.

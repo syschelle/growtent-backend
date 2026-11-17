@@ -61,6 +61,8 @@ jobs:
       - run: node tests/test_analysis_export_browser.cjs /tmp/analysis-export.json
       - run: python tests/render_vpd_table.py /tmp/vpd-table.json
       - run: node tests/test_vpd_table_browser.cjs /tmp/vpd-table.json
+      - run: python tests/render_shelly_layout.py /tmp/shelly-layout.json
+      - run: node tests/test_shelly_layout_browser.cjs /tmp/shelly-layout.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

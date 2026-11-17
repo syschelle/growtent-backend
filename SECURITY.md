@@ -1,4 +1,4 @@
-# Security — v0.386
+# Security — v0.387
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -129,3 +129,7 @@ The read-only export projects only allowlisted stored ESP fields. It adds no liv
 ## v0.386 Shelly history gaps
 
 Presentation-only correction. No history rows are rewritten, controller commands issued or permissions changed.
+
+## v0.387 desktop Shelly layout
+
+Presentation-only CSS and schedule markup change. Device data, authorization, control endpoints, guest restrictions, and controller logic remain unchanged.

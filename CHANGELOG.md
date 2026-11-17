@@ -1,3 +1,9 @@
+## v0.387 — Desktop Shelly layout
+
+- Keep all configured Shelly cards in one desktop row with equal dynamic widths.
+- Wrap card content as needed; scroll only the Shelly grid on narrow desktops.
+- Preserve tablet/mobile layouts and device behavior.
+
 # v0.354 — ESP-owned irrigation
 
 ## v0.377
