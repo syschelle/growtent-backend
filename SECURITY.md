@@ -129,3 +129,8 @@ The read-only export projects only allowlisted stored ESP fields. It adds no liv
 ## v0.386 Shelly history gaps
 
 Presentation-only correction. No history rows are rewritten, controller commands issued or permissions changed.
+
+
+## v0.387 Shelly desktop row
+
+Presentation-only change to the dashboard Shelly grid. Existing device switching permissions, authentication and guest restrictions remain unchanged.

@@ -152,3 +152,8 @@ Run `PYTHONPATH=api python -m pytest -q tests/test_analysis_export.py tests/test
 ## v0.386 Shelly history gaps
 
 The production history formatter is executed for all five power series with valid numbers, null/missing/empty/boolean readings and true zero. Production mappers must all use the null-safe helper. Existing full backend and browser suites remain required.
+
+
+## v0.387 Shelly desktop row
+
+Browser coverage uses production dashboard CSS and the production Shelly renderer with seven mocked devices: one row at 1920, 1743, 1440, 1280 and 1025 px; existing columns at 1024, 768 and 390 px; forced-mobile layout at desktop width; no card content overflow. This runs in CI. Release-note validation and Python compilation pass locally.
