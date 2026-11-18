@@ -1,4 +1,4 @@
-# Testing — v0.388
+# Testing — v0.389
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -160,3 +160,7 @@ The browser regression uses actual dashboard CSS and Shelly rendering with synth
 ## v0.388 humidity history average
 
 The existing `node tests/test_vpd_ui.mjs` CI regression executes the production chart builder and legend generator for the humidity chart. It verifies the arithmetic mean of displayed smoothed samples (not raw readings), min/max, null/invalid gaps, true zero, all-missing samples, 100% humidity, one-decimal formatting, period rebuilds and the matching red/white dashed line. All five repository `.mjs` test suites passed locally. The 49 selected Python tests in `test_vpd_source.py`, `test_shelly_pm1.py` and `test_heatmat_shelly_integration.py` passed; Python compilation and release-note validation also passed. A real Chart.js browser render, full backend suite, Docker build and live deployment were not performed for this release.
+
+## v0.389 VPD dashboard tile status
+
+The production dashboard renderer regression checks German/English labels and state transitions for low, good (both inclusive phase limits), high, night, drying, unavailable and stale values; the sustained nighttime humidity notice remains in the tooltip. All five Node `.mjs` suites and 50 selected Python tests (`test_vpd_source.py`, `test_irrigation_ui_runtime.py`) passed locally. Python compilation and release-note validation passed. Local Chromium via Python Playwright with the rendered dashboard fixture verified both themes, DE/EN, desktop (1640 px) and mobile (390 px), computed text colors, no clipping, stale clearing and unchanged daytime/nighttime reference table assessment (400 cells). The equivalent color/status assertions were added to the existing CI Node browser test; that runner was not executed locally because Node Playwright is unavailable. Full backend suite, Docker build and live deployment remain open.

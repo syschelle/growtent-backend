@@ -73,7 +73,14 @@
    const referenceRange=phaseRange(latest?.data,s.valid&&sameTent);
    const range=night?{reason:'night'}:referenceRange;
    const assessment=doc.getElementById('vpdRangeAssessment');
-   if(assessment){const text=night?nightAssessment:range.reason?(range.reason==='drying'?(de?'Trocknung': 'Drying'):(de?'Referenzbereich offen':'Reference unavailable')):(inPhase(s.vpd,range)?(de?'Im Referenzbereich':'Within reference range'):(de?'Außerhalb des Referenzbereichs':'Outside reference range'));assessment.textContent=text;assessment.title=text;}
+   // Dashboard tile only: preserve the existing reference limits and night detection.
+   if(assessment){
+    const state=night?'night':range.reason?(range.reason==='drying'?'drying':'unknown'):inPhase(s.vpd,range)?'good':s.vpd<range.min?'low':'high';
+    const text=({night:de?'Nachtmodus':'Night mode',good:de?'gut':'good',low:de?'zu wenig':'too low',high:de?'zu viel':'too high',drying:de?'Trocknung':'Drying',unknown:de?'Referenzbereich offen':'Reference unavailable'})[state];
+    assessment.dataset.state=state;
+    assessment.textContent=text;
+    assessment.title=night?text+(warning?(de?' · Luftfeuchtigkeit seit ≥5 Min. ≥70 %':' · Humidity ≥70% for ≥5 min'):''):text;
+   }
    const current=doc.getElementById('vpd');
    if(current){for(const name of ['outer','low','mid','high','unknown'])current.classList.remove('vpd-band-'+name);current.classList.add('vpd-band-'+band(s.vpd));}
    if(!dialog.open)return;

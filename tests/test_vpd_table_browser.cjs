@@ -6,9 +6,19 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
   GrowTentVpdTable.mount({getContext:()=>ctx,clock:()=>clock,setTimer:fn=>timer=fn});
   window.sample={'sensors.cur.temperatureC':23.8,'sensors.cur.humidityPct':52.6,'sensors.cur.vpdKpa':1.16,'settings.grow.targetVPD':1.17,'settings.grow.offsetLeafTemperature':-1.5,'settings.grow.currentPhase':1,'settings.grow.currentPhaseWeek':1};
   GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
- assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Außerhalb des Referenzbereichs');
+ assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'zu viel');
  await page.evaluate(()=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3},new Date(clock).toISOString()));
- assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Im Referenzbereich');
+ assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'gut');
+ const assessment=page.locator('#vpdRangeAssessment');
+ for(const [value,light,state,text,dark,lightColor] of [[0.79,true,'low','zu wenig','rgb(125, 211, 252)','rgb(3, 105, 161)'],[0.8,true,'good','gut','rgb(74, 222, 128)','rgb(21, 128, 61)'],[1.21,true,'high','zu viel','rgb(251, 146, 60)','rgb(194, 65, 12)'],[1.21,false,'night','Nachtmodus','rgb(84, 136, 240)','rgb(30, 64, 175)']]){
+  await page.evaluate(({value,light})=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3,'sensors.cur.vpdKpa':value,'cur.shelly.light.isOn':light},new Date(clock).toISOString()),{value,light});
+  assert.equal(await assessment.textContent(),text);assert.equal(await assessment.getAttribute('data-state'),state);
+  for(const [theme,color] of [['dark',dark],['light',lightColor]]){
+   await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+   assert.equal(await assessment.evaluate(el=>getComputedStyle(el).color),color);
+  }
+ }
+ await page.evaluate(()=>document.documentElement.dataset.theme='dark');
  await page.evaluate(()=>{clock+=120001;timer();});
  assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Referenzbereich offen');
  await page.evaluate(()=>{clock-=120001;GrowTentVpdTable.update(2,sample,new Date(clock).toISOString());});
@@ -28,6 +38,7 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
  }
  const before=requests;await page.locator('#openVpdTableBtn').click();assert.equal(await page.locator('#vpdReferenceTable tbody tr').count(),16);assert.equal(await page.locator('#vpdReferenceTable tbody td').count(),400);assert.equal(await page.locator('#vpdReferenceTable td[data-current]').count(),1);assert.match(await page.locator('#vpdTableReadings').textContent(),/IST-VPD1,16 kPa/);
  assert.match(await page.locator('#vpdTablePhase').textContent(),/Woche 1.*0,40–0,80/);
+ assert.equal(await page.locator('#vpdTablePhaseAssessment').textContent(),'IST-VPD außerhalb des Referenzbereichs.');
  assert.ok(await page.locator('#vpdReferenceTable td[data-phase-range]').count()>0);
  for(const [phase,week,pattern]of [[1,3,/0,80–1,20/],[1,7,/Woche 7.*0,80–1,20/],[2,1,/0,80–1,20/],[2,3,/1,20–1,60/]]){
   await page.evaluate(({phase,week})=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhase':phase,'settings.grow.currentPhaseWeek':week},new Date(clock).toISOString()),{phase,week});

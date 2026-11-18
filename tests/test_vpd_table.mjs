@@ -62,16 +62,29 @@ console.log('Night light state, midnight schedule and sustained humidity regress
 
 // Exercise the production render with the table closed, as on the dashboard.
 const nodes=new Map();
-for(const id of ['vpdTableDialog','openVpdTableBtn','vpdTableTitle','closeVpdTableBtn','vpdRangeAssessment','vpd'])nodes.set(id,{textContent:'',title:'',open:false,addEventListener(){},classList:{remove(){},add(){}}});
+for(const id of ['vpdTableDialog','openVpdTableBtn','vpdTableTitle','closeVpdTableBtn','vpdRangeAssessment','vpd'])nodes.set(id,{textContent:'',title:'',dataset:{},open:false,addEventListener(){},classList:{remove(){},add(){}}});
 const ctx={tent:2,language:'de',unit:'C'};let wall=at,tick;
 const mounted=api.mount({document:{getElementById:id=>nodes.get(id)},getContext:()=>ctx,clock:()=>wall,setTimer:fn=>tick=fn});
 const nightSample={...payload,'settings.grow.currentPhase':2,'settings.grow.currentPhaseWeek':3,'cur.shelly.light.isOn':false,'sensors.cur.humidityPct':70};
 for(let i=0;i<=5;i++){wall=at+i*60000;mounted.update(2,nightSample,new Date(wall).toISOString());}
-assert.equal(nodes.get('vpdRangeAssessment').textContent,'Nachtphase · Luftfeuchtigkeit seit ≥5 Min. ≥70 %');
-ctx.language='en';mounted.refresh();assert.match(nodes.get('vpdRangeAssessment').textContent,/Night phase.*Humidity/);
-wall+=120001;tick();assert.equal(nodes.get('vpdRangeAssessment').textContent,'Reference unavailable');
-wall+=1;mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true},new Date(wall).toISOString());assert.equal(nodes.get('vpdRangeAssessment').textContent,'Outside reference range');
-console.log('Production dashboard render: DE/EN night humidity notice, stale expiry and daytime assessment passed');
+const assessment=nodes.get('vpdRangeAssessment');
+function expectStatus(state,text){assert.equal(assessment.dataset.state,state);assert.equal(assessment.textContent,text);}
+expectStatus('night','Nachtmodus');assert.match(assessment.title,/Luftfeuchtigkeit seit ≥5 Min/);
+ctx.language='en';mounted.refresh();expectStatus('night','Night mode');assert.match(assessment.title,/Humidity/);
+wall+=120001;tick();expectStatus('unknown','Reference unavailable');
+wall+=1;
+for(const [language,labels] of [['de',['zu wenig','gut','gut','gut','zu viel']],['en',['too low','good','good','good','too high']]]){
+ ctx.language=language;
+ for(const [i,value] of [1.19,1.2,1.4,1.6,1.61].entries()){
+  mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'sensors.cur.vpdKpa':value},new Date(wall).toISOString());
+  expectStatus(['low','good','good','good','high'][i],labels[i]);assert.equal(assessment.title,labels[i]);
+ }
+}
+ctx.language='de';mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'settings.grow.currentPhase':3},new Date(wall).toISOString());expectStatus('drying','Trocknung');
+mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'settings.grow.currentPhaseWeek':null},new Date(wall).toISOString());expectStatus('unknown','Referenzbereich offen');
+mounted.update(2,{...nightSample,'cur.shelly.light.isOn':false,'sensors.cur.vpdKpa':2.0},new Date(wall).toISOString());expectStatus('night','Nachtmodus');
+mounted.invalidate(2);expectStatus('unknown','Referenzbereich offen');
+console.log('Production dashboard tile: DE/EN low/good/high/night, inclusive boundaries, transitions, humidity tooltip, stale/drying/unknown passed');
 
 // Same physical 20–35 C grid under both unit preferences; offsets are differences.
 assert.deepEqual(api.nearest(35,50),{temperature:35,humidity:50});

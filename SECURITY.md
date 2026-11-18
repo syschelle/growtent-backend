@@ -1,4 +1,4 @@
-# Security — v0.388
+# Security — v0.389
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -137,3 +137,7 @@ Presentation-only CSS and schedule markup change. Device data, authorization, co
 ## v0.388 humidity history average
 
 Read-only dashboard calculation on the already displayed humidity series. No new endpoints, permissions, stored data, controller writes or sensor processing changes.
+
+## v0.389 VPD dashboard tile status
+
+Read-only label and CSS change. Existing reference limits, controller data, access checks and write endpoints remain unchanged. Night humidity information remains in the tooltip and reference table.

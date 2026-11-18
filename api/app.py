@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.388"
+APP_VERSION = "v0.389"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9843,7 +9843,7 @@ def dashboard_page(request: Request):
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
         __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
-        <script src=\"/static/vpd-table.js?v=0.377\"></script>
+        <script src=\"/static/vpd-table.js?v=0.389\"></script>
         <style>
           :root {
             --bg:#0f172a;
@@ -10140,6 +10140,14 @@ def dashboard_page(request: Request):
           .vpd-value-row { display:flex; align-items:baseline; gap:8px; min-width:0; }
           .vpd-value-row .value { flex:none; }
           #vpdRangeAssessment { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.72rem; }
+          #vpdRangeAssessment[data-state='good'] { color:#4ade80; font-weight:700; }
+          #vpdRangeAssessment[data-state='low'] { color:#7dd3fc; font-weight:700; }
+          #vpdRangeAssessment[data-state='high'] { color:#fb923c; font-weight:700; }
+          #vpdRangeAssessment[data-state='night'] { color:#5488f0; font-weight:700; }
+          :root[data-theme='light'] #vpdRangeAssessment[data-state='good'] { color:#15803d; }
+          :root[data-theme='light'] #vpdRangeAssessment[data-state='low'] { color:#0369a1; }
+          :root[data-theme='light'] #vpdRangeAssessment[data-state='high'] { color:#c2410c; }
+          :root[data-theme='light'] #vpdRangeAssessment[data-state='night'] { color:#1e40af; }
           #vpdTablePhaseAssessment { margin:0 0 8px; font-size:.85rem; }
           #vpdReferenceTable td[data-phase-range] { outline:2px solid #15803d; outline-offset:-2px; }
           #vpdReferenceTable.vpd-reference-active td:not([data-phase-range]):not([data-current]) { opacity:.5; }
