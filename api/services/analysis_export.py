@@ -1,5 +1,7 @@
 """Read-only, bounded analysis projection of historical ESP samples."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from bisect import bisect_right
+from zoneinfo import ZoneInfo
 import math
 from .vpd_channels import finite_number, esp_control_vpd, esp_raw_vpd
 
@@ -46,6 +48,81 @@ def _stats(values):
         'min':min(values) if values else None,'max':max(values) if values else None,'n':len(values)}
 
 
+
+def external_temperature(data):
+    """Keep historical DS18B20 labels, including label changes within a window."""
+    if 'sensors.cur.extTempC' not in data and 'sensors.cur.ds18b20Name' not in data:
+        return None
+    name=data.get('sensors.cur.ds18b20Name')
+    name=name.strip()[:128] if isinstance(name,str) else ''
+    value=finite_number(data.get('sensors.cur.extTempC'))
+    # DS18B20 physical range; disconnected (-127) and nonfinite values are missing.
+    if value is not None and not -55<=value<=125: value=None
+    return name or 'DS18B20',value
+
+
+def irrigation_settings(data):
+    def positive(key):
+        value=finite_number(data.get(key))
+        return value if value is not None and value>0 else None
+    amount=positive('irrigation.amountTotal')
+    calibration=positive('irrigation.amount')
+    pulse=positive('irrigation.timePerTask')
+    pause=positive('irrigation.betweenTasks')
+    pumps=[data.get(f'irrigation.pump{i}.enabled') for i in range(1,4)]
+    pumps=[v if isinstance(v,bool) else None for v in pumps]
+    if all(v is None for v in (amount,calibration,pulse,pause,*pumps)):return None
+    return {'configured_amount_ml':amount,'calibration_ml_per_10s':calibration,
+        'pulse_seconds':pulse,'pause_minutes':pause,'pump_enabled':pumps}
+
+
+def last_irrigation_date(data):
+    value=data.get('irrigation.plan.lastRunDate')
+    if not isinstance(value,str) or len(value)!=10:return None
+    try:return date.fromisoformat(value).isoformat()
+    except ValueError:return None
+
+
+def read_irrigation_events(cur,tent_id,start,end):
+    # Use the controller's original event time, not the time of delayed delivery.
+    # Include undated events only by journal receipt time; never invent their occurrence.
+    cur.execute("""SELECT event, received_at, controller_url, stream_id
+        FROM irrigation_events WHERE tent_id=%s AND
+        CASE WHEN jsonb_typeof(event->'occurred_at')='number'
+          THEN (event->>'occurred_at')::numeric >= %s AND (event->>'occurred_at')::numeric < %s
+          ELSE received_at >= %s AND received_at < %s END
+        ORDER BY received_at, seq""",(tent_id,start.timestamp(),end.timestamp(),start,end))
+    return cur.fetchall()
+
+
+def irrigation_event_export(event_rows,rows,start,end,poll_seconds):
+    samples=sorted(((ts,irrigation_settings(data)) for ts,data in rows
+        if isinstance(data,dict) and start<=ts<end),key=lambda v:v[0])
+    times=[ts for ts,_ in samples]
+    events=[]
+    for raw,received,controller,stream in event_rows:
+        if not isinstance(raw,dict) or raw.get('type') not in ('started','completed','aborted','missed'):continue
+        epoch=raw.get('occurred_at')
+        occurred=datetime.fromtimestamp(epoch,timezone.utc) if type(epoch) is int and 1609459200<=epoch<=4102444800 else None
+        selected=occurred or received
+        if not start<=selected<end:continue
+        events.append((selected,occurred,received,raw,controller,stream))
+    events.sort(key=lambda row:row[0])
+    run_refs={};result=[];local_zone=ZoneInfo('Europe/Berlin')
+    for _,occurred,received,raw,controller,stream in events:
+        run_id=raw.get('run_id')
+        ref=run_refs.setdefault((controller,stream,run_id),len(run_refs)+1) if isinstance(run_id,str) and run_id else None
+        idx=bisect_right(times,occurred)-1 if occurred is not None else -1
+        observed=None
+        if idx>=0 and (occurred-times[idx]).total_seconds()<=max(60,3*poll_seconds):
+            config=samples[idx][1]
+            if config is not None:observed={'observed_at':iso(times[idx]),**config}
+        result.append({'type':raw['type'],'run_ref':ref,'occurred_at':iso(occurred) if occurred else None,
+            'occurred_at_local':occurred.astimezone(local_zone).isoformat() if occurred else None,
+            'received_at':iso(received),'configured_amount_ml':observed['configured_amount_ml'] if observed else None,
+            'measured_amount_ml':None,'observed_settings':observed})
+    return result
+
 def _clock(value):
     # Only export the ESP's stored schedule times, never the IP-bearing line.
     if not isinstance(value,str) or len(value)>5:return None
@@ -64,6 +141,7 @@ def analysis_context(data):
         'phase_day':integer('settings.grow.currentPhaseDay'),
         'grow_week':integer('settings.grow.currentGrowWeek'),
         'grow_day':integer('settings.grow.currentGrowDay'),
+        'irrigation_settings':irrigation_settings(data),'irrigation_last_run_date':last_irrigation_date(data),
         'light_schedule':{'on':_clock(data.get('settings.shelly.light.on')),
             'off':_clock(data.get('settings.shelly.light.off'))}}
 
@@ -91,7 +169,7 @@ def shelly_samples(data):
     return result
 
 
-def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=720):
+def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=720,irrigation_rows=()):
     if hours not in HOURS.values(): raise ValueError('unsupported range')
     end=end.astimezone(timezone.utc)
     start=end-timedelta(hours=hours)
@@ -105,6 +183,7 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
             'targets_first':None,'targets_last':None,'target_changes':[], 'target_change_count':0,'shelly':{},
             'humidifier':{'on_samples':0,'off_samples':0,'unknown_samples':0,'observed_changes':0,'transitions':[]}})
     accum=[{key:[] for key in METRICS} for _ in buckets]
+    external_accum=[{} for _ in buckets]
     previous_time=None;previous_state=None;previous_targets=None
     sample_count=0;gaps=[];event_omissions=0
     previous_devices={};device_accum=[{} for _ in buckets]
@@ -123,6 +202,11 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
         values,state=sample_values(data)
         for key,value in values.items():
             if value is not None:accum[index][key].append(value)
+        external=external_temperature(data)
+        if external is not None:
+            name,value=external
+            values_for_name=external_accum[index].setdefault(name,[])
+            if value is not None:values_for_name.append(value)
         context=analysis_context(data)
         if context_first is None:context_first={'at':iso(ts),**context}
         if context_last is None or context!={k:v for k,v in context_last.items() if k!='at'}:
@@ -175,6 +259,8 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
             energy=metrics['energy']
             device['energy_wh']={'first':energy[0] if energy else None,'last':energy[-1] if energy else None,
                 'min':min(energy) if energy else None,'max':max(energy) if energy else None,'n':len(energy)}
+    for bucket,named in zip(buckets,external_accum):
+        if named:bucket['external_temperatures']=[{'sensor_name':name,**_stats(values)} for name,values in named.items()]
     for bucket,metrics in zip(buckets,accum):
         for key,values in metrics.items():
             bucket['metrics'][key]={'avg':round(math.fsum(value/len(values) for value in values),4) if values else None,
@@ -184,12 +270,18 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
         'units':{'temperature':'°C','humidity':'%','vpd':'kPa','temperature_raw':'°C','humidity_raw':'%','vpd_raw':'kPa','humidifier_watt':'W','alpha_temperature':'factor','alpha_humidity':'factor','leaf_offset':'°C'},
         'shellyRoles':list(SHELLY_ROLES),'context_first':context_first,'context_last':context_last,
         'context_timeline':context_timeline,'context_change_count':context_changes,'context_details_omitted':context_omissions,
+        'externalTemperatureUnit':'°C','externalTemperatureSource':'sensors.cur.extTempC',
+        'irrigation_events':irrigation_event_export(irrigation_rows,rows,start,end,poll_seconds),
+        'irrigationTimeZone':'Europe/Berlin',
         'deviceUnits':{'power_w':'W','energy_wh':'Wh','age_ms':'ms'},
         'gapThresholdSeconds':gap_threshold,'gaps':gaps,'eventDetailsOmitted':event_omissions,
         'notes':['Shelly metrics and context come only from stored ESP payloads; live dashboard-only direct reads are not backfilled.',
             'Shelly fresh/stale/unknown counters preserve reported freshness. State and power are not inferred from each other; PM1 ON may mean permanently connected.',
             'The light schedule is the ESP stored day-0 on/off schedule, not a reconstructed full Shelly weekly schedule. Context times are observations, not exact switch times.',
             'Context timeline retains at most 128 entries; first/last context and total changes remain available. No current settings or inferred day/night are substituted.',
+            'External DS18B20 temperatures are grouped by the sensor name stored with each sample; missing names use DS18B20. Missing/invalid measurements are not replaced.',
+            'Irrigation events are stored ESP journal events, selected by occurrence time (receipt time only for undated events). Local timestamps use Europe/Berlin; a null occurrence is unknown. Run references are local to this export.',
+            'Irrigation configured_amount_ml is the historical ESP setpoint from the closest preceding sample within max(60 seconds, 3 poll intervals), not actual delivered water. Count started/completed events by run_ref; do not sum settings across events. Firmware does not report measured volume. Pump flags are ordered pump 1–3. Missing journal events or quantities are not reconstructed; irrigation_last_run_date is a reported date only.',
             'Empty windows and null statistics indicate missing measurements; n is the number of valid samples.',
             'Transitions and target changes are observations at backend poll times, not exact physical switching times. Pulses between polls may be missed.',
             'Unknown/stale state or sampling gaps break switch continuity; no transition is inferred across them.',

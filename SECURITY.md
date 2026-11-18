@@ -1,4 +1,4 @@
-# Security — v0.391
+# Security — v0.393
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -149,3 +149,11 @@ Read-only dashboard text and CSS change using the existing outer reference band.
 ## v0.391 strain flowering time
 
 The optional category uses a fixed server-side allowlist (short/medium/long, or empty), canonicalized from supported German/English aliases. Existing admin write checks and parameterized SQL remain in place. CSV and configuration backup imports validate the category before writes. UI strings are rendered as text, and no controller commands or credentials are added. Configuration backups retain their existing sensitivity and restore semantics.
+
+## v0.392 compact dashboard plant information
+
+The read-only popover renders strain data using textContent, never HTML interpolation. Existing strain endpoint access and administrator write checks are unchanged. The guest button exception covers only the local close control. No schema, controller commands, credentials or import/export changes.
+
+## v0.393 analysis export additions
+
+The existing read-only authorized analysis endpoint queries the per-tent ESP journal with bound parameters and a bounded occurrence/receipt interval. Only allowlisted event fields, export-local run references, historical irrigation configuration and user-configured DS18B20 names/temperature aggregates are exported; controller URLs, stream IDs, command IDs, raw event payloads and credentials are not included. Sensor names are user-defined data. No control writes, live ESP calls or schema migrations are introduced. Unknown actual quantities or event times are not fabricated. If aggregation cannot fit the existing 1 MB limit, HTTP 413 prevents an endless retry loop or silent loss of journal events.

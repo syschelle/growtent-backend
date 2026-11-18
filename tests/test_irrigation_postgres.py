@@ -102,3 +102,22 @@ def test_event_error_is_separate_from_signed_plan_confirmation(store):
     assert after['checked_at']==before['checked_at']
     store.event_error(1)
     assert store.snapshot(1,'http://esp:8080')['event_error'] is None
+
+
+def test_analysis_event_read_respects_tent_original_time_and_unknown_receipt(store):
+    from services.analysis_export import read_irrigation_events
+    from datetime import datetime,timedelta,timezone
+    start=datetime(2026,11,15,11,tzinfo=timezone.utc);end=start+timedelta(hours=1)
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute('INSERT INTO tents(id) VALUES(2)')
+    for seq,tid,at,received in [(1,1,start,end),(2,1,end,start),(3,1,None,start),(4,2,start,start),(5,1,start-timedelta(seconds=1),start)]:
+        evt={'seq':seq,'type':'started','occurred_at':int(at.timestamp()) if at else None,'run_id':str(seq)}
+        store.ingest(tid,'http://esp:8080','stream',[evt],notice)
+        with db.get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute('UPDATE irrigation_events SET received_at=%s WHERE seq=%s',(received,seq))
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            rows=read_irrigation_events(cur,1,start,end)
+    assert {r[0]['seq'] for r in rows}=={1,3}

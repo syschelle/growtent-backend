@@ -1,4 +1,4 @@
-# Testing — v0.391
+# Testing — v0.393
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -172,3 +172,13 @@ The production renderer regression covers both outer pink bands across all four 
 ## v0.391 strain flowering time
 
 Regression tests cover optional category validation, canonical DE/EN aliases, invalid CSV and API values, legacy CSV compatibility, localized selector and dashboard labels, migration and update SQL presence. Local run: 262 Python tests passed excluding `tests/test_irrigation_postgres.py` (psycopg2 and a test database were not available); all five Node.js `.mjs` suites passed. Live PostgreSQL migration/backup restore, browser interaction, Docker build and live deployment are not verified by this run.
+
+## v0.392 compact dashboard plant information
+
+`python tests/check_strain_popover_browser.py --browser /usr/bin/chromium` exercises the production dashboard markup, styles and renderer with synthetic strain data. Local Chromium checks passed in German and English, light and dark themes, desktop (1600 px), mobile (390 and 320 px), and landscape (667 × 350 px). Checks cover viewport bounds, wrapping and scrolling, guest access, unchanged values and week ranges, missing category/strain, safe text rendering, refresh stability, Escape, outside click and close button. The browser runner is included in CI. Docker build and live deployment remain open.
+
+Local regression: 262 Python tests passed (excluding PostgreSQL integration, unavailable dependency/test database), all five Node.js suites passed, Python compilation and release-note validation passed.
+
+## v0.393 named temperatures and irrigation analysis export
+
+`PYTHONPATH=api python -m pytest -q --ignore=tests/test_irrigation_postgres.py`: 267 passed (two existing FastAPI deprecation warnings). The five existing JavaScript `.mjs` suites passed. Added tests for renamed sensors, invalid/disconnected readings, local and original/delayed event times, per-tent range filtering, unknown timestamps, historical settings, missing/future/stale quantities and size-adapted journal preservation. A PostgreSQL integration test covers the actual journal query, but could not run locally (psycopg2 and test DB unavailable). Docker build, browser integration and live ESP validation were not run. No real irrigation was triggered.

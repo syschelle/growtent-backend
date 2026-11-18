@@ -1,3 +1,15 @@
+## v0.393 — Named external temperature and irrigation analysis export
+
+- Add historical external DS18B20 temperature statistics by stored sensor name (°C, average/minimum/maximum/valid sample count). Names can differ by tent and across history; absent names fall back to DS18B20 and invalid readings remain null.
+- Include ESP irrigation journal events for the selected tent and period, with original UTC and Europe/Berlin timestamps, receipt time, event type and export-local run reference. Include recorded irrigation settings and reported last-run date in the context timeline. Configured volume (ml), calibration, pump flags and timing come from nearby historical samples, not today's configuration. Actual dispensed volume is unavailable in the current firmware and remains null; no invented quantity or timestamp.
+- Preserve v1 JSON compatibility, read-only scope and 1 MB cap. Adaptive windows retain journal events; if the export cannot fit, return HTTP 413 with a German/English prompt to choose a shorter period. No database schema or controller changes.
+
+## v0.392 — Compact dashboard plant information
+
+- Replace the dashboard plant-information text tooltip with a compact, responsive popover: pot and strain heading, two-column THC/CBD/genetics/flowering details, and separate effects and aroma sections.
+- Keep German and English labels, themes, guest read access and existing strain values. Limit width to 350 CSS pixels and height to the visible viewport; wrap long text and allow vertical scrolling without truncation. Support touch close, outside click and Escape.
+- Presentation-only change; database, strain management, CSV/backup formats and ESP control remain unchanged.
+
 ## v0.391 — Strain flowering time categories
 
 - Add an optional flowering time selector: Short (up to 8 weeks), Medium (9–10 weeks), Long (from 11 weeks). German and English labels include the week ranges.

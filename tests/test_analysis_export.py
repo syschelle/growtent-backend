@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from fastapi.responses import Response
 import pytest
-from services.analysis_export import build_analysis_export,HOURS
+from services.analysis_export import build_analysis_export,read_irrigation_events,HOURS
 from test_vpd_source import Database,sample
 
 END=datetime(2026,11,15,12,0,tzinfo=timezone.utc)
@@ -82,13 +82,25 @@ def test_event_detail_limits_keep_counts_and_last_targets():
     assert p['targets_last']['vpd']==0.29 and out['eventDetailsOmitted']==46
 
 
+class ExportDatabase(Database):
+    def __init__(self,rows=(),events=()):
+        super().__init__(rows);self.events=list(events)
+    def fetchall(self):
+        return self.events if 'FROM irrigation_events' in self.statements[-1][0] else self.rows
+
+
 def exporter(db):
+    # Legacy telemetry-only test doubles do not have a journal.
+    if not isinstance(db,ExportDatabase):
+        original_fetchall=db.fetchall
+        db.fetchall=lambda: [] if 'FROM irrigation_events' in db.statements[-1][0] else original_fetchall()
+
     node=next(n for n in ast.parse((Path(__file__).parents[1]/'api/app.py').read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='export_analysis_json')
     class Clock(datetime):
         @classmethod
         def now(cls,tz=None):return END
     ns={'datetime':Clock,'timezone':timezone,'timedelta':timedelta,'HTTPException':HTTPException,'Response':Response,'json':json,
-        'get_conn':db.connection,'get_tent_by_id':lambda tid: {'id':tid} if tid==2 else None,'build_analysis_export':build_analysis_export,'ANALYSIS_EXPORT_HOURS':HOURS,'POLL_INTERVAL_SECONDS':10}
+        'get_conn':db.connection,'get_tent_by_id':lambda tid: {'id':tid} if tid==2 else None,'build_analysis_export':build_analysis_export,'read_irrigation_events':read_irrigation_events,'ANALYSIS_EXPORT_HOURS':HOURS,'POLL_INTERVAL_SECONDS':10}
     exec(compile(ast.Module(body=[node],type_ignores=[]),'api/app.py','exec'),ns)
     return ns['export_analysis_json']
 
