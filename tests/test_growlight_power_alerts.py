@@ -153,7 +153,7 @@ def test_database_and_backup_include_power_drop_configuration():
     schema_source = (root / "api" / "models" / "schemas.py").read_text(encoding="utf-8")
     assert "growlight_power_alert_enabled BOOLEAN NOT NULL DEFAULT FALSE" in app_source
     assert "growlight_power_drop_w DOUBLE PRECISION NOT NULL DEFAULT 20.0" in app_source
-    assert '"schema_version": 13' in app_source
+    assert '"schema_version": 14' in app_source
     assert "growlight_power_alert_enabled" in crud_source
     assert "growlight_power_drop_w" in crud_source
     assert "growlight_power_alert_enabled: bool = False" in schema_source

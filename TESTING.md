@@ -1,4 +1,4 @@
-# Testing — v0.390
+# Testing — v0.391
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -168,3 +168,7 @@ The production dashboard renderer regression checks German/English labels and st
 ## v0.390 critical VPD dashboard status
 
 The production renderer regression covers both outer pink bands across all four phase/week ranges, rounding boundaries, real zero, low/good/high transitions, German and English, night priority and neutral drying/unknown states. All five Node `.mjs` suites and 50 selected Python tests (`test_vpd_source.py`, `test_irrigation_ui_runtime.py`) passed locally; source compilation and release-note validation passed. Local Chromium via Python Playwright with static rendered dashboard fixtures verified both red text colors, both languages, 1640 px and 390 px, no clipping, night priority, stale clearing and the unchanged 400-cell reference table/pink color. The CI Node browser test was extended but not executed locally (Node Playwright unavailable). Full backend suite, Docker build and live deployment remain open.
+
+## v0.391 strain flowering time
+
+Regression tests cover optional category validation, canonical DE/EN aliases, invalid CSV and API values, legacy CSV compatibility, localized selector and dashboard labels, migration and update SQL presence. Local run: 262 Python tests passed excluding `tests/test_irrigation_postgres.py` (psycopg2 and a test database were not available); all five Node.js `.mjs` suites passed. Live PostgreSQL migration/backup restore, browser interaction, Docker build and live deployment are not verified by this run.

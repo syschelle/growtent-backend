@@ -38,6 +38,10 @@ def _load_csv_helpers():
             body.append(node)
     module = ast.Module(body=body, type_ignores=[])
     ast.fix_missing_locations(module)
+    schemas = SOURCE.parent / "models" / "schemas.py"
+    normalizer = next(n for n in ast.parse(schemas.read_text(encoding="utf-8")).body if isinstance(n, ast.FunctionDef) and n.name == "normalize_flowering_weeks")
+    module.body.insert(0, normalizer)
+    ast.fix_missing_locations(module)
     namespace = {"csv": csv, "io": io, "os": os}
     exec(compile(module, str(SOURCE), "exec"), namespace)
     return namespace
@@ -86,3 +90,43 @@ def test_production_modular_router_exposes_csv_import_endpoint():
     routes = (Path(__file__).resolve().parents[1] / "api" / "routes" / "tents.py").read_text(encoding="utf-8")
     assert "@router.post('/strains/import.csv')" in routes
     assert "await legacy.import_strains_csv(request)" in routes
+
+
+def test_flowering_category_csv_and_legacy():
+    ns = _load_csv_helpers()
+    parse = ns["_parse_strains_csv_text"]
+    assert [r["flowering_weeks"] for r in parse("Name,FloweringWeeks\nA,short\nB,medium\nC,long\nD,\n")] == ["short", "medium", "long", ""]
+    assert [r["flowering_weeks"] for r in parse("Name,Blütezeit\nA,Kurz\nB,Mittel\nC,Lang\n")] == ["short", "medium", "long"]
+    assert "flowering_weeks" not in parse("Name,THC\nA,20%\n")[0]
+    assert ns["_normalise_strain"]({"name": "A"})["flowering_weeks"] == ""
+    for value in ("9", "8-10", "invalid"):
+        try:
+            parse(f"Name,FloweringWeeks\nA,{value}\n")
+        except ValueError as exc:
+            assert "row 2" in str(exc)
+        else:
+            raise AssertionError("invalid category accepted")
+
+
+def test_flowering_ui_and_dashboard_localization():
+    source = SOURCE.read_text(encoding="utf-8")
+    for value in ("short", "medium", "long"):
+        assert f'<option value="{value}" id="floweringWeeks' in source
+    for label in ("Kurz – bis 8 Wochen", "Mittel – 9–10 Wochen", "Lang – ab 11 Wochen", "Short – up to 8 weeks", "Medium – 9–10 weeks", "Long – from 11 weeks"):
+        assert source.count(label) == 2
+    assert "flowering_weeks=COALESCE(%s, flowering_weeks)" in source
+    assert "ALTER TABLE strains ADD COLUMN IF NOT EXISTS flowering_weeks" in source
+
+
+def test_strain_payload_category_validation():
+    from models.schemas import StrainPayload
+    from pydantic import ValidationError
+    import pytest
+
+    base = {"name": "Example", "genetics": "50/50"}
+    assert StrainPayload(**base).flowering_weeks is None
+    for raw, canonical in [("", ""), ("Kurz", "short"), ("medium", "medium"), ("Lang", "long")]:
+        assert StrainPayload(**base, flowering_weeks=raw).flowering_weeks == canonical
+    for raw in ("8-10", 9, "unknown"):
+        with pytest.raises(ValidationError):
+            StrainPayload(**base, flowering_weeks=raw)

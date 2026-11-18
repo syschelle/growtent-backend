@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload
+from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload, normalize_flowering_weeks
 from services.shelly_status import parse_rpc_status
 from services.analysis_export import build_analysis_export, HOURS as ANALYSIS_EXPORT_HOURS
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.390"
+APP_VERSION = "v0.391"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -88,6 +88,7 @@ STRAINS_CSV_COLUMNS = (
     "CBD",
     "Effects",
     "Aroma",
+    "FloweringWeeks",
 )
 STRAIN_FIELD_TO_CSV = {
     "name": "Name",
@@ -96,6 +97,7 @@ STRAIN_FIELD_TO_CSV = {
     "cbd": "CBD",
     "effects": "Effects",
     "aroma": "Aroma",
+    "flowering_weeks": "FloweringWeeks",
 }
 STRAIN_CSV_ALIASES = {
     "name": ("Name", "Sorte"),
@@ -104,6 +106,7 @@ STRAIN_CSV_ALIASES = {
     "cbd": ("CBD",),
     "effects": ("Effects", "Effects_EN", "Wirkung_DE", "Effexts_DE", "effect"),
     "aroma": ("Aroma", "Aroma_EN", "Aroma_DE"),
+    "flowering_weeks": ("FloweringWeeks", "Flowering weeks", "Flowering time (weeks)", "Blütezeit (Wochen)", "Blütezeit", "flowering_weeks"),
 }
 STRAIN_PAYLOAD_ALIASES = {
     "name": ("name", "Name", "Sorte"),
@@ -112,6 +115,7 @@ STRAIN_PAYLOAD_ALIASES = {
     "cbd": ("cbd", "CBD"),
     "effects": ("effects", "Effects", "effects_en", "Effects_EN", "effect", "effects_de", "Wirkung_DE", "Effexts_DE"),
     "aroma": ("aroma", "Aroma", "aroma_en", "Aroma_EN", "aroma_de", "Aroma_DE"),
+    "flowering_weeks": ("flowering_weeks", "FloweringWeeks", "Blütezeit (Wochen)", "Blütezeit"),
 }
 POT_STRAIN_KEYS = ("pot1", "pot2", "pot3")
 
@@ -1508,6 +1512,7 @@ def init_db():
                     cbd TEXT NOT NULL DEFAULT '',
                     effects TEXT NOT NULL DEFAULT '',
                     aroma TEXT NOT NULL DEFAULT '',
+                    flowering_weeks TEXT NOT NULL DEFAULT '',
                     effect TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1519,6 +1524,7 @@ def init_db():
             cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS cbd TEXT NOT NULL DEFAULT '';")
             cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS effects TEXT NOT NULL DEFAULT '';")
             cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS aroma TEXT NOT NULL DEFAULT '';")
+            cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS flowering_weeks TEXT NOT NULL DEFAULT '';")
             cur.execute("ALTER TABLE strains ADD COLUMN IF NOT EXISTS effect TEXT NOT NULL DEFAULT '';")
             cur.execute("ALTER TABLE strains ALTER COLUMN effect SET DEFAULT '';")
             cur.execute("UPDATE strains SET effects=effect WHERE COALESCE(effects, '') = '' AND COALESCE(effect, '') <> '';")
@@ -1551,6 +1557,7 @@ def _normalise_strain(data: dict) -> dict:
         for field in STRAIN_FIELD_TO_CSV
     }
     item["genetics"] = _normalise_genetics(item["genetics"], item["name"])
+    item["flowering_weeks"] = normalize_flowering_weeks(item["flowering_weeks"]) or ""
     return item
 
 
@@ -1602,6 +1609,13 @@ def _parse_strains_csv_text(csv_text: str) -> list[dict]:
                 if any(str(value or "").strip() for value in row.values()):
                     raise ValueError(f"strain CSV row {row_number} has no Name")
                 continue
+            if not any(column in fieldnames for column in STRAIN_CSV_ALIASES["flowering_weeks"]):
+                item.pop("flowering_weeks", None)  # legacy CSV must not erase existing values
+            else:
+                try:
+                    item["flowering_weeks"] = normalize_flowering_weeks(item["flowering_weeks"]) or ""
+                except ValueError as exc:
+                    raise ValueError(f"strain CSV row {row_number}: {exc}") from exc
             key = item["name"].casefold()
             if key in seen_names:
                 raise ValueError(f'duplicate strain name in CSV: {item["name"]}')
@@ -1636,7 +1650,7 @@ def _upsert_strains_db(strains: list[dict]) -> dict:
                 item = _normalise_strain(raw)
                 cur.execute(
                     """
-                    SELECT id, name, genetics, thc, cbd, effects, aroma
+                    SELECT id, name, genetics, thc, cbd, effects, aroma, flowering_weeks
                     FROM strains
                     WHERE LOWER(name)=LOWER(%s)
                     LIMIT 1
@@ -1647,8 +1661,8 @@ def _upsert_strains_db(strains: list[dict]) -> dict:
                 if not row:
                     cur.execute(
                         """
-                        INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, effect)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, flowering_weeks, effect)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             item["name"],
@@ -1657,6 +1671,7 @@ def _upsert_strains_db(strains: list[dict]) -> dict:
                             item["cbd"],
                             item["effects"],
                             item["aroma"],
+                            item["flowering_weeks"],
                             item["effects"],
                         ),
                     )
@@ -1664,7 +1679,9 @@ def _upsert_strains_db(strains: list[dict]) -> dict:
                     continue
 
                 current = _db_strain_row(row)
-                comparable_fields = ("name", "genetics", "thc", "cbd", "effects", "aroma")
+                if not any(key in raw for key in STRAIN_PAYLOAD_ALIASES["flowering_weeks"]):
+                    item["flowering_weeks"] = current["flowering_weeks"]
+                comparable_fields = ("name", "genetics", "thc", "cbd", "effects", "aroma", "flowering_weeks")
                 if all(str(current.get(field) or "") == str(item.get(field) or "") for field in comparable_fields):
                     unchanged += 1
                     continue
@@ -1678,6 +1695,7 @@ def _upsert_strains_db(strains: list[dict]) -> dict:
                         cbd=%s,
                         effects=%s,
                         aroma=%s,
+                        flowering_weeks=%s,
                         effect=%s,
                         updated_at=NOW()
                     WHERE id=%s
@@ -1689,6 +1707,7 @@ def _upsert_strains_db(strains: list[dict]) -> dict:
                         item["cbd"],
                         item["effects"],
                         item["aroma"],
+                        item["flowering_weeks"],
                         item["effects"],
                         int(row[0]),
                     ),
@@ -1755,6 +1774,7 @@ def _db_strain_row(row) -> dict:
         "cbd": row[4] or "",
         "effects": row[5] or "",
         "aroma": row[6] or "",
+        "flowering_weeks": row[7] or "",
     }
 
 
@@ -1763,7 +1783,7 @@ def _read_strains_db() -> list[dict]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, genetics, thc, cbd, effects, aroma
+                SELECT id, name, genetics, thc, cbd, effects, aroma, flowering_weeks
                 FROM strains
                 ORDER BY LOWER(name), id
                 """
@@ -1792,8 +1812,8 @@ def _insert_strains_db(strains: list[dict], replace: bool = False) -> int:
                     continue
                 cur.execute(
                     """
-                    INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, effect)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, flowering_weeks, effect)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                     """,
                     (
@@ -1803,6 +1823,7 @@ def _insert_strains_db(strains: list[dict], replace: bool = False) -> int:
                         item["cbd"],
                         item["effects"],
                         item["aroma"],
+                        item["flowering_weeks"],
                         item["effects"],
                     ),
                 )
@@ -4347,9 +4368,9 @@ def create_strain(payload: StrainPayload, request: Request):
                 raise HTTPException(status_code=409, detail="strain name already exists")
             cur.execute(
                 """
-                INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, effect)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, name, genetics, thc, cbd, effects, aroma
+                INSERT INTO strains(name, genetics, thc, cbd, effects, aroma, flowering_weeks, effect)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, name, genetics, thc, cbd, effects, aroma, flowering_weeks
                 """,
                 (
                     strain["name"],
@@ -4358,6 +4379,7 @@ def create_strain(payload: StrainPayload, request: Request):
                     strain["cbd"],
                     strain["effects"],
                     strain["aroma"],
+                    strain["flowering_weeks"],
                     strain["effects"],
                 ),
             )
@@ -4385,10 +4407,11 @@ def update_strain(strain_id: int, payload: StrainPayload, request: Request):
                     cbd=%s,
                     effects=%s,
                     aroma=%s,
+                    flowering_weeks=COALESCE(%s, flowering_weeks),
                     effect=%s,
                     updated_at=NOW()
                 WHERE id=%s
-                RETURNING id, name, genetics, thc, cbd, effects, aroma
+                RETURNING id, name, genetics, thc, cbd, effects, aroma, flowering_weeks
                 """,
                 (
                     strain["name"],
@@ -4397,6 +4420,7 @@ def update_strain(strain_id: int, payload: StrainPayload, request: Request):
                     strain["cbd"],
                     strain["effects"],
                     strain["aroma"],
+                    strain["flowering_weeks"] if payload.flowering_weeks is not None else None,
                     strain["effects"],
                     strain_id,
                 ),
@@ -4716,7 +4740,7 @@ def export_config_backup():
 
     backup = {
         "kind": "canopyops-config-backup",
-        "schema_version": 13,
+        "schema_version": 14,
         "app_version": APP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": {
@@ -4765,6 +4789,12 @@ def import_config_backup(payload: dict):
         raise HTTPException(status_code=400, detail="invalid flood_alert section")
     if not isinstance(strains, list):
         raise HTTPException(status_code=400, detail="invalid strains section")
+    try:
+        for strain in strains:
+            if isinstance(strain, dict):
+                _normalise_strain(strain)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -8583,6 +8613,7 @@ def strain_library_page(request: Request):
           .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
           .form-grid .wide { grid-column:1 / -1; }
           .form-row { margin-bottom:12px; }
+          .field-hint { color:var(--muted); font-size:.8rem; margin-top:5px; }
           label { display:block; font-weight:700; margin-bottom:5px; }
           input, select, textarea { width:100%; color:var(--text); background:var(--bg); border:1px solid var(--grid); border-radius:8px; padding:9px 10px; font:inherit; }
           textarea { min-height:90px; resize:vertical; }
@@ -8651,6 +8682,16 @@ def strain_library_page(request: Request):
                     <input id="strainCbd" maxlength="100" />
                   </div>
                   <div class="form-row wide">
+                    <label for="strainFloweringWeeks" id="floweringWeeksLabel"></label>
+                    <select id="strainFloweringWeeks" aria-describedby="floweringWeeksHint">
+                      <option value="" id="floweringWeeksNone"></option>
+                      <option value="short" id="floweringWeeksShort"></option>
+                      <option value="medium" id="floweringWeeksMedium"></option>
+                      <option value="long" id="floweringWeeksLong"></option>
+                    </select>
+                    <div class="field-hint" id="floweringWeeksHint"></div>
+                  </div>
+                  <div class="form-row wide">
                     <label for="strainEffects" id="effectsLabel"></label>
                     <textarea id="strainEffects" maxlength="2000"></textarea>
                   </div>
@@ -8692,6 +8733,12 @@ def strain_library_page(request: Request):
               genetics: 'Genetics',
               thc: 'THC',
               cbd: 'CBD',
+              floweringWeeks: 'Flowering time (weeks)',
+              floweringWeeksHint: 'Optional: typical flowering duration in weeks.',
+              floweringWeeksNone: 'Not specified',
+              floweringWeeksShort: 'Short – up to 8 weeks',
+              floweringWeeksMedium: 'Medium – 9–10 weeks',
+              floweringWeeksLong: 'Long – from 11 weeks',
               effects: 'Effects',
               aroma: 'Aroma',
               list: 'Strain library',
@@ -8728,6 +8775,12 @@ def strain_library_page(request: Request):
               genetics: 'Genetik',
               thc: 'THC',
               cbd: 'CBD',
+              floweringWeeks: 'Blütezeit (Wochen)',
+              floweringWeeksHint: 'Optional: typische Blütezeit in Wochen.',
+              floweringWeeksNone: 'Keine Angabe',
+              floweringWeeksShort: 'Kurz – bis 8 Wochen',
+              floweringWeeksMedium: 'Mittel – 9–10 Wochen',
+              floweringWeeksLong: 'Lang – ab 11 Wochen',
               effects: 'Effekte',
               aroma: 'Aroma',
               list: 'Sortenbibliothek',
@@ -8765,6 +8818,7 @@ def strain_library_page(request: Request):
             genetics: document.getElementById('strainGenetics'),
             thc: document.getElementById('strainThc'),
             cbd: document.getElementById('strainCbd'),
+            flowering_weeks: document.getElementById('strainFloweringWeeks'),
             effects: document.getElementById('strainEffects'),
             aroma: document.getElementById('strainAroma')
           };
@@ -8787,6 +8841,10 @@ def strain_library_page(request: Request):
             text('geneticsLabel', tr('genetics'));
             text('thcLabel', tr('thc'));
             text('cbdLabel', tr('cbd'));
+            text('floweringWeeksLabel', tr('floweringWeeks'));
+            text('floweringWeeksHint', tr('floweringWeeksHint'));
+            ['None', 'Short', 'Medium', 'Long'].forEach(suffix => text('floweringWeeks' + suffix, tr('floweringWeeks' + suffix)));
+
             text('effectsLabel', tr('effects'));
             text('aromaLabel', tr('aroma'));
             text('listTitle', tr('list'));
@@ -8854,6 +8912,7 @@ def strain_library_page(request: Request):
                 ['genetics', 'genetics', false],
                 ['thc', 'thc', false],
                 ['cbd', 'cbd', false],
+                ['flowering_weeks', 'floweringWeeks', false],
                 ['effects', 'effects', true],
                 ['aroma', 'aroma', true]
               ];
@@ -8866,7 +8925,7 @@ def strain_library_page(request: Request):
                 label.textContent = tr(labelKey);
                 const value = document.createElement('div');
                 value.className = 'detail-value';
-                value.textContent = item[field];
+                value.textContent = field === 'flowering_weeks' ? tr(({short:'floweringWeeksShort', medium:'floweringWeeksMedium', long:'floweringWeeksLong'})[item[field]] || 'floweringWeeksNone') : item[field];
                 detail.append(label, value);
                 details.appendChild(detail);
               });
@@ -9843,7 +9902,7 @@ def dashboard_page(request: Request):
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
         __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
-        <script src=\"/static/vpd-table.js?v=0.390\"></script>
+        <script src=\"/static/vpd-table.js?v=0.391\"></script>
         <style>
           :root {
             --bg:#0f172a;
@@ -10677,6 +10736,10 @@ def dashboard_page(request: Request):
               strainGenetics: 'Genetics',
               strainThc: 'THC',
               strainCbd: 'CBD',
+              strainFloweringWeeks: 'Flowering time (weeks)',
+              strainFloweringShort: 'Short – up to 8 weeks',
+              strainFloweringMedium: 'Medium – 9–10 weeks',
+              strainFloweringLong: 'Long – from 11 weeks',
               strainEffects: 'Effects',
               strainAroma: 'Aroma',
               historyBuilding: 'History is still building up…',
@@ -10870,6 +10933,10 @@ def dashboard_page(request: Request):
               strainGenetics: 'Genetik',
               strainThc: 'THC',
               strainCbd: 'CBD',
+              strainFloweringWeeks: 'Blütezeit (Wochen)',
+              strainFloweringShort: 'Kurz – bis 8 Wochen',
+              strainFloweringMedium: 'Mittel – 9–10 Wochen',
+              strainFloweringLong: 'Lang – ab 11 Wochen',
               strainEffects: 'Effekte',
               strainAroma: 'Aroma',
               historyBuilding: 'Historie wird noch aufgebaut…',
@@ -12468,6 +12535,8 @@ def dashboard_page(request: Request):
               lines.push(`${tr('strainGenetics')}: ${strain.genetics || '-'}`);
               lines.push(`${tr('strainThc')}: ${strain.thc || '-'}`);
               lines.push(`${tr('strainCbd')}: ${strain.cbd || '-'}`);
+              const floweringKey = ({short:'strainFloweringShort', medium:'strainFloweringMedium', long:'strainFloweringLong'})[strain.flowering_weeks];
+              if (floweringKey) lines.push(`${tr('strainFloweringWeeks')}: ${tr(floweringKey)}`);
               lines.push(`${tr('strainEffects')}: ${strain.effects || '-'}`);
               lines.push(`${tr('strainAroma')}: ${strain.aroma || '-'}`);
             } else {

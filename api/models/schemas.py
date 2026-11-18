@@ -72,6 +72,19 @@ class GrowProfilePatch(StrictModel):
         return self
 
 
+def normalize_flowering_weeks(value: str | None) -> str | None:
+    """Store a language-independent flowering duration category."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("flowering time must be short, medium or long")
+    value = value.strip().casefold()
+    aliases = {"": "", "short": "short", "kurz": "short", "medium": "medium", "mittel": "medium", "long": "long", "lang": "long"}
+    if value not in aliases:
+        raise ValueError("flowering time must be short, medium or long")
+    return aliases[value]
+
+
 class StrainPayload(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     genetics: Literal["Sativa", "Indica", "Sativa-hybrid", "Indica-hybrid", "50/50"]
@@ -79,6 +92,12 @@ class StrainPayload(StrictModel):
     cbd: str = Field(default="", max_length=100)
     effects: str = Field(default="", max_length=2000)
     aroma: str = Field(default="", max_length=2000)
+    flowering_weeks: str | None = Field(default=None, max_length=12)
+
+    @field_validator("flowering_weeks", mode="before")
+    @classmethod
+    def validate_flowering_weeks(cls, value):
+        return normalize_flowering_weeks(value)
 
     @field_validator(
         "name",
