@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.392"
+APP_VERSION = "v0.391"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9902,7 +9902,7 @@ def dashboard_page(request: Request):
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
         __FAVICON_LINKS__
         <script src=\"/static/chart.umd.js\"></script>
-        <script src=\"/static/vpd-table.js?v=0.392\"></script>
+        <script src=\"/static/vpd-table.js?v=0.391\"></script>
         <style>
           :root {
             --bg:#0f172a;
@@ -9971,8 +9971,8 @@ def dashboard_page(request: Request):
           .pot-strain-link { width:auto !important; display:inline; padding:0; border:0; box-shadow:none; background:none; color:var(--link); font:inherit; font-weight:700; cursor:pointer; text-decoration:none; }
           .pot-strain-link:hover { filter:none; box-shadow:none; text-decoration:none; }
           button { padding:7px 11px; border-radius:9px; border:1px solid rgba(14,165,233,.45); background:linear-gradient(180deg, rgba(14,165,233,.22), rgba(2,132,199,.18)); color:var(--text); font-size:.8rem; font-weight:700; box-shadow:0 2px 8px rgba(2,6,23,.2); transition:transform .08s ease, box-shadow .15s ease, filter .15s ease; cursor:pointer; }
-          body.role-pending button:not(#viewModeBtn):not(#mobileNavToggle):not(#closeStrainPopover):not(.pot-strain-link),
-          body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle):not(#closeStrainPopover):not(.pot-strain-link):not(#openVpdTableBtn):not(#closeVpdTableBtn) {
+          body.role-pending button:not(#viewModeBtn):not(#mobileNavToggle):not(.pot-strain-link),
+          body.role-guest button:not(#viewModeBtn):not(#mobileNavToggle):not(.pot-strain-link):not(#openVpdTableBtn):not(#closeVpdTableBtn) {
             pointer-events:none; opacity:.55; cursor:not-allowed;
           }
           body.role-pending #espOpenBtn, body.role-pending #espStatsBtn, body.role-pending #pollErrorsBtn,
@@ -10294,19 +10294,6 @@ def dashboard_page(request: Request):
             overflow-wrap: anywhere;
             display: none;
           }
-          .strain-popover { width:350px; max-width:calc(100vw - 24px); max-height:calc(100dvh - 24px); padding:8px 10px; font-size:13px; line-height:1.35; pointer-events:auto; overflow:auto; overscroll-behavior:contain; }
-          .strain-popover:not([hidden]) { display:block; }
-          .strain-popover-header { display:flex; align-items:flex-start; gap:6px; justify-content:space-between; padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid var(--grid); }
-          .strain-popover-heading { min-width:0; }
-          .strain-popover-pot { color:var(--muted); font-size:11px; }
-          .strain-popover-title { display:block; font-size:15px; font-weight:700; }
-          #closeStrainPopover { width:28px; height:28px; flex:0 0 28px; padding:0; margin:0; background:transparent; border:1px solid var(--grid); box-shadow:none; color:var(--text); font-size:17px; line-height:1; }
-          .strain-popover-data { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px 10px; margin:0; }
-          .strain-popover-data > div { min-width:0; }
-          .strain-popover-data dt, .strain-popover-section-title { color:var(--muted); font-size:11px; font-weight:700; margin:0; }
-          .strain-popover-data dd { margin:1px 0 0; }
-          .strain-popover-section { margin-top:7px; padding-top:5px; border-top:1px solid var(--grid); }
-          .strain-popover-section-text { margin:2px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
         </style>
       </head>
       <body>
@@ -10536,7 +10523,6 @@ def dashboard_page(request: Request):
         </div>
 
         <div id=\"alphaHintPopover\" class=\"alpha-hint-popover\"></div>
-        <div id=\"strainPopover\" class=\"alpha-hint-popover strain-popover\" role=\"dialog\" aria-labelledby=\"strainPopoverTitle\" hidden></div>
 
         <div id=\"pollErrorsModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1300; align-items:center; justify-content:center; padding:16px;\">
           <div class=\"card\" style=\"width:min(1100px, 96vw); max-width:1100px; margin-bottom:0;\">
@@ -10747,8 +10733,6 @@ def dashboard_page(request: Request):
               noPotStrains: 'No pot strains assigned.',
               strainNotFound: 'No strain library entry found for this name.',
               strainDetails: 'Strain details',
-              strainClose: 'Close',
-              strainFloweringLabel: 'Flowering time',
               strainGenetics: 'Genetics',
               strainThc: 'THC',
               strainCbd: 'CBD',
@@ -10946,8 +10930,6 @@ def dashboard_page(request: Request):
               noPotStrains: 'Keine Topf-Sorten zugeordnet.',
               strainNotFound: 'Kein Eintrag in der Sortenbibliothek für diesen Namen gefunden.',
               strainDetails: 'Sortenwerte',
-              strainClose: 'Schließen',
-              strainFloweringLabel: 'Blütezeit',
               strainGenetics: 'Genetik',
               strainThc: 'THC',
               strainCbd: 'CBD',
@@ -12544,115 +12526,39 @@ def dashboard_page(request: Request):
             return dashboardStrainMap.get(key) || null;
           }
 
-          let strainPopoverAnchor = null;
-          let strainPopoverRequest = 0;
-
-          function closeStrainPopover(restoreFocus = false){
-            strainPopoverRequest++;
-            const pop = document.getElementById('strainPopover');
-            if (pop) pop.hidden = true;
-            if (strainPopoverAnchor) {
-              strainPopoverAnchor.setAttribute('aria-expanded', 'false');
-              if (restoreFocus && strainPopoverAnchor.isConnected) strainPopoverAnchor.focus({preventScroll:true});
-            }
-            strainPopoverAnchor = null;
-          }
-
-          function positionStrainPopover(){
-            const pop = document.getElementById('strainPopover');
-            if (!pop || pop.hidden || !strainPopoverAnchor) return;
-            if (!strainPopoverAnchor.isConnected) { closeStrainPopover(); return; }
-            const vv = window.visualViewport;
-            const x = vv?.offsetLeft ?? 0, y = vv?.offsetTop ?? 0;
-            const w = vv?.width ?? window.innerWidth, h = vv?.height ?? window.innerHeight;
-            const margin = 12, gap = 6;
-            pop.style.maxWidth = `${Math.max(1, w - 2 * margin)}px`;
-            pop.style.maxHeight = `${Math.max(1, h - 2 * margin)}px`;
-            const r = strainPopoverAnchor.getBoundingClientRect();
-            const pr = pop.getBoundingClientRect();
-            const left = Math.max(x + margin, Math.min(r.left, x + w - margin - pr.width));
-            let top = r.bottom + gap;
-            if (top + pr.height > y + h - margin) top = r.top - gap - pr.height;
-            top = Math.max(y + margin, Math.min(top, y + h - margin - pr.height));
-            pop.style.left = `${Math.round(left)}px`;
-            pop.style.top = `${Math.round(top)}px`;
-          }
-
           function showStrainPopover(anchorEl, potLabel, strainName, strain){
-            const pop = document.getElementById('strainPopover');
-            if (!pop || !anchorEl || !anchorEl.isConnected) return;
-            closeStrainPopover();
-            const hint = document.getElementById('alphaHintPopover');
-            if (hint) hint.style.display = 'none';
-            const node = (tag, className, text) => {
-              const el = document.createElement(tag);
-              if (className) el.className = className;
-              if (text !== undefined) el.textContent = text;
-              return el;
-            };
-            const header = node('div', 'strain-popover-header');
-            const heading = node('div', 'strain-popover-heading');
-            const title = node('strong', 'strain-popover-title', strainName);
-            title.id = 'strainPopoverTitle';
-            heading.append(node('div', 'strain-popover-pot', potLabel), title);
-            const close = node('button', '', '×');
-            close.id = 'closeStrainPopover';
-            close.type = 'button';
-            close.setAttribute('aria-label', tr('strainClose'));
-            close.addEventListener('click', () => closeStrainPopover(true));
-            header.append(heading, close);
-            pop.replaceChildren(header);
+            const pop = document.getElementById('alphaHintPopover');
+            if (!pop || !anchorEl) return;
+            const lines = [];
+            lines.push(`${potLabel}: ${strainName}`);
             if (strain) {
-              const data = node('dl', 'strain-popover-data');
-              const addField = (label, value) => {
-                const field = node('div');
-                field.append(node('dt', '', label), node('dd', '', value || '–'));
-                data.appendChild(field);
-              };
-              addField(tr('strainThc'), strain.thc);
-              addField(tr('strainCbd'), strain.cbd);
-              addField(tr('strainGenetics'), strain.genetics);
+              lines.push(`${tr('strainGenetics')}: ${strain.genetics || '-'}`);
+              lines.push(`${tr('strainThc')}: ${strain.thc || '-'}`);
+              lines.push(`${tr('strainCbd')}: ${strain.cbd || '-'}`);
               const floweringKey = ({short:'strainFloweringShort', medium:'strainFloweringMedium', long:'strainFloweringLong'})[strain.flowering_weeks];
-              if (floweringKey) addField(tr('strainFloweringLabel'), tr(floweringKey));
-              pop.appendChild(data);
-              for (const [label, value] of [[tr('strainEffects'), strain.effects], [tr('strainAroma'), strain.aroma]]) {
-                const section = node('section', 'strain-popover-section');
-                section.append(node('h3', 'strain-popover-section-title', label), node('p', 'strain-popover-section-text', value || '–'));
-                pop.appendChild(section);
-              }
+              if (floweringKey) lines.push(`${tr('strainFloweringWeeks')}: ${tr(floweringKey)}`);
+              lines.push(`${tr('strainEffects')}: ${strain.effects || '-'}`);
+              lines.push(`${tr('strainAroma')}: ${strain.aroma || '-'}`);
             } else {
-              pop.appendChild(node('p', 'strain-popover-section-text', tr('strainNotFound')));
+              lines.push(tr('strainNotFound'));
             }
-            strainPopoverAnchor = anchorEl;
-            anchorEl.setAttribute('aria-expanded', 'true');
-            pop.hidden = false;
-            pop.scrollTop = 0;
-            positionStrainPopover();
-            close.focus({preventScroll:true});
+            pop.textContent = lines.join('\\n');
+            pop.style.whiteSpace = 'pre-line';
+            pop.style.display = 'block';
+            const r = anchorEl.getBoundingClientRect();
+            const top = Math.min(window.innerHeight - 20, r.bottom + 10);
+            const left = Math.min(window.innerWidth - 20, Math.max(10, r.left));
+            pop.style.top = `${top}px`;
+            pop.style.left = `${left}px`;
           }
-
-          document.addEventListener('click', ev => {
-            const pop = document.getElementById('strainPopover');
-            if (!pop?.contains(ev.target)) closeStrainPopover();
-          });
-          document.addEventListener('keydown', ev => {
-            const pop = document.getElementById('strainPopover');
-            if (ev.key === 'Escape' && pop && !pop.hidden) { ev.preventDefault(); closeStrainPopover(true); }
-          });
-          window.addEventListener('resize', positionStrainPopover);
-          window.visualViewport?.addEventListener('resize', positionStrainPopover);
 
           function renderPotStrains(potStrains = {}){
             const el = document.getElementById('streamPotStrains');
             if (!el) return;
+            el.replaceChildren();
             const parts = [1, 2, 3]
               .map(idx => ({ label: tr(`pot${idx}`), value: String(potStrains[`pot${idx}`] || '').trim() }))
               .filter(item => item.value);
-            const signature = JSON.stringify([tr('noPotStrains'), parts]);
-            if (el.dataset.strainSignature === signature) return;
-            el.dataset.strainSignature = signature;
-            closeStrainPopover();
-            el.replaceChildren();
             if (!parts.length) {
               el.textContent = tr('noPotStrains');
               return;
@@ -12664,18 +12570,11 @@ def dashboard_page(request: Request):
               btn.type = 'button';
               btn.className = 'pot-strain-link';
               btn.textContent = item.value;
-              btn.setAttribute('aria-haspopup', 'dialog');
-              btn.setAttribute('aria-controls', 'strainPopover');
-              btn.setAttribute('aria-expanded', 'false');
               btn.addEventListener('click', async (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
-                const wasOpen = strainPopoverAnchor === btn;
-                closeStrainPopover();
-                if (wasOpen) return;
-                const request = strainPopoverRequest;
                 const strain = await getDashboardStrainByName(item.value);
-                if (request === strainPopoverRequest && btn.isConnected) showStrainPopover(btn, item.label, item.value, strain);
+                showStrainPopover(btn, item.label, item.value, strain);
               });
               el.appendChild(btn);
             });
@@ -14620,7 +14519,7 @@ def dashboard_page(request: Request):
             }
             document.querySelectorAll('button').forEach(btn => {
               const id = btn.id || '';
-              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || id === 'openVpdTableBtn' || id === 'closeVpdTableBtn' || id === 'closeStrainPopover' || btn.classList.contains('pot-strain-link'));
+              const keep = (id === 'viewModeBtn' || id === 'mobileNavToggle' || id === 'openVpdTableBtn' || id === 'closeVpdTableBtn' || btn.classList.contains('pot-strain-link'));
               btn.disabled = isGuestMode && !keep;
             });
             syncGrowProfileAction();
