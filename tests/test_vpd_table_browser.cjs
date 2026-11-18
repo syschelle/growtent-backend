@@ -10,7 +10,7 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
  await page.evaluate(()=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3},new Date(clock).toISOString()));
  assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'gut');
  const assessment=page.locator('#vpdRangeAssessment');
- for(const [value,light,state,text,dark,lightColor] of [[0.79,true,'low','zu wenig','rgb(125, 211, 252)','rgb(3, 105, 161)'],[0.8,true,'good','gut','rgb(74, 222, 128)','rgb(21, 128, 61)'],[1.21,true,'high','zu viel','rgb(251, 146, 60)','rgb(194, 65, 12)'],[1.21,false,'night','Nachtmodus','rgb(84, 136, 240)','rgb(30, 64, 175)']]){
+ for(const [value,light,state,text,dark,lightColor] of [[0.79,true,'low','zu wenig','rgb(125, 211, 252)','rgb(3, 105, 161)'],[0.8,true,'good','gut','rgb(74, 222, 128)','rgb(21, 128, 61)'],[1.21,true,'high','zu viel','rgb(251, 146, 60)','rgb(194, 65, 12)'],[0.39,true,'critical','kritisch','rgb(248, 113, 113)','rgb(185, 28, 28)'],[1.61,true,'critical','kritisch','rgb(248, 113, 113)','rgb(185, 28, 28)'],[1.61,false,'night','Nachtmodus','rgb(84, 136, 240)','rgb(30, 64, 175)']]){
   await page.evaluate(({value,light})=>GrowTentVpdTable.update(2,{...sample,'settings.grow.currentPhaseWeek':3,'sensors.cur.vpdKpa':value,'cur.shelly.light.isOn':light},new Date(clock).toISOString()),{value,light});
   assert.equal(await assessment.textContent(),text);assert.equal(await assessment.getAttribute('data-state'),state);
   for(const [theme,color] of [['dark',dark],['light',lightColor]]){
@@ -18,6 +18,13 @@ const fs=require('fs'),assert=require('node:assert/strict'),{chromium}=require('
    assert.equal(await assessment.evaluate(el=>getComputedStyle(el).color),color);
   }
  }
+ for(const width of [1640,390]){
+  await page.setViewportSize({width,height:1000});
+  await page.evaluate(()=>{ctx.language='en';GrowTentVpdTable.update(2,{...sample,'sensors.cur.vpdKpa':1.61,'cur.shelly.light.isOn':true},new Date(clock).toISOString());});
+  assert.equal(await assessment.textContent(),'critical');assert.equal(await assessment.getAttribute('data-state'),'critical');
+  assert.ok(await assessment.evaluate(el=>el.scrollWidth<=el.clientWidth+1));
+ }
+ await page.evaluate(()=>{ctx.language='de';GrowTentVpdTable.refresh();});
  await page.evaluate(()=>document.documentElement.dataset.theme='dark');
  await page.evaluate(()=>{clock+=120001;timer();});
  assert.equal(await page.locator('#vpdRangeAssessment').textContent(),'Referenzbereich offen');

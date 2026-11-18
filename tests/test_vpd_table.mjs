@@ -73,18 +73,35 @@ expectStatus('night','Nachtmodus');assert.match(assessment.title,/Luftfeuchtigke
 ctx.language='en';mounted.refresh();expectStatus('night','Night mode');assert.match(assessment.title,/Humidity/);
 wall+=120001;tick();expectStatus('unknown','Reference unavailable');
 wall+=1;
-for(const [language,labels] of [['de',['zu wenig','gut','gut','gut','zu viel']],['en',['too low','good','good','good','too high']]]){
+for(const [language,labels] of [['de',['zu wenig','gut','gut','gut','kritisch']],['en',['too low','good','good','good','critical']]]){
  ctx.language=language;
  for(const [i,value] of [1.19,1.2,1.4,1.6,1.61].entries()){
   mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'sensors.cur.vpdKpa':value},new Date(wall).toISOString());
-  expectStatus(['low','good','good','good','high'][i],labels[i]);assert.equal(assessment.title,labels[i]);
+  expectStatus(['low','good','good','good','critical'][i],labels[i]);assert.equal(assessment.title,labels[i]);
  }
 }
-ctx.language='de';mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'settings.grow.currentPhase':3},new Date(wall).toISOString());expectStatus('drying','Trocknung');
-mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'settings.grow.currentPhaseWeek':null},new Date(wall).toISOString());expectStatus('unknown','Referenzbereich offen');
+// The two outer (pink) bands use the same rounding as the table and the actual ESP value, not the calculated marker or raw reading.
+for(const language of ['de','en']){
+ ctx.language=language;
+ const labels=language==='de'?{critical:'kritisch',low:'zu wenig',good:'gut',high:'zu viel',night:'Nachtmodus'}:{critical:'critical',low:'too low',good:'good',high:'too high',night:'Night mode'};
+ for(const [phase,week] of [[1,1],[1,3],[2,1],[2,3]]){
+  for(const value of [0,0.39,0.3949,1.6051,1.61,2.5]){
+   mounted.update(2,{...nightSample,'settings.grow.currentPhase':phase,'settings.grow.currentPhaseWeek':week,'cur.shelly.light.isOn':true,'sensors.cur.vpdKpa':value},new Date(wall).toISOString());
+   expectStatus('critical',labels.critical);assert.equal(assessment.title,labels.critical);
+  }
+ }
+ for(const [value,state] of [[0.3951,'low'],[0.4,'low'],[0.79,'low'],[0.8,'good'],[1.2,'good'],[1.21,'high'],[1.6,'high'],[1.6049,'high'],[1.61,'critical']]){
+  mounted.update(2,{...nightSample,'settings.grow.currentPhase':1,'settings.grow.currentPhaseWeek':3,'cur.shelly.light.isOn':true,'sensors.cur.vpdKpa':value},new Date(wall).toISOString());expectStatus(state,labels[state]);
+ }
+ for(const value of [0.2,2.0]){
+  mounted.update(2,{...nightSample,'cur.shelly.light.isOn':false,'sensors.cur.vpdKpa':value},new Date(wall).toISOString());expectStatus('night',labels.night);
+ }
+}
+ctx.language='de';mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'settings.grow.currentPhase':3,'sensors.cur.vpdKpa':2},new Date(wall).toISOString());expectStatus('drying','Trocknung');
+mounted.update(2,{...nightSample,'cur.shelly.light.isOn':true,'settings.grow.currentPhaseWeek':null,'sensors.cur.vpdKpa':2},new Date(wall).toISOString());expectStatus('unknown','Referenzbereich offen');
 mounted.update(2,{...nightSample,'cur.shelly.light.isOn':false,'sensors.cur.vpdKpa':2.0},new Date(wall).toISOString());expectStatus('night','Nachtmodus');
 mounted.invalidate(2);expectStatus('unknown','Referenzbereich offen');
-console.log('Production dashboard tile: DE/EN low/good/high/night, inclusive boundaries, transitions, humidity tooltip, stale/drying/unknown passed');
+console.log('Production dashboard tile: DE/EN low/good/high/critical/night, inclusive boundaries, transitions, humidity tooltip, stale/drying/unknown passed');
 
 // Same physical 20–35 C grid under both unit preferences; offsets are differences.
 assert.deepEqual(api.nearest(35,50),{temperature:35,humidity:50});

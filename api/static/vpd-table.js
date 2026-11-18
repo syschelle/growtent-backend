@@ -73,10 +73,10 @@
    const referenceRange=phaseRange(latest?.data,s.valid&&sameTent);
    const range=night?{reason:'night'}:referenceRange;
    const assessment=doc.getElementById('vpdRangeAssessment');
-   // Dashboard tile only: preserve the existing reference limits and night detection.
+   // Dashboard tile only: reuse the table’s outer band for critical IST-VPD. Preserve reference limits and night detection.
    if(assessment){
-    const state=night?'night':range.reason?(range.reason==='drying'?'drying':'unknown'):inPhase(s.vpd,range)?'good':s.vpd<range.min?'low':'high';
-    const text=({night:de?'Nachtmodus':'Night mode',good:de?'gut':'good',low:de?'zu wenig':'too low',high:de?'zu viel':'too high',drying:de?'Trocknung':'Drying',unknown:de?'Referenzbereich offen':'Reference unavailable'})[state];
+    const state=night?'night':range.reason?(range.reason==='drying'?'drying':'unknown'):band(s.vpd)==='outer'?'critical':inPhase(s.vpd,range)?'good':s.vpd<range.min?'low':'high';
+    const text=({night:de?'Nachtmodus':'Night mode',good:de?'gut':'good',low:de?'zu wenig':'too low',high:de?'zu viel':'too high',critical:de?'kritisch':'critical',drying:de?'Trocknung':'Drying',unknown:de?'Referenzbereich offen':'Reference unavailable'})[state];
     assessment.dataset.state=state;
     assessment.textContent=text;
     assessment.title=night?text+(warning?(de?' · Luftfeuchtigkeit seit ≥5 Min. ≥70 %':' · Humidity ≥70% for ≥5 min'):''):text;
