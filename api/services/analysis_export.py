@@ -150,7 +150,8 @@ def shelly_samples(data):
     result={}
     for role in SHELLY_ROLES:
         prefix=f'cur.shelly.{role}.'
-        if not data.get(f'settings.shelly.{role}.ip') and not any(key.startswith(prefix) for key in data if isinstance(key,str)):
+        legacy_exhaust = role == 'exhaust' and 'shelly.exhaust.watt' in data
+        if not legacy_exhaust and not data.get(f'settings.shelly.{role}.ip') and not any(key.startswith(prefix) for key in data if isinstance(key,str)):
             continue
         freshness=data.get(prefix+'fresh')
         fresh=freshness if isinstance(freshness,bool) else None
@@ -161,6 +162,11 @@ def shelly_samples(data):
         power=finite_number(data.get(prefix+'Watt')) if available else None
         if role=='humidifier' and prefix+'Watt' not in data and available:
             power=finite_number(data.get('cur.shelly.hum.Watt'))
+        if role=='exhaust' and available and data.get(prefix+'Watt') is None:
+            # Older stored payloads use the same aliases as the dashboard.
+            raw=data.get(prefix+'watt')
+            if raw is None: raw=data.get('shelly.exhaust.watt')
+            power=finite_number(raw)
         energy=finite_number(data.get(prefix+'Wh')) if available else None
         age=finite_number(data.get(prefix+'ageMs'))
         result[role]={'state':state,'fresh':fresh,'power':power,
@@ -265,9 +271,11 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
         for key,values in metrics.items():
             bucket['metrics'][key]={'avg':round(math.fsum(value/len(values) for value in values),4) if values else None,
                 'min':min(values) if values else None,'max':max(values) if values else None,'n':len(values)}
+        # Alias the existing device aggregate, so the two export paths cannot disagree.
+        bucket['metrics']['exhaust_watt']=dict(bucket['shelly'].get('exhaust',{}).get('power_w',_stats([])))
     return {'schema':'growtent.analysis.v1','tentId':int(tent_id),'from':iso(start),'to':iso(end),
         'hours':hours,'bucketSeconds':seconds,'count':count,'sampleCount':sample_count,
-        'units':{'temperature':'°C','humidity':'%','vpd':'kPa','temperature_raw':'°C','humidity_raw':'%','vpd_raw':'kPa','humidifier_watt':'W','alpha_temperature':'factor','alpha_humidity':'factor','leaf_offset':'°C'},
+        'units':{'temperature':'°C','humidity':'%','vpd':'kPa','temperature_raw':'°C','humidity_raw':'%','vpd_raw':'kPa','humidifier_watt':'W','exhaust_watt':'W','alpha_temperature':'factor','alpha_humidity':'factor','leaf_offset':'°C'},
         'shellyRoles':list(SHELLY_ROLES),'context_first':context_first,'context_last':context_last,
         'context_timeline':context_timeline,'context_change_count':context_changes,'context_details_omitted':context_omissions,
         'externalTemperatureUnit':'°C','externalTemperatureSource':'sensors.cur.extTempC',
@@ -282,6 +290,7 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
             'External DS18B20 temperatures are grouped by the sensor name stored with each sample; missing names use DS18B20. Missing/invalid measurements are not replaced.',
             'Irrigation events are stored ESP journal events, selected by occurrence time (receipt time only for undated events). Local timestamps use Europe/Berlin; a null occurrence is unknown. Run references are local to this export.',
             'Irrigation configured_amount_ml is the historical ESP setpoint from the closest preceding sample within max(60 seconds, 3 poll intervals), not actual delivered water. Count started/completed events by run_ref; do not sum settings across events. Firmware does not report measured volume. Pump flags are ordered pump 1–3. Missing journal events or quantities are not reconstructed; irrigation_last_run_date is a reported date only.',
+            'metrics.exhaust_watt mirrors shelly.exhaust.power_w, including supported legacy stored field names; missing or stale power is null, not zero.',
             'Empty windows and null statistics indicate missing measurements; n is the number of valid samples.',
             'Transitions and target changes are observations at backend poll times, not exact physical switching times. Pulses between polls may be missed.',
             'Unknown/stale state or sampling gaps break switch continuity; no transition is inferred across them.',

@@ -1,4 +1,4 @@
-# Testing — v0.393
+# Testing — v0.394
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -182,3 +182,7 @@ Local regression: 262 Python tests passed (excluding PostgreSQL integration, una
 ## v0.393 named temperatures and irrigation analysis export
 
 `PYTHONPATH=api python -m pytest -q --ignore=tests/test_irrigation_postgres.py`: 267 passed (two existing FastAPI deprecation warnings). The five existing JavaScript `.mjs` suites passed. Added tests for renamed sensors, invalid/disconnected readings, local and original/delayed event times, per-tent range filtering, unknown timestamps, historical settings, missing/future/stale quantities and size-adapted journal preservation. A PostgreSQL integration test covers the actual journal query, but could not run locally (psycopg2 and test DB unavailable). Docker build, browser integration and live ESP validation were not run. No real irrigation was triggered.
+
+## v0.394 exhaust power analysis export
+
+The historical exhaust tests verify canonical and legacy field names, canonical precedence, genuine zero, stale/invalid freshness, nonfinite and boolean values, missing windows, alias equality and the attachment endpoint. The size-adaptation regression verifies that all exhaust sample counts and extrema remain available and both export paths agree. Local regression: 269 Python tests passed (`PYTHONPATH=api python -m pytest -q --ignore=tests/test_irrigation_postgres.py`, two existing FastAPI deprecation warnings); all five Node.js `.mjs` suites passed. Python compilation and the versioned release-note check passed. PostgreSQL integration, browser tests, Docker build and live deployment were not run.

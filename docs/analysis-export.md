@@ -21,6 +21,10 @@ Each role provides:
 
 An explicit stale or invalid freshness flag excludes state/power/energy from valid observations. A legacy record without a freshness flag retains its valid measurements but is counted under unknown freshness. Missing, nonfinite and boolean numeric values are not zeros. Unknown state, a missing device record or a sampling gap breaks switch continuity. Power does not imply ON/OFF. PM1 ON can represent the permanently connected output, not a relay operation. Energy counters may reset; no consumption delta or runtime is invented.
 
+## Exhaust power (v0.394)
+
+Each point includes `metrics.exhaust_watt` (`avg`, `min`, `max`, `n`, unit W), matching `shelly.exhaust.power_w` when present. Canonical `cur.shelly.exhaust.Watt` takes priority; if absent or null, historical `cur.shelly.exhaust.watt` and `shelly.exhaust.watt` are supported in that order. A malformed non-null canonical value is not replaced. Explicit stale or invalid freshness excludes power, while legacy rows without a freshness flag retain valid values. Missing windows report null statistics and `n: 0`, never an inferred zero. These are sampled power readings, not fan speed or airflow. The two paths describe the same data, not separate devices.
+
 ## Grow phase and light schedule
 
 `context_first` and `context_last` preserve the first/last observed context with `at` timestamps. Each context contains `phase`, `phase_week`, `phase_day`, `grow_week`, `grow_day`, and `light_schedule.on` / `.off` in normalized `HH:MM` format. Missing fields stay null. Phase codes are the ESP's recorded values (1 vegetative, 2 flowering, 3 drying).

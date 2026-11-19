@@ -1,5 +1,0 @@
-# GrowTent Backend v0.393
-
-- Add historical external DS18B20 temperature statistics by stored sensor name (°C, average/minimum/maximum/valid sample count). Names can differ by tent and across history; absent names fall back to DS18B20 and invalid readings remain null.
-- Include ESP irrigation journal events for the selected tent and period, with original UTC and Europe/Berlin timestamps, receipt time, event type and export-local run reference. Include recorded irrigation settings and reported last-run date in the context timeline. Configured volume (ml), calibration, pump flags and timing come from nearby historical samples, not today's configuration. Actual dispensed volume is unavailable in the current firmware and remains null; no invented quantity or timestamp.
-- Preserve v1 JSON compatibility, read-only scope and 1 MB cap. Adaptive windows retain journal events; if the export cannot fit, return HTTP 413 with a German/English prompt to choose a shorter period. No database schema or controller changes.

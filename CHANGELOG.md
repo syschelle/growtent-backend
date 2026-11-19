@@ -1,3 +1,9 @@
+## v0.394 — Exhaust power in analysis export
+
+- Export exhaust-fan power in watts as `points[].metrics.exhaust_watt` (average, minimum, maximum and valid sample count), using the same historical windows as climate and humidifier power. Keep `points[].shelly.exhaust.power_w` identical when the role exists.
+- Accept the historical `cur.shelly.exhaust.watt` and `shelly.exhaust.watt` aliases; prefer the canonical `cur.shelly.exhaust.Watt`. Explicit stale/invalid freshness excludes readings. Real zero remains zero; missing or invalid power stays null. No power is inferred from switch state or live data.
+- Retain the v1 format, existing sensor/irrigation exports, selected period and 1 MB size guard. No schema, controller or UI changes.
+
 ## v0.393 — Named external temperature and irrigation analysis export
 
 - Add historical external DS18B20 temperature statistics by stored sensor name (°C, average/minimum/maximum/valid sample count). Names can differ by tent and across history; absent names fall back to DS18B20 and invalid readings remain null.

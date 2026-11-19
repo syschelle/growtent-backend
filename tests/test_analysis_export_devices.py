@@ -98,6 +98,8 @@ def test_size_guard_all_devices_keeps_counts_extrema_and_final_context():
         assert sum(d['observed_changes']for d in devices)==8639
         assert max(d['power_w']['max']for d in devices)==49
     assert out['context_last']['phase_week']==6
+    assert sum(p['metrics']['exhaust_watt']['n'] for p in out['points'])==8640
+    assert all(p['metrics']['exhaust_watt']==p['shelly']['exhaust']['power_w'] for p in out['points'])
 
 
 def test_invalid_values_are_json_safe():
@@ -107,3 +109,32 @@ def test_invalid_values_are_json_safe():
     d=out['points'][0]['shelly']['light']
     assert d['power_w']['n']==0 and d['unknown_samples']==1
     json.dumps(out,allow_nan=False)
+
+
+def test_exhaust_aliases_share_statistics_with_climate_metric():
+    rows=[(START,device('exhaust',state=True,power=0)),
+        (START+timedelta(seconds=10),{'cur.shelly.exhaust.watt':2.5}),
+        (START+timedelta(seconds=20),{'shelly.exhaust.watt':'6.5'}),
+        (START+timedelta(seconds=30),{'cur.shelly.exhaust.Watt':10,'cur.shelly.exhaust.watt':99,'shelly.exhaust.watt':98}),
+        (START+timedelta(seconds=40),{'cur.shelly.exhaust.Watt':None,'shelly.exhaust.watt':1}),
+        (START+timedelta(seconds=50),{'cur.shelly.exhaust.fresh':False,'shelly.exhaust.watt':100}),
+        (START+timedelta(seconds=60),{'cur.shelly.exhaust.fresh':'true','cur.shelly.exhaust.watt':100}),
+        (START+timedelta(seconds=70),{'cur.shelly.exhaust.Watt':float('nan'),'shelly.exhaust.watt':100}),
+        (START+timedelta(seconds=80),{'cur.shelly.exhaust.isOn':False}),
+        (START+timedelta(seconds=90),{'cur.shelly.exhaust.Watt':True})]
+    out=build_analysis_export(2,rows,END,1)
+    first=out['points'][0];expected={'avg':4.0,'min':0,'max':10,'n':5}
+    assert out['units']['exhaust_watt']=='W'
+    assert first['metrics']['exhaust_watt']==first['shelly']['exhaust']['power_w']==expected
+    assert out['points'][1]['metrics']['exhaust_watt']=={'avg':None,'min':None,'max':None,'n':0}
+    assert 'exhaust' not in out['points'][1]['shelly']
+    json.dumps(out,allow_nan=False)
+
+
+def test_exhaust_legacy_power_only_and_no_inferred_state():
+    db=Database([(END-timedelta(seconds=10),{'shelly.exhaust.watt':3.2})])
+    out=json.loads(exporter(db)(2,'1h').body)
+    point=out['points'][-1]
+    assert point['metrics']['exhaust_watt']=={'avg':3.2,'min':3.2,'max':3.2,'n':1}
+    assert point['shelly']['exhaust']['unknown_samples']==1
+    assert point['shelly']['exhaust']['freshness_unknown_samples']==1

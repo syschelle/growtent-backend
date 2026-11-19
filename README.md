@@ -137,7 +137,7 @@ Zero selects automatic scaling. Missing targets use the midpoint of valid plotte
 
 **Export JSON / JSON exportieren** opens a period selector for 1, 6, 12, 24 or 48 hours (default 24 hours) and downloads a compact `.json` attachment suitable for analysis with tools such as ChatGPT. Nothing is uploaded automatically.
 
-`GET /api/export/analysis?tent_id=<id>&range=24h` reads existing stored history. The `growtent.analysis.v1` format includes windowed average/minimum/maximum/valid sample counts for control/raw climate measurements, humidifier power and adaptive smoothing factors. Targets, including leaf offset, retain first/last values and observed changes; gaps and omitted event details are explicitly reported. Unknown/stale values remain unknown.
+`GET /api/export/analysis?tent_id=<id>&range=24h` reads existing stored history. The `growtent.analysis.v1` format includes windowed average/minimum/maximum/valid sample counts for control/raw climate measurements, humidifier and exhaust power (`metrics.exhaust_watt`, in W) and adaptive smoothing factors. Targets, including leaf offset, retain first/last values and observed changes; gaps and omitted event details are explicitly reported. Unknown/stale values remain unknown.
 
 Default windows are 2 minutes, or 4 minutes for 48 hours, with at most 720 points. If required, windows widen to keep the UTF-8 file within 1,000,000 bytes; `sizeAdapted` and `bucketSeconds` describe the result. Observed switch changes are backend samples, not exact physical event timestamps; short pulses between polls may be missed. Sampling gaps break switch continuity. Downloads exclude IP addresses, secrets and original payloads.
 
