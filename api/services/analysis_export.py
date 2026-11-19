@@ -146,6 +146,34 @@ def analysis_context(data):
             'off':_clock(data.get('settings.shelly.light.off'))}}
 
 
+
+def grow_phase_key(context):
+    """Historical settings only; do not infer a week from a calendar or grow day."""
+    phase,week=context['phase'],context['phase_week']
+    if phase not in (1,2,3):return None
+    week=week if week is not None and week>=1 else None
+    return phase,week
+
+
+def grow_phase_info(key):
+    """Mirror static/vpd-table.js phaseRange, without the live climate freshness gate."""
+    if key is None:return None
+    phase,week=key
+    code,de,en={1:('vegetative','Vegetativ','Vegetative'),2:('flowering','Blüte','Flowering'),3:('drying','Trocknung','Drying')}[phase]
+    stage=None;reference=None
+    if phase in (1,2) and week is not None:
+        late=week>=3
+        stage='late' if late else 'early'
+        low,high=((0.8,1.2) if late else (0.4,0.8)) if phase==1 else ((1.2,1.6) if late else (0.8,1.2))
+        reference={'min':low,'max':high}
+        de+=f' · Woche {week} · '+('spät' if late else 'früh')
+        en+=f' · Week {week} · '+stage
+    elif phase in (1,2):
+        de+=' · Woche offen';en+=' · Week unavailable'
+    return {'phase':code,'week':week,'stage':stage,'label_de':de,'label_en':en,
+        'reference_vpd_kpa':reference}
+
+
 def shelly_samples(data):
     result={}
     for role in SHELLY_ROLES:
@@ -190,6 +218,7 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
             'humidifier':{'on_samples':0,'off_samples':0,'unknown_samples':0,'observed_changes':0,'transitions':[]}})
     accum=[{key:[] for key in METRICS} for _ in buckets]
     external_accum=[{} for _ in buckets]
+    phase_accum=[{} for _ in buckets]
     previous_time=None;previous_state=None;previous_targets=None
     sample_count=0;gaps=[];event_omissions=0
     previous_devices={};device_accum=[{} for _ in buckets]
@@ -214,6 +243,9 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
             values_for_name=external_accum[index].setdefault(name,[])
             if value is not None:values_for_name.append(value)
         context=analysis_context(data)
+        phase_key=grow_phase_key(context)
+        phase_counts=phase_accum[index]
+        phase_counts[phase_key]=phase_counts.get(phase_key,0)+1
         if context_first is None:context_first={'at':iso(ts),**context}
         if context_last is None or context!={k:v for k,v in context_last.items() if k!='at'}:
             if context_last is not None:context_changes+=1
@@ -267,6 +299,11 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
                 'min':min(energy) if energy else None,'max':max(energy) if energy else None,'n':len(energy)}
     for bucket,named in zip(buckets,external_accum):
         if named:bucket['external_temperatures']=[{'sensor_name':name,**_stats(values)} for name,values in named.items()]
+    for bucket,counts in zip(buckets,phase_accum):
+        # Mixed buckets cannot accurately assign their aggregate metrics to one phase.
+        bucket['grow_phase']=grow_phase_info(next(iter(counts))) if len(counts)==1 else None
+        if len(counts)>1:
+            bucket['grow_phase_counts']=[{'grow_phase':grow_phase_info(key),'n':n} for key,n in counts.items()]
     for bucket,metrics in zip(buckets,accum):
         for key,values in metrics.items():
             bucket['metrics'][key]={'avg':round(math.fsum(value/len(values) for value in values),4) if values else None,
@@ -276,6 +313,8 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
     return {'schema':'growtent.analysis.v1','tentId':int(tent_id),'from':iso(start),'to':iso(end),
         'hours':hours,'bucketSeconds':seconds,'count':count,'sampleCount':sample_count,
         'units':{'temperature':'°C','humidity':'%','vpd':'kPa','temperature_raw':'°C','humidity_raw':'%','vpd_raw':'kPa','humidifier_watt':'W','exhaust_watt':'W','alpha_temperature':'factor','alpha_humidity':'factor','leaf_offset':'°C'},
+        'grow_phase':grow_phase_info(grow_phase_key(context_last)) if context_last else None,
+        'grow_phase_observed_at':context_last['at'] if context_last else None,
         'shellyRoles':list(SHELLY_ROLES),'context_first':context_first,'context_last':context_last,
         'context_timeline':context_timeline,'context_change_count':context_changes,'context_details_omitted':context_omissions,
         'externalTemperatureUnit':'°C','externalTemperatureSource':'sensors.cur.extTempC',
@@ -283,7 +322,8 @@ def build_analysis_export(tent_id,rows,end,hours=24,poll_seconds=10,max_points=7
         'irrigationTimeZone':'Europe/Berlin',
         'deviceUnits':{'power_w':'W','energy_wh':'Wh','age_ms':'ms'},
         'gapThresholdSeconds':gap_threshold,'gaps':gaps,'eventDetailsOmitted':event_omissions,
-        'notes':['Shelly metrics and context come only from stored ESP payloads; live dashboard-only direct reads are not backfilled.',
+        'notes':['grow_phase describes the last sample in the export; each point describes its own historical phase/week. Mixed points have null grow_phase and grow_phase_counts with sample counts (including unknown); aggregate metrics are not split by phase. Labels are DE/EN; reference_vpd_kpa is the VPD table reference band, not a target or nighttime assessment. No phase is forward-filled.',
+            'Shelly metrics and context come only from stored ESP payloads; live dashboard-only direct reads are not backfilled.',
             'Shelly fresh/stale/unknown counters preserve reported freshness. State and power are not inferred from each other; PM1 ON may mean permanently connected.',
             'The light schedule is the ESP stored day-0 on/off schedule, not a reconstructed full Shelly weekly schedule. Context times are observations, not exact switch times.',
             'Context timeline retains at most 128 entries; first/last context and total changes remain available. No current settings or inferred day/night are substituted.',

@@ -31,6 +31,25 @@ Each point includes `metrics.exhaust_watt` (`avg`, `min`, `max`, `n`, unit W), m
 
 `context_timeline` records the initial context and subsequent observed changes, up to 128 entries. `context_change_count` counts changes, excluding the initial entry; `context_details_omitted` counts entries omitted by the cap. The final context remains available even after this cap.
 
+### Structured VPD-table phase (v0.395)
+
+The top-level `grow_phase` describes the final sample of the selected export, with `grow_phase_observed_at` (UTC). Each point also has its own `grow_phase` from the samples in that bucket, not from current settings. Example:
+
+```json
+{
+  "phase": "flowering",
+  "week": 6,
+  "stage": "late",
+  "label_de": "Blüte · Woche 6 · spät",
+  "label_en": "Flowering · Week 6 · late",
+  "reference_vpd_kpa": {"min": 1.2, "max": 1.6}
+}
+```
+
+Phase codes are `vegetative`, `flowering` and `drying`. Weeks 1–2 are `early`; week 3 onwards is `late`. Reference ranges match the VPD table; these are not controller targets or night-mode assessments. Phase metadata uses stored settings independently of climate-reading freshness. Drying has null stage/reference; missing or invalid week is null, and an unsupported phase is null. No calendar-based or live-state substitution is used.
+
+For homogeneous buckets the phase applies to all sampled records. Empty/unknown buckets have null `grow_phase`. For mixed buckets (including known and unknown phase or week observations), `grow_phase` is null and `grow_phase_counts` contains objects with `grow_phase` and `n`, grouping all observations by phase and week. Counts sum to the bucket's `samples`; the metric aggregates are not separated by phase. Adaptive aggregation retains these counts. The existing context timeline remains unchanged and includes available observation timestamps, subject to its existing detail limit.
+
 Light times are the ESP-stored day-0 schedule, which the firmware exposes as the common daily ON/OFF times. They are device-local clock times, not UTC instants or a reconstructed full weekly Shelly schedule. No day/night classification is guessed. Device IPs and IP-bearing schedule display lines are not exported.
 
 ## Size and observation limits

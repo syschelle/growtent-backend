@@ -1,4 +1,4 @@
-# Security — v0.394
+# Security — v0.395
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -161,3 +161,7 @@ The existing read-only authorized analysis endpoint queries the per-tent ESP jou
 ## v0.394 exhaust power analysis export
 
 The existing authorized, read-only export accepts two additional allowlisted historical power keys and mirrors the exhaust aggregate in the climate metric set. No raw payloads, secrets, device addresses, live requests or writes are added. Existing freshness checks, selected-tent scope and size guard remain unchanged.
+
+## v0.395 historical grow phase export
+
+The read-only projection adds fixed phase codes, localized labels, validated integer weeks and fixed reference limits derived from the existing historical ESP settings. No new query, identifier, secret, user-supplied label, current status lookup or write operation is introduced. Mixed buckets retain counts without inventing phase assignments. Existing authentication, range validation and size limit are unchanged.

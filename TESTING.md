@@ -1,4 +1,4 @@
-# Testing — v0.394
+# Testing — v0.395
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -186,3 +186,7 @@ Local regression: 262 Python tests passed (excluding PostgreSQL integration, una
 ## v0.394 exhaust power analysis export
 
 The historical exhaust tests verify canonical and legacy field names, canonical precedence, genuine zero, stale/invalid freshness, nonfinite and boolean values, missing windows, alias equality and the attachment endpoint. The size-adaptation regression verifies that all exhaust sample counts and extrema remain available and both export paths agree. Local regression: 269 Python tests passed (`PYTHONPATH=api python -m pytest -q --ignore=tests/test_irrigation_postgres.py`, two existing FastAPI deprecation warnings); all five Node.js `.mjs` suites passed. Python compilation and the versioned release-note check passed. PostgreSQL integration, browser tests, Docker build and live deployment were not run.
+
+## v0.395 historical grow phase in analysis export
+
+The new tests compare the Python phase metadata with the production JavaScript `phaseRange` across phase/week boundaries and missing/invalid inputs, check both localized labels, mixed and empty windows, drying, latest observation timestamps and size-adapted counts. The 44 targeted analysis-export cases passed. Local regression: 287 Python tests passed (`PYTHONPATH=api python -m pytest -q --ignore=tests/test_irrigation_postgres.py`, two existing FastAPI deprecation warnings), all five Node.js `.mjs` suites passed, compilation and versioned release-note validation passed. PostgreSQL integration, browser tests, Docker build and live deployment were not run. No ESP commands were issued.
