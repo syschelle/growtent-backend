@@ -1,4 +1,4 @@
-# Testing — v0.398
+# Testing — v0.399
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -206,3 +206,10 @@ Local v0.397 checks: 287 Python tests passed (isolated PostgreSQL integration mo
 ## v0.398 cancel tent editing
 
 The Chromium Setup regression checks that Cancel/Abbrechen is translated, discards an unsaved edit (including URL, sensor IP, password, HMAC secret/clear flag, thresholds and toggles), closes the editor and restores Add tent mode without issuing any write request. Reopening the same tent loads the saved server mock, while the existing PUT/POST behavior and irrigation-plan controls remain available. It also checks canceling a new draft. Full backend tests, Docker build and real controller integration must be checked separately.
+
+
+## v0.399 bilingual Grow-Guide
+
+`python -m pytest -q tests/test_grow_guide_content.py` validates 20 chapters per language, required table and source links, local guide assets, the unchanged route, read-only behavior and existing language/theme storage keys.
+
+`python tests/check_grow_guide_browser.py --browser /usr/bin/chromium` checks the actual static guide page with isolated browser fixtures in German and English, light/dark themes, 1440/768/390/320px widths, table scroll without page overflow, visible heading counts, language switching, chapter filtering, and collapsible navigation. It is added to the browser CI workflow. The browser makes no controller requests. The original German source was retained verbatim, with all 20 sections translated for English. Live Docker deployment remains unverified until executed.

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grow-Guide | CanopyOps</title>
+  __FAVICON_LINKS__
+  <script>
+    (function () {
+      try {
+        const lang = localStorage.getItem('gt_lang') || ((navigator.language || 'de').toLowerCase().startsWith('de') ? 'de' : 'en');
+        document.documentElement.lang = lang === 'en' ? 'en' : 'de';
+        document.documentElement.dataset.theme = localStorage.getItem('gt_theme') === 'light' ? 'light' : 'dark';
+      } catch { document.documentElement.lang = 'de'; }
+    })();
+  </script>
+  <style>
+    :root { color-scheme:dark; --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --muted:#a5b4c8; --link:#93c5fd; --border:rgba(148,163,184,.22); --soft:rgba(148,163,184,.065); }
+    :root[data-theme="light"] { color-scheme:light; --bg:#eef2f5; --card:#fff; --text:#0f172a; --muted:#475569; --link:#1d4ed8; --border:rgba(51,65,85,.2); --soft:rgba(51,65,85,.05); }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; font:14px/1.55 Arial,Helvetica,sans-serif; background:var(--bg); color:var(--text); }
+    button, input { font:inherit; }
+    a { color:var(--link); overflow-wrap:anywhere; }
+    [hidden] { display:none !important; }
+    .guide-container { max-width:1530px; margin:0 auto; padding:16px; }
+    .guide-header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .guide-brand { font-weight:750; font-size:20px; letter-spacing:-.02em; }
+    .guide-toolbar { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+    #guideSearch { min-width:150px; width:clamp(170px,20vw,280px); max-width:100%; padding:9px 12px; border-radius:9px; border:1px solid var(--border); background:var(--card); color:var(--text); }
+    #guideLangToggle { background:var(--card); border:1px solid var(--border); color:var(--text); padding:9px 12px; min-height:39px; border-radius:9px; cursor:pointer; font-weight:700; }
+    #guideLangToggle:focus-visible, #guideSearch:focus-visible, a:focus-visible, summary:focus-visible { outline:2px solid var(--link); outline-offset:2px; }
+    .guide-grid { display:grid; grid-template-columns: minmax(205px,255px) minmax(0,1fr); align-items:start; gap:14px; }
+    .guide-navigation { position:sticky; top:12px; max-height:calc(100dvh - 24px); overflow:auto; padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--card); }
+    .guide-navigation summary { cursor:pointer; font-weight:700; padding:4px 3px 9px; }
+    .guide-navigation nav { display:grid; gap:3px; }
+    .guide-navigation nav a { color:var(--text); padding:7px 9px; border-radius:7px; text-decoration:none; font-size:12.5px; line-height:1.4; }
+    .guide-navigation nav a:hover, .guide-navigation nav a:focus-visible { background:var(--soft); color:var(--link); }
+    .guide-panel { min-width:0; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:clamp(13px,2vw,26px); }
+    .guide-note { background:var(--soft); border-left:3px solid var(--link); border-radius:5px; padding:9px 12px; font-size:12.5px; color:var(--muted); margin-bottom:16px; }
+    .guide-article h1 { margin:.05em 0 .5em; font-size:clamp(20px,2vw,29px); line-height:1.25; letter-spacing:-.02em; }
+    .guide-article h2 { margin:0 0 .75em; font-size:19px; line-height:1.3; color:var(--link); }
+    .guide-article h3 { margin:1em 0 .25em; font-size:15px; line-height:1.4; }
+    .guide-article p { margin:.45em 0 .8em; }
+    .guide-article ul, .guide-article ol { padding-left:1.5em; margin:.4em 0 .8em; }
+    .guide-article li { padding-left:.1em; margin:.2em 0; }
+    .guide-article li > ul { margin-top:4px; }
+    .guide-article hr { border:0; border-top:1px solid var(--border); margin:15px 0; }
+    .guide-section { border-top:1px solid var(--border); margin-top:20px; padding-top:19px; scroll-margin-top:10px; }
+    .guide-article .table-scroll { max-width:100%; overflow-x:auto; margin:10px 0 17px; border:1px solid var(--border); border-radius:8px; }
+    .guide-article table { border-collapse:collapse; min-width:410px; width:100%; font-variant-numeric:tabular-nums; line-height:1.4; }
+    .guide-article th, .guide-article td { border-bottom:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+    .guide-article th { background:var(--soft); font-size:12.5px; }
+    .guide-article tr:last-child td { border-bottom:0; }
+    .guide-article strong { font-weight:700; }
+    #guideMatches { color:var(--muted); font-size:12px; min-height:17px; margin:0 0 10px; }
+    .back-top { display:inline-block; margin-top:18px; text-decoration:none; font-size:12px; }
+    @media(max-width:900px) { .guide-grid { grid-template-columns:minmax(0,1fr); } .guide-navigation { position:static; max-height:none; } .guide-navigation:not([open]) nav { display:none; } }
+    @media(max-width:460px) { .guide-container { padding:8px; } .guide-header { align-items:stretch; } .guide-toolbar { width:100%; display:grid; grid-template-columns:minmax(0,1fr) auto; } #guideSearch { width:100%; min-width:0; } .guide-panel { padding:13px 10px; } .guide-navigation { padding:8px; } .guide-article h2 { font-size:17px; } }
+  </style>
+</head>
+<body>
+  <main class="guide-container" id="top">
+    <div class="guide-header">
+      <div class="guide-brand">Grow-Guide</div>
+      <div class="guide-toolbar">
+        <input id="guideSearch" type="search" autocomplete="off" aria-label="Kapitel durchsuchen" placeholder="Kapitel durchsuchen …" />
+        <button type="button" id="guideLangToggle" title="Switch language" aria-label="Switch language">English</button>
+      </div>
+    </div>
+    <div class="guide-grid">
+      <details class="guide-navigation" id="guideNavigation" open>
+        <summary id="guideNavTitle">Kapitel</summary>
+        <nav id="guideNav" aria-label="Inhaltsverzeichnis"></nav>
+      </details>
+      <div class="guide-panel">
+        <div class="guide-note" id="guideNote">Die Angaben sind Orientierungswerte aus dem Leitfaden. Sie verändern weder die VPD-Tabelle noch ESP-Sollwerte oder Regelung.</div>
+        <p id="guideMatches" role="status" aria-live="polite"></p>
+        <article class="guide-article" id="guideDe" lang="de">__GUIDE_DE__</article>
+        <article class="guide-article" id="guideEn" lang="en">__GUIDE_EN__</article>
+        <a class="back-top" href="#top" id="guideBackTop">↑ Nach oben</a>
+      </div>
+    </div>
+  </main>
+  <script>
+    (() => {
+      'use strict';
+      const $ = id => document.getElementById(id);
+      const titles = {
+        de: { search:'Kapitel durchsuchen …', searchLabel:'Kapitel durchsuchen', nav:'Kapitel', note:'Die Angaben sind Orientierungswerte aus dem Leitfaden. Sie verändern weder die VPD-Tabelle noch ESP-Sollwerte oder Regelung.', top:'↑ Nach oben', count:n=>`${n} von 20 Kapiteln`, none:'Keine passenden Kapitel gefunden.' },
+        en: { search:'Search chapters …', searchLabel:'Search chapters', nav:'Chapters', note:'Values are guidance from this reference document. They do not change the VPD reference table, ESP setpoints or control logic.', top:'↑ Back to top', count:n=>`${n} of 20 chapters`, none:'No matching chapters found.' }
+      };
+      const input = $('guideSearch');
+      const nav = $('guideNav');
+      const navDetails = $('guideNavigation');
+      const sections = {de:Array.from($('guideDe').querySelectorAll('.guide-section')), en:Array.from($('guideEn').querySelectorAll('.guide-section'))};
+      const lang = () => document.documentElement.lang === 'en' ? 'en' : 'de';
+      const norm = x => x.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      function render(){
+        const current = lang();
+        const t = titles[current];
+        $('guideDe').hidden = current !== 'de';
+        $('guideEn').hidden = current !== 'en';
+        input.placeholder = t.search;
+        input.setAttribute('aria-label', t.searchLabel);
+        $('guideNavTitle').textContent = t.nav;
+        $('guideNote').textContent = t.note;
+        $('guideBackTop').textContent = t.top;
+        $('guideLangToggle').textContent = current === 'de' ? 'English' : 'Deutsch';
+        nav.setAttribute('aria-label', t.nav);
+        nav.replaceChildren();
+        const term = norm(input.value.trim());
+        let visible = 0;
+        sections[current].forEach(section => {
+          const keep = !term || norm(section.textContent).includes(term);
+          section.hidden = !keep;
+          if (!keep) return;
+          visible++;
+          const a = document.createElement('a');
+          a.href = `#${section.id}`;
+          a.textContent = section.querySelector('h2').textContent;
+          a.addEventListener('click', () => { if (matchMedia('(max-width:900px)').matches) navDetails.open = false; });
+          nav.append(a);
+        });
+        $('guideMatches').textContent = term ? (visible ? t.count(visible) : t.none) : '';
+      }
+      // Prevent tables from overflowing the content column on phones.
+      for (const table of document.querySelectorAll('.guide-article table')) {
+        const wrap = document.createElement('div');
+        wrap.className = 'table-scroll';
+        table.before(wrap);
+        wrap.appendChild(table);
+      }
+      const narrowScreen = matchMedia('(max-width:900px)');
+      const syncNavigationLayout = () => { navDetails.open = !narrowScreen.matches; };
+      narrowScreen.addEventListener('change', syncNavigationLayout);
+      syncNavigationLayout();
+      input.addEventListener('input', render);
+      $('guideLangToggle').addEventListener('click', () => {
+        const next = lang() === 'de' ? 'en' : 'de';
+        document.documentElement.lang = next;
+        try { localStorage.setItem('gt_lang', next); } catch {}
+        render();
+      });
+      window.addEventListener('storage', ev => {
+        if (ev.key === 'gt_lang') { document.documentElement.lang = ev.newValue === 'en' ? 'en' : 'de'; render(); }
+        if (ev.key === 'gt_theme') document.documentElement.dataset.theme = ev.newValue === 'light' ? 'light' : 'dark';
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>

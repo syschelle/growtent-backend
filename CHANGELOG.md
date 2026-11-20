@@ -1,3 +1,9 @@
+## v0.399 — Complete bilingual Grow-Guide
+
+- Replace the old summary guide with the user-supplied full 20-chapter German reference and complete English translation, preserving its values and linked references.
+- Add compact responsive navigation, chapter search and live DE/EN theme-aware viewing. Keep guide information independent of VPD control settings.
+- All other routes, controls, API fields and database structures remain unchanged.
+
 ## v0.398 — Cancel tent configuration editing
 
 - Add a bilingual Cancel button next to tent Save in the compact Setup editor.

@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.398"
+APP_VERSION = "v0.399"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9211,45 +9211,13 @@ def grow_guide_page(request: Request):
     if request.query_params.get("embed") != "1":
         return RedirectResponse(url="/app?page=grow-guide", status_code=302)
 
-    return """
-    <html>
-      <head>
-        <title>Grow-Guide</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        __FAVICON_LINKS__
-        <style>
-          :root { --bg:#0f172a; --text:#e2e8f0; --card:#1e293b; --grid:rgba(148,163,184,.15); }
-          :root[data-theme='light'] { --bg:#eef2f5; --text:#0f172a; --card:#f8fafc; --grid:rgba(51,65,85,.18); }
-          body { font-family: Arial, sans-serif; margin:0; background:var(--bg); color:var(--text); }
-          .content { padding:1rem; }
-          .card { background:var(--card); border:1px solid var(--grid); border-radius:10px; padding:12px; margin-bottom:10px; }
-          h1 { margin-top:0; }
-          h2 { margin:.2rem 0 .5rem; color:#93c5fd; }
-          h3 { margin:.3rem 0; }
-          ul { margin:.2rem 0 .7rem 1.1rem; }
-        </style>
-      </head>
-      <body>
-        <script>
-          const theme = localStorage.getItem('gt_theme') || 'dark';
-          document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
-        </script>
-        <main class="content">
-          <h1>Grow-Guide</h1>
+    guide_assets = Path(__file__).resolve().parent / "static"
+    template = (guide_assets / "grow-guide-page.html").read_text(encoding="utf-8")
+    return (template.replace("__FAVICON_LINKS__", FAVICON_LINKS)
+            .replace("__GUIDE_DE__", (guide_assets / "grow-guide-de.html").read_text(encoding="utf-8"))
+            .replace("__GUIDE_EN__", (guide_assets / "grow-guide-en.html").read_text(encoding="utf-8")))
 
-          <div class="card"><h2>1. Stecklinge / Bewurzelung</h2><h3>Ziel: Wurzeln bilden</h3><p>Temperatur: 22–25 °C<br>Luftfeuchte: 70–85 %<br>VPD: 0.4 – 0.8 kPa<br>Licht: 50–150 PPFD<br>Photoperiode: 18h</p><h3>Typisches Verhalten</h3><ul><li>Blätter hängen → normal</li><li>kaum Wachstum → normal</li><li>plötzlich stabil → Wurzeln da</li></ul></div>
-          <div class="card"><h2>2. Frühe Vegetation (nach dem Anwurzeln)</h2><h3>Ziel: Start Wachstum</h3><p>Temperatur: 22–26 °C<br>Luftfeuchte: 60–75 %<br>VPD: 0.8 – 1.0 kPa<br>Licht: 150–300 PPFD</p><h3>Wichtig</h3><ul><li>nicht übergießen</li><li>Wachstum kommt schubweise</li></ul></div>
-          <div class="card"><h2>3. Vegetationsphase</h2><h3>Ziel: Masse + Struktur</h3><p>Temperatur: 22–28 °C<br>Luftfeuchte: 55–70 %<br>VPD: 0.9 – 1.2 kPa<br>Licht: 300–600 PPFD</p><h3>Wichtig</h3><ul><li>Wasserverbrauch steigt stark</li><li>Training möglich</li></ul></div>
-          <div class="card"><h2>4. Stretch / Blütebeginn</h2><h3>Ziel: Höhenwachstum + Blütenansatz</h3><p>Temperatur: 22–27 °C<br>Luftfeuchte: 50–65 %<br>VPD: 1.0 – 1.3 kPa<br>Licht: 500–800 PPFD</p><h3>Wichtig</h3><ul><li>schnelle Veränderungen</li><li>VPD stabil halten</li></ul></div>
-          <div class="card"><h2>5. Blütephase</h2><h3>Ziel: Blütenaufbau</h3><p>Temperatur: 20–26 °C<br>Luftfeuchte: 40–55 %<br>VPD: 1.2 – 1.5 kPa<br>Licht: 600–1000 PPFD</p><h3>Wichtig</h3><ul><li>Schimmelrisiko beachten</li><li>gute Luftzirkulation</li></ul></div>
-          <div class="card"><h2>6. Späte Blüte</h2><h3>Ziel: Reife / Qualität</h3><p>Temperatur: 20–25 °C<br>Luftfeuchte: 40–50 %<br>VPD: 1.3 – 1.6 kPa<br>Licht: konstant</p></div>
-          <div class="card"><h2>Regel-Logik</h2><p>Das System steuert über VPD.</p><p>Empfohlene Zielstruktur:<br>targetVPD = 0.85–0.95<br>minVPD = target - 0.05 bis 0.08<br>Hysterese: 0.05</p><p>Beispiel in min. VPD Überwachung:<br>target = 0.90<br>min = 0.82<br>Abluft AN &lt; 0.82<br>Abluft AUS &gt; 0.90</p></div>
-          <div class="card"><h2>Wichtigste Prinzipien</h2><ul><li>VPD = Hauptsteuerung</li><li>Temperatur + RH sind nur Mittel zum Zweck</li><li>VPD ist das, was die Pflanze „fühlt“</li><li>Junge Pflanzen = weniger Stress</li><li>lieber zu feucht als zu trocken</li><li>lieber zu wenig Licht als zu viel</li><li>Wurzelphase = unsichtbar</li><li>oberirdisch passiert wenig, unten passiert alles</li></ul></div>
-          <div class="card"><h2>Typische Fehler</h2><ul><li>zu früh zu viel Licht</li><li>zu trockene Luft (VPD > 1.1 bei Stecklingen)</li><li>zu häufig gießen</li><li>zu aggressives Regeln</li></ul></div>
-        </main>
-      </body>
-    </html>
-    """.replace("__FAVICON_LINKS__", FAVICON_LINKS)
+
 @app.get("/grow-profile", response_class=HTMLResponse)
 def grow_profile_page(request: Request):
     token = request.cookies.get("caop_session")

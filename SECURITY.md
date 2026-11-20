@@ -1,4 +1,4 @@
-# Security — v0.398
+# Security — v0.399
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -177,3 +177,8 @@ CSS layout and existing semantic section wrappers only. No authentication, HMAC,
 ## v0.398 cancel tentative tent edits
 
 Cancel performs local form reset only, including passwords, HMAC secret text and the HMAC secret removal flag. It issues no network request, cannot disable HMAC on the backend and does not change stored configuration. Existing permissions and secured write APIs remain unchanged.
+
+
+## v0.399 read-only bilingual Grow-Guide
+
+The guide does not issue controller requests, ESP commands or backend writes. The original German Markdown and corresponding English source are pre-rendered to escaped, static HTML during development; no runtime Markdown engine or third-party script is loaded. External reference links use `rel="noopener noreferrer"`. Language and theme use existing local preferences only. The VPD values in the guide are documentation and cannot modify controller targets or historical data.
