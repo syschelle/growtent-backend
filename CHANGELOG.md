@@ -1,3 +1,9 @@
+## v0.398 — Cancel tent configuration editing
+
+- Add a bilingual Cancel button next to tent Save in the compact Setup editor.
+- Cancel locally discards unsaved changes, securely clears entered credentials and pending HMAC removal, closes the form and returns to Add tent mode without sending requests.
+- Maintain existing tent save and irrigation functions. Chromium tests cover cancel/reopen, API write isolation and language switching.
+
 ## v0.397 — Denser multi-column Setup overview
 
 - Pack Appearance, Charts and Backup into one desktop column; Access, Guests and Admins into a second; Pushover and Air Sensor into a third. Tents remain full width below the compact overview.

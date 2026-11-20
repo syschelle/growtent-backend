@@ -1,4 +1,4 @@
-# Testing — v0.397
+# Testing — v0.398
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -202,3 +202,7 @@ Local v0.396 checks: 287 Python tests passed with PostgreSQL integration test mo
 The Chromium Setup regression now asserts that Appearance/Access/Alerts occupy separate desktop columns at widths 1024–1920, that Backup sits underneath Appearance, tablet arrangement uses two columns, phones use one, and Tents remain below all overview columns. DE/EN and dark/light permutations continue to check overflow and remain read-only against mocked APIs. Original editing, irrigation plan modal and PUT payload checks are retained. Full backend and Docker live checks are not claimed until executed.
 
 Local v0.397 checks: 287 Python tests passed (isolated PostgreSQL integration module excluded), all five JavaScript `.mjs` suites passed, Chromium Setup and existing plant popover browser checks passed; source version/release-notes validation passed. Live PostgreSQL, controller integration, Docker build and deployment have not been verified.
+
+## v0.398 cancel tent editing
+
+The Chromium Setup regression checks that Cancel/Abbrechen is translated, discards an unsaved edit (including URL, sensor IP, password, HMAC secret/clear flag, thresholds and toggles), closes the editor and restores Add tent mode without issuing any write request. Reopening the same tent loads the saved server mock, while the existing PUT/POST behavior and irrigation-plan controls remain available. It also checks canceling a new draft. Full backend tests, Docker build and real controller integration must be checked separately.

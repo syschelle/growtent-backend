@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.397"
+APP_VERSION = "v0.398"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6295,7 +6295,10 @@ def setup_page(request: Request):
           .tent-security-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
           .tent-pot-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
           .tent-pot-grid input, .tent-pot-grid select { width:100%; min-width:0 !important; margin:0 !important; }
-          #addTentBtn { margin-top:10px !important; }
+          .tent-editor-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; }
+          #addTentBtn { margin-top:0 !important; }
+          #cancelTentBtn { background:transparent; color:var(--text); border:1px solid var(--grid); box-shadow:none; }
+          #cancelTentBtn:hover, #cancelTentBtn:focus-visible { border-color:var(--link); }
           @media (max-width:1040px) {
             .setup-access-grid { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); }
             .setup-status-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
@@ -6598,7 +6601,10 @@ def setup_page(request: Request):
               </div>
                 </div>
                 </div>
-              <button id=\"addTentBtn\" style=\"margin-top:8px;\">Add tent</button>
+              <div class=\"tent-editor-actions\">
+                <button type=\"button\" id=\"addTentBtn\">Add tent</button>
+                <button type=\"button\" id=\"cancelTentBtn\">Cancel</button>
+              </div>
               <div id=\"tentMsg\" style=\"margin-top:10px;\"></div>
               </details>
             </div>
@@ -6802,6 +6808,7 @@ def setup_page(request: Request):
               noStrain: 'No strain',
               editTent: 'Edit',
               saveTent: 'Save tent',
+              cancelTent: 'Cancel',
               addTent: 'Add tent',
               deleteTent: 'Delete',
               growlightPowerAlertConfig: 'Growlight power warning',
@@ -6920,6 +6927,7 @@ def setup_page(request: Request):
               noStrain: 'Keine Sorte',
               editTent: 'Bearbeiten',
               saveTent: 'Zelt speichern',
+              cancelTent: 'Abbrechen',
               addTent: 'Zelt hinzufügen',
               deleteTent: 'Löschen',
               growlightPowerAlertConfig: 'Growlight-Leistungswarnung',
@@ -6980,6 +6988,9 @@ def setup_page(request: Request):
             set('jumpBackup', tSetup('rubricBackup'));
             set('jumpDevices', tSetup('rubricDevices'));
             set('tentEditorTitle', tSetup('tentEditorTitle'));
+            set('cancelTentBtn', tSetup('cancelTent'));
+            const tentSaveButton = document.getElementById('addTentBtn');
+            if (tentSaveButton) tentSaveButton.textContent = tSetup(tentSaveButton.hasAttribute('data-edit-id') ? 'saveTent' : 'addTent');
             set('appearanceTitle', tSetup('appearance'));
             applyChartRangesI18n();
             set('labelTheme', tSetup('theme'));
@@ -7352,6 +7363,32 @@ def setup_page(request: Request):
           document.getElementById('irPlanCancelBtn')?.addEventListener('click', closeIrrigationPlanModal);
           document.getElementById('irPlanSaveBtn')?.addEventListener('click', saveIrrigationPlan);
 
+          function resetTentEditor({close = false, clearMessage = true} = {}) {
+            // Only clear local form state: no backend request, and no modification of saved tents.
+            for (const id of ['tentName', 'tentUrl', 'tentRtsp', 'tentMainUser', 'tentMainPass',
+                              'tentBackendControllerUrl', 'tentBackendHmacSecret']) {
+              const field = document.getElementById(id);
+              if (field) field.value = '';
+            }
+            for (const id of ['tentGrowlightPowerAlertEnabled', 'tentBackendWriteEnabled', 'tentBackendHmacSecretClear']) {
+              const field = document.getElementById(id);
+              if (field) field.checked = false;
+            }
+            document.getElementById('tentGrowlightPowerDropW').value = '20';
+            document.getElementById('tentMainPass').placeholder = 'Optional Shelly password';
+            document.getElementById('tentBackendHmacSecret').placeholder = '64-char lowercase HMAC secret';
+            clearPotStrainForm();
+            clearSoilSensorForm();
+            const save = document.getElementById('addTentBtn');
+            save.removeAttribute('data-edit-id');
+            save.textContent = tSetup('addTent');
+            if (clearMessage) document.getElementById('tentMsg').textContent = '';
+            const editor = document.getElementById('tentEditor');
+            if (editor && close) editor.open = false;
+          }
+
+          document.getElementById('cancelTentBtn')?.addEventListener('click', () => resetTentEditor({close:true}));
+
           async function loadTents(){
             const list = document.getElementById('tentList');
             if (!list) return;
@@ -7413,6 +7450,7 @@ def setup_page(request: Request):
                   document.getElementById('tentBackendHmacSecretClear').checked = false;
                   fillPotStrainSelects(tent.pot_strains || {});
                   fillSoilSensorInputs(tent.soil_sensors || []);
+                  document.getElementById('tentMsg').textContent = '';
                   document.getElementById('addTentBtn').setAttribute('data-edit-id', String(id));
                   document.getElementById('addTentBtn').textContent = tSetup('saveTent');
                   const editor = document.getElementById('tentEditor');
@@ -8318,21 +8356,7 @@ def setup_page(request: Request):
               }
 
               tentMsg.textContent = effectiveEditId > 0 ? 'Tent updated.' : 'Tent added.';
-              document.getElementById('tentName').value = '';
-              document.getElementById('tentUrl').value = '';
-              document.getElementById('tentRtsp').value = '';
-              document.getElementById('tentMainUser').value = '';
-              document.getElementById('tentMainPass').value = '';
-              document.getElementById('tentGrowlightPowerAlertEnabled').checked = false;
-              document.getElementById('tentGrowlightPowerDropW').value = '20';
-              document.getElementById('tentBackendWriteEnabled').checked = false;
-              document.getElementById('tentBackendControllerUrl').value = '';
-              document.getElementById('tentBackendHmacSecret').value = '';
-              document.getElementById('tentBackendHmacSecretClear').checked = false;
-              clearPotStrainForm();
-              clearSoilSensorForm();
-              btn.removeAttribute('data-edit-id');
-              btn.textContent = tSetup('addTent');
+              resetTentEditor({clearMessage:false});
               await loadTents();
             } catch (e) {
               tentMsg.textContent = effectiveEditId > 0 ? 'Update failed.' : 'Add failed.';

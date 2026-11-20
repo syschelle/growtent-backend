@@ -1,4 +1,4 @@
-# Security — v0.397
+# Security — v0.398
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -173,3 +173,7 @@ Only HTML grouping, presentation CSS, localization and opening the existing edit
 ## v0.397 compact Setup grid
 
 CSS layout and existing semantic section wrappers only. No authentication, HMAC, backend API, backup, permissions, credential transport or ESP control paths change. All fields retain their identifiers and existing role checks.
+
+## v0.398 cancel tentative tent edits
+
+Cancel performs local form reset only, including passwords, HMAC secret text and the HMAC secret removal flag. It issues no network request, cannot disable HMAC on the backend and does not change stored configuration. Existing permissions and secured write APIs remain unchanged.

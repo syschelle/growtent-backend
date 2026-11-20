@@ -1,3 +1,8 @@
+## v0.398 — Cancel tent editor
+
+- Add localized Cancel/Abbrechen control in Setup tent editor; discard unsaved form values, clear secrets and reset edit context with no API calls.
+- Reuse the same reset routine on successful save while keeping existing POST/PUT and response handling.
+
 ## v0.397 — Denser multi-column Setup overview
 
 - Reflow existing Setup sections into space-efficient independent desktop columns and responsive tablet/mobile layouts without changing data or behavior.

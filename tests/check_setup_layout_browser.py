@@ -87,14 +87,55 @@ def check(browser, screenshot_dir=None):
     expanded=page.evaluate("() => ({width:document.documentElement.scrollWidth, inputs:[...document.querySelectorAll('#tentEditor input, #tentEditor select')].map(el=>el.getBoundingClientRect().right)})")
     assert expanded['width']<=322, expanded
     assert all(r<=322 for r in expanded['inputs']), expanded
+    actions=page.locator('.tent-editor-actions').evaluate('el=>[...el.querySelectorAll("button")].map(btn=>{const r=btn.getBoundingClientRect();return [r.left,r.right]})')
+    assert all(left>=0 and right<=322 for left,right in actions), actions
     page.locator('#tentEditor').evaluate('(el)=>el.open=false')
     # Verify editing selects the right tent and reveals the pre-existing fields.
     page.set_viewport_size({'width':1440,'height':900})
+    page.locator('#langSelect').select_option('de')
     page.locator('[data-edit-tent="1"]').click()
     assert page.locator('#tentEditor').evaluate('(el)=>el.open')
     assert page.locator('#tentName').input_value() == 'GrowTent'
     assert page.locator('#tentBackendControllerUrl').input_value() == 'http://192.168.1.58:8080'
     assert page.locator('#addTentBtn').get_attribute('data-edit-id') == '1'
+    # Cancel edited tent: reset all unsaved fields, including credentials and the
+    # HMAC clear flag, without sending any write request or altering the tent list.
+    page.locator('#tentName').fill('UNSAVED')
+    page.locator('#tentMainPass').fill('new-password')
+    page.locator('#tentBackendHmacSecret').fill('a'*64)
+    page.locator('#tentBackendHmacSecretClear').check()
+    page.locator('#tentGrowlightPowerAlertEnabled').uncheck()
+    page.locator('#tentGrowlightPowerDropW').fill('55')
+    page.locator('#tentSoilSensor1').fill('10.0.0.99')
+    writes_before=page.evaluate('window.__writes.length')
+    assert page.locator('#cancelTentBtn').inner_text()=='Abbrechen'
+    page.locator('#cancelTentBtn').click()
+    assert not page.locator('#tentEditor').evaluate('(el)=>el.open')
+    assert page.evaluate('window.__writes.length')==writes_before
+    assert page.locator('#addTentBtn').get_attribute('data-edit-id') is None
+    assert page.locator('#addTentBtn').text_content()=='Zelt hinzufügen'
+    assert page.locator('#tentName').input_value()==''
+    assert page.locator('#tentUrl').input_value()==''
+    assert page.locator('#tentMainPass').input_value()==''
+    assert page.locator('#tentBackendHmacSecret').input_value()==''
+    assert not page.locator('#tentBackendHmacSecretClear').is_checked()
+    assert page.locator('#tentGrowlightPowerDropW').input_value()=='20'
+    assert page.locator('#tentSoilSensor1').input_value()==''
+    assert page.locator('.setup-tent-item').count()==3
+    assert 'GrowTent' in page.locator('.setup-tent-item').first.inner_text()
+    # Reopening editing must load the persisted values, not the cancelled draft.
+    page.locator('[data-edit-tent="1"]').click()
+    assert page.locator('#tentName').input_value()=='GrowTent'
+    assert page.locator('#tentGrowlightPowerAlertEnabled').is_checked()
+    assert page.locator('#tentGrowlightPowerDropW').input_value()=='20'
+    assert page.locator('#tentSoilSensor1').input_value()=='192.168.1.81'
+    # Cancel is also translated on a language change during editing.
+    page.locator('#langSelect').select_option('en')
+    assert page.locator('#cancelTentBtn').inner_text()=='Cancel'
+    assert page.locator('#addTentBtn').inner_text()=='Save tent'
+    page.locator('#langSelect').select_option('de')
+    assert page.locator('#cancelTentBtn').inner_text()=='Abbrechen'
+    assert page.locator('#addTentBtn').inner_text()=='Zelt speichern'
     # Save flow still uses PUT with expected field names; calls are mocked and never leave browser.
     page.locator('#tentName').fill('GrowTent test')
     page.locator('#addTentBtn').click()
@@ -103,6 +144,15 @@ def check(browser, screenshot_dir=None):
     assert found, page.evaluate('window.__writes')
     import json
     body=json.loads(found[-1]['body']); assert body['name']=='GrowTent test' and 'backend_write_enabled' in body and 'soil_sensors' in body
+    assert page.locator('#addTentBtn').get_attribute('data-edit-id') is None
+    # Cancel an unsaved new tent too, without accidental POST/PUT.
+    page.locator('#tentName').fill('Draft tent')
+    page.locator('#tentUrl').fill('http://draft/api/state')
+    writes_before=page.evaluate('window.__writes.length')
+    page.locator('#cancelTentBtn').click()
+    assert page.evaluate('window.__writes.length')==writes_before
+    assert page.locator('#tentName').input_value()==''
+    assert not page.locator('#tentEditor').evaluate('(el)=>el.open')
     # Plan modal must be reachable from same compact card.
     page.locator('[data-plan-tent="1"]').click()
     assert page.locator('#irPlanModal').is_visible()
@@ -118,4 +168,4 @@ if __name__=='__main__':
         b=pw.chromium.launch(headless=True,executable_path=args.browser,args=['--no-sandbox'])
         try: check(b,args.screenshot_dir)
         finally: b.close()
-    print('Setup layout browser checks passed: DE/EN, light/dark, desktop/mobile, editing, watering modal, save mock.')
+    print('Setup layout browser checks passed: DE/EN, light/dark, desktop/mobile, editing, cancel without writes, watering modal, save mock.')
