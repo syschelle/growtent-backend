@@ -34,7 +34,7 @@ Alle Klima- und VPD-Werte sind **Orientierungsbereiche**. Genetik, Pflanzenzusta
 | Blüteeinleitung | Umstellung auf 12/12 | Automatisch |
 | Blütebeleuchtung | 12/12 | Meist weiter 18/6 |
 | Gesamtdauer | Häufig 12–20+ Wochen | Häufig 9–13 Wochen |
-| Stecklingsvermehrung | Gut geeignet | Für vollständige Growzyklen wenig sinnvoll |
+| Stecklingsvermehrung | Gut geeignet | Nicht sinnvoll: Stecklinge behalten das Alter der Mutterpflanze. |
 
 Die Zeitangaben dienen nur der Planung. Die tatsächliche Entwicklung der Pflanze ist entscheidend.
 

@@ -1,4 +1,4 @@
-# Testing — v0.399
+# Testing — v0.400
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -213,3 +213,7 @@ The Chromium Setup regression checks that Cancel/Abbrechen is translated, discar
 `python -m pytest -q tests/test_grow_guide_content.py` validates 20 chapters per language, required table and source links, local guide assets, the unchanged route, read-only behavior and existing language/theme storage keys.
 
 `python tests/check_grow_guide_browser.py --browser /usr/bin/chromium` checks the actual static guide page with isolated browser fixtures in German and English, light/dark themes, 1440/768/390/320px widths, table scroll without page overflow, visible heading counts, language switching, chapter filtering, and collapsible navigation. It is added to the browser CI workflow. The browser makes no controller requests. The original German source was retained verbatim, with all 20 sections translated for English. Live Docker deployment remains unverified until executed.
+
+## v0.400 autoflower note
+
+Verify that the German and English Markdown sources and their pre-rendered HTML both show the concise age-based autoflower cutting note; keep all 20 chapters and ensure no controller/UI logic changes. Verify the current-only release notes tag.

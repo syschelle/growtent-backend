@@ -1,3 +1,8 @@
+## v0.400 — Clarify autoflower cuttings in GrowGuide
+
+- Shorten and clarify the DE/EN autoflower propagation note: cuttings retain the mother plant's biological age, making cloning impractical for a full cycle.
+- Reference text only; no changes to configuration, crop phase, VPD references, or control logic.
+
 ## v0.399 — Complete bilingual Grow-Guide
 
 - Replace the old summary guide with the user-supplied full 20-chapter German reference and complete English translation, preserving its values and linked references.

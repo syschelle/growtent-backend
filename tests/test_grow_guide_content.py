@@ -31,3 +31,15 @@ def test_template_retains_framework_without_any_esp_writes():
     assert 'guideLangToggle' in html and 'guideSearch' in html
     assert 'fetch(' not in html and 'POST' not in html and 'PATCH' not in html
     assert 'Die Angaben sind Orientierungswerte' in html
+
+
+def test_autoflower_cuttings_age_note_is_localized_and_rendered():
+    phrases = {
+        'de': 'Nicht sinnvoll: Stecklinge behalten das Alter der Mutterpflanze.',
+        'en': 'Not practical: cuttings retain the mother plant’s age.',
+    }
+    for lang, phrase in phrases.items():
+        source = (ROOT / 'docs' / f'grow-guide-{lang}.md').read_text(encoding='utf-8')
+        rendered = (STATIC / f'grow-guide-{lang}.html').read_text(encoding='utf-8')
+        assert phrase in source
+        assert phrase in rendered

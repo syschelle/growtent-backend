@@ -34,7 +34,7 @@ All climate and VPD values are **guidance ranges**. Genetics, plant condition, l
 | Flowering initiation | Switch to 12/12 | Automatic |
 | Flowering lighting | 12/12 | Usually remains 18/6 |
 | Total duration | Often 12–20+ weeks | Often 9–13 weeks |
-| Propagation from cuttings | Well suited | Of little use for full grow cycles |
+| Propagation from cuttings | Well suited | Not practical: cuttings retain the mother plant’s age. |
 
 These time frames are only for planning. Actual plant development is what matters.
 
