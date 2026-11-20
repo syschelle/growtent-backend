@@ -1,3 +1,15 @@
+## v0.397 — Denser multi-column Setup overview
+
+- Pack Appearance, Charts and Backup into one desktop column; Access, Guests and Admins into a second; Pushover and Air Sensor into a third. Tents remain full width below the compact overview.
+- Tablet layout uses two columns and mobile one; keep original controls, handlers, German/English strings, light/dark themes and API payloads intact.
+- Extend Chromium tests to enforce responsive grid placement and lack of horizontal overflow.
+
+## v0.396 — Compact, structured Setup
+
+- Reorganize Setup into independent responsive sections with quick links (Appearance, Access & Users, Status Notifications, Backup, and Tents), reducing large whitespace caused by the old four-column grid.
+- Use compact tent cards with existing Edit, Irrigation Plan and Delete actions; expand extended tent information only when requested. Keep the full Add/Edit form collapsed initially and open it automatically when editing; group existing fields without renaming selectors or changing payloads.
+- Preserve i18n DE/EN, dark/light themes, authentication and HMAC permissions, backup, alerts, controller settings and irrigation plan modal. No database or ESP changes.
+
 ## v0.395 — Historical grow phase in analysis export
 
 - Add historical `grow_phase` metadata to the export and each homogeneous time bucket: language-independent phase, week and early/late stage, German/English labels, and the VPD table reference range in kPa.

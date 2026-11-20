@@ -1,3 +1,14 @@
+## v0.397 — Denser multi-column Setup overview
+
+- Reflow existing Setup sections into space-efficient independent desktop columns and responsive tablet/mobile layouts without changing data or behavior.
+- Preserve all existing field IDs, functions, routes and save/confirm actions. Browser geometry checks added.
+
+## v0.396 — Compact, structured Setup
+
+- Reorganize Setup into independent responsive sections with quick links (Appearance, Access & Users, Status Notifications, Backup, and Tents), reducing large whitespace caused by the old four-column grid.
+- Use compact tent cards with existing Edit, Irrigation Plan and Delete actions; expand extended tent information only when requested. Keep the full Add/Edit form collapsed initially and open it automatically when editing; group existing fields without renaming selectors or changing payloads.
+- Preserve i18n DE/EN, dark/light themes, authentication and HMAC permissions, backup, alerts, controller settings and irrigation plan modal. No database or ESP changes.
+
 ## v0.395 — Historical grow phase in analysis export
 
 - Add historical `grow_phase` metadata to the export and each homogeneous time bucket: language-independent phase, week and early/late stage, German/English labels, and the VPD table reference range in kPa.

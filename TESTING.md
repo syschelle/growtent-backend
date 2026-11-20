@@ -1,4 +1,4 @@
-# Testing — v0.395
+# Testing — v0.397
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -190,3 +190,15 @@ The historical exhaust tests verify canonical and legacy field names, canonical 
 ## v0.395 historical grow phase in analysis export
 
 The new tests compare the Python phase metadata with the production JavaScript `phaseRange` across phase/week boundaries and missing/invalid inputs, check both localized labels, mixed and empty windows, drying, latest observation timestamps and size-adapted counts. The 44 targeted analysis-export cases passed. Local regression: 287 Python tests passed (`PYTHONPATH=api python -m pytest -q --ignore=tests/test_irrigation_postgres.py`, two existing FastAPI deprecation warnings), all five Node.js `.mjs` suites passed, compilation and versioned release-note validation passed. PostgreSQL integration, browser tests, Docker build and live deployment were not run. No ESP commands were issued.
+
+## v0.396 compact Setup UI
+
+`python tests/check_setup_layout_browser.py --browser /usr/bin/chromium` renders the real Setup template in Chromium with synthetic HTTP/localStorage fixtures and no external requests. It validates the five sections and tent cards in DE/EN, light/dark themes and viewport widths from 320 to 1920 px, checks for horizontal overflow, verifies Edit opens the original form with the correct loaded values, checks unchanged PUT request fields, and checks that the irrigation modal remains accessible. `--screenshot-dir <path>` generates visual previews. The check is also included in the browser CI job. Existing Python and JavaScript regression tests continue to run; a live PostgreSQL, Docker and controller test is still required before production deployment.
+
+Local v0.396 checks: 287 Python tests passed with PostgreSQL integration test module excluded (no isolated database in this environment); the five JavaScript suites passed. The compact Setup and existing plant popover browser checks passed using Chromium. The browser Setup test additionally verifies the expanded editor at 320 px and an unchanged mocked tent PUT payload. Source version/release-notes verification passed. Docker build, live controller operations and real PostgreSQL integration remain unverified.
+
+## v0.397 responsive Setup columns
+
+The Chromium Setup regression now asserts that Appearance/Access/Alerts occupy separate desktop columns at widths 1024–1920, that Backup sits underneath Appearance, tablet arrangement uses two columns, phones use one, and Tents remain below all overview columns. DE/EN and dark/light permutations continue to check overflow and remain read-only against mocked APIs. Original editing, irrigation plan modal and PUT payload checks are retained. Full backend and Docker live checks are not claimed until executed.
+
+Local v0.397 checks: 287 Python tests passed (isolated PostgreSQL integration module excluded), all five JavaScript `.mjs` suites passed, Chromium Setup and existing plant popover browser checks passed; source version/release-notes validation passed. Live PostgreSQL, controller integration, Docker build and deployment have not been verified.

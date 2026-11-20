@@ -51,7 +51,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.395"
+APP_VERSION = "v0.397"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -6225,29 +6225,94 @@ def setup_page(request: Request):
           body.embed .content { padding:.8rem; }
           .navlink { display:block; padding:8px 10px; margin-bottom:8px; border-radius:8px; color:var(--text); text-decoration:none; }
           .navlink.active { background:rgba(59,130,246,.2); }
-          .card { background:var(--card); border-radius:12px; padding:14px; max-width:540px; border:1px solid var(--grid); box-shadow:0 8px 24px rgba(2,6,23,.12); }
-          .setup-content { display:grid; grid-template-columns:repeat(4, minmax(240px, 1fr)); gap:12px; align-items:start; }
-          .setup-content > h1 { grid-column:1 / -1; margin:0 0 2px 0; }
-          .section-title { margin:8px 0 2px 0; font-size:.92rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
-          .setup-content .card { max-width:none !important; margin-bottom:0 !important; min-width:0; overflow-wrap:anywhere; }
-          .setup-content input,.setup-content select { max-width:100%; box-sizing:border-box; }
-          #rubricAppearance { grid-column:1; grid-row:2; }
-          #rubricAccess { grid-column:2; grid-row:2; }
-          #rubricStatus { grid-column:3; grid-row:2; }
-          #rubricBackup { grid-column:4; grid-row:2; }
-          #appearanceCard { grid-column:1; grid-row:3; }
-          #chartRangesCard { grid-column:1; grid-row:4 / span 2; }
-          .chart-range-field { display:flex; flex-direction:column; gap:5px; margin:10px 0; min-width:0; }
-          .chart-range-field input { box-sizing:border-box; width:100%; max-width:160px; padding:7px 9px; border:1px solid var(--grid); border-radius:8px; background:var(--bg); color:var(--text); }
-          #chartRangesHint { color:var(--muted); font-size:.85rem; line-height:1.4; }
-          #accessCard { grid-column:2; grid-row:3; }
-          #adminsCard { grid-column:2; grid-row:4; }
-          #guestUsersCard { grid-column:2; grid-row:5; }
-          #pushoverCard { grid-column:3; grid-row:3; }
-          #airSensorCard { grid-column:3; grid-row:4; }
-          #backupCard { grid-column:4; grid-row:3; }
-          #rubricDevices { grid-column:1 / -1; grid-row:6; }
-          #setupTentsCard { grid-column:1 / -1; grid-row:7; }
+          .card { background:var(--card); border-radius:11px; padding:12px 14px; border:1px solid var(--grid); box-shadow:0 3px 12px rgba(2,6,23,.09); min-width:0; }
+          .setup-content { display:flex; flex-direction:column; gap:11px; max-width:1720px; margin:0 auto; }
+          .setup-overview-columns { display:grid; grid-template-columns:minmax(255px,.92fr) minmax(300px,1.13fr) minmax(300px,1.12fr); gap:12px; align-items:start; }
+          .setup-column { display:flex; flex-direction:column; gap:12px; min-width:0; }
+          .setup-column .setup-group { min-width:0; }
+          .setup-column .setup-group-grid { display:flex; flex-direction:column; gap:9px; }
+          .setup-column .setup-group-grid > *, .setup-column .setup-side-stack { width:100%; min-width:0; }
+          .setup-column .setup-side-stack { display:flex; flex-direction:column; gap:9px; }
+          .setup-column .card { box-sizing:border-box; }
+          #pushoverCard input:not([type='checkbox']) { max-width:100%; }
+          #backupCard input[type='file'] { max-width:100%; min-width:0; }
+          @media (max-width:980px) {
+            .setup-overview-columns { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .setup-overview-columns > .setup-column:last-child { grid-column:1/-1; }
+            .setup-column:last-child .setup-status-grid { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr); align-items:start; }
+          }
+          @media (max-width:700px) {
+            .setup-overview-columns { grid-template-columns:minmax(0,1fr); }
+            .setup-overview-columns > .setup-column:last-child { grid-column:auto; }
+            .setup-column:last-child .setup-status-grid { display:flex; flex-direction:column; }
+          }
+          .setup-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:9px 16px; }
+          .setup-header h1 { margin:0; font-size:1.5rem; }
+          .setup-jump-links { display:flex; flex-wrap:wrap; gap:6px; }
+          .setup-jump-links a { display:inline-flex; align-items:center; padding:6px 10px; font-size:.82rem; text-decoration:none; border:1px solid var(--grid); border-radius:9px; color:var(--text); background:var(--card); }
+          .setup-jump-links a:hover, .setup-jump-links a:focus-visible { border-color:var(--link); }
+          .setup-group { min-width:0; scroll-margin-top:20px; }
+          .section-title { margin:0 0 7px 0; font-size:.85rem; letter-spacing:.035em; font-weight:700; text-transform:uppercase; color:var(--muted); }
+          .setup-group-grid { display:grid; align-items:start; gap:10px; min-width:0; }
+          .setup-display-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+          .setup-access-grid { grid-template-columns:minmax(290px,.9fr) minmax(350px,1.45fr); }
+          .setup-status-grid { grid-template-columns:minmax(340px,1.45fr) minmax(260px,1fr); }
+          .setup-side-stack { display:grid; gap:10px; min-width:0; }
+          .setup-group .card { max-width:none !important; margin:0 !important; overflow-wrap:anywhere; }
+          .setup-group .card > div:first-child:has(> strong) { margin-bottom:7px !important; }
+          .setup-group .card input:not([type='checkbox']):not([type='file']), .setup-group .card select { max-width:100%; box-sizing:border-box; }
+          .setup-group .card input[type='checkbox'] { flex:0 0 auto; }
+          .chart-range-field { display:grid; grid-template-columns:minmax(0,1fr) minmax(86px,110px); align-items:center; gap:8px; margin:6px 0; min-width:0; }
+          .chart-range-field input { box-sizing:border-box; width:100%; padding:6px 8px; border:1px solid var(--grid); border-radius:7px; background:var(--bg); color:var(--text); }
+          #chartRangesHint, #growlightPowerAlertHint, #backendWriteHint { color:var(--muted); font-size:.8rem; line-height:1.35; }
+          #chartRangesHint { margin:8px 0; }
+          .setup-content button { padding:6px 10px; border-radius:8px; font-size:.82rem; }
+          #appearanceCard { display:grid; grid-template-columns:minmax(110px,155px) minmax(0,1fr); align-items:center; gap:7px 12px; }
+          #appearanceCard > div:first-child, #appearanceCard > div:has(> #saveBtn), #appearanceCard > #msg { grid-column:1/-1; }
+          #appearanceCard select { margin:0 !important; width:min(100%,185px); min-width:100px; }
+          #appearanceCard #labelTheme, #appearanceCard #labelLanguage, #appearanceCard #labelTempUnit { margin:0 !important; }
+          #appearanceCard #saveBtn { margin-top:4px; }
+          #pushoverCard input:not([type='checkbox']) { width:min(100%,320px) !important; margin-bottom:7px !important; }
+          .setup-tent-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr)); gap:10px; }
+          .setup-tent-item { border:1px solid var(--grid); border-radius:9px; padding:10px; min-width:0; background:rgba(148,163,184,.045); }
+          .setup-tent-heading { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:.94rem; }
+          .setup-tent-id { font-size:.72rem; font-weight:700; padding:3px 6px; border-radius:6px; color:var(--muted); background:rgba(148,163,184,.13); }
+          .setup-tent-source { font-size:.8rem; line-height:1.35; color:var(--muted); overflow-wrap:anywhere; }
+          .setup-tent-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+          .setup-tent-actions button { margin:0 !important; }
+          .setup-tent-details { margin-top:8px; border-top:1px solid var(--grid); padding-top:8px; font-size:.79rem; }
+          .setup-tent-details > summary, #tentEditor > summary { cursor:pointer; color:var(--link); font-weight:700; }
+          .setup-tent-details > div { margin:4px 0; overflow-wrap:anywhere; }
+          #tentEditor { margin-top:11px; padding:12px; border:1px solid var(--grid); border-radius:10px; background:rgba(148,163,184,.045); }
+          #tentEditor > summary { font-size:.94rem; }
+          #tentEditor[open] > summary { margin-bottom:10px; }
+          .tent-basic-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+          .tent-basic-fields input, .tent-security-fields input { margin:0 !important; width:100% !important; min-width:0 !important; }
+          .tent-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:10px; }
+          .tent-config-panel { min-width:0; border:1px solid var(--grid); border-radius:9px; padding:10px; }
+          .tent-config-panel-title { display:block; margin:0 0 8px !important; font-size:.85rem; font-weight:700; }
+          .tent-config-panel .muted { font-size:.77rem; }
+          .tent-security-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+          .tent-pot-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+          .tent-pot-grid input, .tent-pot-grid select { width:100%; min-width:0 !important; margin:0 !important; }
+          #addTentBtn { margin-top:10px !important; }
+          @media (max-width:1040px) {
+            .setup-access-grid { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); }
+            .setup-status-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+          }
+          @media (max-width:750px) {
+            body.embed .content { padding:10px; }
+            .setup-display-grid, .setup-access-grid, .setup-status-grid, .tent-form-grid { grid-template-columns:minmax(0,1fr); }
+            .setup-header { align-items:flex-start; }
+            .setup-jump-links { gap:5px; }
+            .setup-jump-links a { padding:5px 7px; font-size:.77rem; }
+          }
+          @media (max-width:460px) {
+            .card { padding:10px; }
+            .tent-basic-fields, .tent-security-fields, .tent-pot-grid { grid-template-columns:minmax(0,1fr); }
+            .chart-range-field { grid-template-columns:minmax(0,1fr) 88px; }
+            #appearanceCard #labelTheme, #appearanceCard #labelLanguage, #appearanceCard #labelTempUnit { min-width:115px; }
+          }
           .admin-overview { border:1px solid var(--grid); border-radius:10px; padding:9px 10px; background:rgba(34,197,94,.06); }
           .admin-overview-title { font-weight:700; margin-bottom:5px; }
           .admin-overview-row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
@@ -6262,11 +6327,6 @@ def setup_page(request: Request):
           .admin-2fa-panel:empty { display:none; }
           .admin-2fa-panel { margin-top:10px; padding-top:10px; border-top:1px solid var(--grid); }
           @media (max-width: 560px) { .admin-fields { grid-template-columns:1fr; } }
-          @media (max-width: 1200px) {
-            .setup-content { grid-template-columns:repeat(2, minmax(280px, 1fr)); }
-            .section-title, #rubricAppearance, #rubricAccess, #rubricStatus, #rubricBackup, #chartRangesCard, #appearanceCard, #accessCard, #adminsCard, #pushoverCard, #airSensorCard, #backupCard, #setupTentsCard, #guestUsersCard, #rubricDevices { grid-column:auto; grid-row:auto; }
-          }
-          @media (max-width: 780px) { .setup-content { grid-template-columns:minmax(0,1fr); } }
           .input-missing { border:1px solid #ef4444 !important; box-shadow:0 0 0 2px rgba(239,68,68,.18); }
           select, button { padding:8px 10px; border-radius:10px; }
           button {
@@ -6293,8 +6353,21 @@ def setup_page(request: Request):
             <!-- sidebar image removed -->
           </aside>
           <main class=\"content setup-content\">
-            <h1 id=\"setupTitle\">Setup</h1>
-            <div id=\"rubricAppearance\" class=\"section-title\">Appearance</div>
+            <div class=\"setup-header\">
+              <h1 id=\"setupTitle\">Setup</h1>
+              <nav class=\"setup-jump-links\" aria-label=\"Setup sections\">
+                <a id=\"jumpAppearance\" href=\"#setupGroupDisplay\">Appearance</a>
+                <a id=\"jumpAccess\" href=\"#setupGroupAccess\">Access</a>
+                <a id=\"jumpStatus\" href=\"#setupGroupStatus\">Alerts</a>
+                <a id=\"jumpBackup\" href=\"#setupGroupBackup\">Backup</a>
+                <a id=\"jumpDevices\" href=\"#setupGroupDevices\">Tents</a>
+              </nav>
+            </div>
+            <div class=\"setup-overview-columns\">
+              <div class=\"setup-column\">
+            <section id=\"setupGroupDisplay\" class=\"setup-group\">
+              <div id=\"rubricAppearance\" class=\"section-title\">Appearance</div>
+              <div class=\"setup-group-grid setup-display-grid\">
             <div class=\"card\" id=\"appearanceCard\" style=\"margin-bottom:12px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"appearanceTitle\">Appearance</strong></div>
 
@@ -6336,9 +6409,28 @@ def setup_page(request: Request):
               <div id=\"chartRangesMsg\" role=\"status\" style=\"margin-top:8px;\"></div>
             </form>
 
-            <div id=\"rubricAccess\" class=\"section-title\">Access</div>
-            <div id=\"rubricStatus\" class=\"section-title\">Status notifications</div>
-            <div id=\"rubricBackup\" class=\"section-title\">Backup</div>
+              </div>
+            </section>
+            <section id=\"setupGroupBackup\" class=\"setup-group\">
+              <div id=\"rubricBackup\" class=\"section-title\">Backup</div>
+            <!-- Legacy global 2FA/recovery UI removed in v0.323; 2FA is managed per administrator. -->
+            <div class=\"card\" id=\"backupCard\" style=\"margin-bottom:12px; max-width:540px;\">
+              <div style=\"margin-bottom:8px;\"><strong id=\"backupTitle\">Backup</strong></div>
+              <div style=\"display:flex; gap:8px; flex-wrap:wrap; align-items:center;\">
+                <button type=\"button\" id=\"exportBackupBtn\">Export backup</button>
+                <input type=\"file\" id=\"importBackupFile\" accept=\"application/json\" />
+                <button type=\"button\" id=\"importBackupBtn\">Import backup</button>
+              </div>
+              <div id=\"backupMsg\" style=\"margin-top:8px;\"></div>
+            </div>
+
+            </section>
+              </div>
+              <div class=\"setup-column\">
+            <section id=\"setupGroupAccess\" class=\"setup-group\">
+              <div id=\"rubricAccess\" class=\"section-title\">Access</div>
+              <div class=\"setup-group-grid setup-access-grid\">
+                <div class=\"setup-side-stack\">
             <div class=\"card\" id=\"accessCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"accessTitle\">Access</strong></div>
               <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
@@ -6359,6 +6451,19 @@ def setup_page(request: Request):
               </form>
             </div>
 
+            <div class=\"card\" id=\"guestUsersCard\" style=\"margin-bottom:12px; max-width:760px;\">
+              <div style=\"margin-bottom:8px;\"><strong id=\"guestUsersTitle\">Guest users</strong></div>
+              <div id=\"guestUsersList\" style=\"font-size:.92rem; margin-bottom:10px;\"></div>
+              <div style=\"display:flex; gap:6px; flex-wrap:wrap;\">
+                <input id=\"guestNewUsername\" placeholder=\"guest-username\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                <input id=\"guestNewPassword\" type=\"password\" placeholder=\"password\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
+                <input id=\"guestNewExpiresAt\" type=\"datetime-local\" style=\"padding:8px 10px; border-radius:8px; width:220px;\" />
+                <button type=\"button\" id=\"addGuestUserBtn\">Add guest</button>
+              </div>
+              <div id=\"guestUsersMsg\" style=\"margin-top:8px;\"></div>
+            </div>
+
+                </div>
             <div class=\"card\" id=\"adminsCard\" style=\"margin-bottom:12px; max-width:760px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"adminsTitle\">Administrators</strong></div>
               <div id=\"adminsHint\" class=\"muted\" style=\"margin-bottom:10px;\">Each administrator has an independent password and independent optional 2FA.</div>
@@ -6375,18 +6480,13 @@ def setup_page(request: Request):
               <div id=\"adminsMsg\" style=\"margin-top:8px;\"></div>
             </div>
 
-            <div class=\"card\" id=\"guestUsersCard\" style=\"margin-bottom:12px; max-width:760px;\">
-              <div style=\"margin-bottom:8px;\"><strong id=\"guestUsersTitle\">Guest users</strong></div>
-              <div id=\"guestUsersList\" style=\"font-size:.92rem; margin-bottom:10px;\"></div>
-              <div style=\"display:flex; gap:6px; flex-wrap:wrap;\">
-                <input id=\"guestNewUsername\" placeholder=\"guest-username\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
-                <input id=\"guestNewPassword\" type=\"password\" placeholder=\"password\" style=\"padding:8px 10px; border-radius:8px; width:180px;\" />
-                <input id=\"guestNewExpiresAt\" type=\"datetime-local\" style=\"padding:8px 10px; border-radius:8px; width:220px;\" />
-                <button type=\"button\" id=\"addGuestUserBtn\">Add guest</button>
               </div>
-              <div id=\"guestUsersMsg\" style=\"margin-top:8px;\"></div>
-            </div>
-
+            </section>
+              </div>
+              <div class=\"setup-column\">
+            <section id=\"setupGroupStatus\" class=\"setup-group\">
+              <div id=\"rubricStatus\" class=\"section-title\">Status notifications</div>
+              <div class=\"setup-group-grid setup-status-grid\">
             <div class=\"card\" id=\"pushoverCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"pushoverTitle\">Pushover status notifications</strong></div>
               <div id=\"pushoverAppTokenLabel\" style=\"margin-bottom:6px;\">Pushover app token</div>
@@ -6433,27 +6533,27 @@ def setup_page(request: Request):
               <div id=\"airSensorMsg\" style=\"margin-top:8px;\"></div>
             </div>
 
-            <!-- Legacy global 2FA/recovery UI removed in v0.323; 2FA is managed per administrator. -->
-            <div class=\"card\" id=\"backupCard\" style=\"margin-bottom:12px; max-width:540px;\">
-              <div style=\"margin-bottom:8px;\"><strong id=\"backupTitle\">Backup</strong></div>
-              <div style=\"display:flex; gap:8px; flex-wrap:wrap; align-items:center;\">
-                <button type=\"button\" id=\"exportBackupBtn\">Export backup</button>
-                <input type=\"file\" id=\"importBackupFile\" accept=\"application/json\" />
-                <button type=\"button\" id=\"importBackupBtn\">Import backup</button>
               </div>
-              <div id=\"backupMsg\" style=\"margin-top:8px;\"></div>
+            </section>
+              </div>
             </div>
-
-            <div id=\"rubricDevices\" class=\"section-title\">Devices & Tents</div>
+            <section id=\"setupGroupDevices\" class=\"setup-group\">
+              <div id=\"rubricDevices\" class=\"section-title\">Devices & Tents</div>
             <div class=\"card\" id=\"setupTentsCard\" style=\"margin-bottom:12px; max-width:900px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"tentsTitle\">Tents</strong></div>
-              <div id=\"tentList\" style=\"margin-bottom:10px; font-size:.92rem;\"></div>
+              <div id=\"tentList\" class=\"setup-tent-list\" style=\"margin-bottom:10px; font-size:.92rem;\"></div>
+              <details id=\"tentEditor\">
+                <summary id=\"tentEditorTitle\">Add or edit tent</summary>
+                <div class=\"tent-basic-fields\">
               <input id=\"tentName\" placeholder=\"Tent name (e.g. Tent 2)\" style=\"padding:8px 10px; border-radius:8px; width:220px;\" />
               <input id=\"tentUrl\" placeholder=\"Source URL (http://.../api/state)\" style=\"padding:8px 10px; border-radius:8px; width:min(520px, 90%); margin-left:6px;\" />
               <input id=\"tentRtsp\" placeholder=\"RTSP URL (rtsp://...)\" style=\"padding:8px 10px; border-radius:8px; width:min(520px, 90%); margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainUser\" placeholder=\"Shelly Main User (optional)\" style=\"padding:8px 10px; border-radius:8px; width:220px; margin-left:6px; margin-top:6px;\" />
               <input id=\"tentMainPass\" type=\"password\" placeholder=\"Shelly Main Password (optional)\" style=\"padding:8px 10px; border-radius:8px; width:260px; margin-left:6px; margin-top:6px;\" />
-              <div id=\"growlightPowerAlertConfigLabel\" style=\"margin-top:12px; opacity:.95; font-weight:700;\">Growlight power warning</div>
+                </div>
+                <div class=\"tent-form-grid\">
+                  <div class=\"tent-config-panel\">
+              <div id=\"growlightPowerAlertConfigLabel\" class=\"tent-config-panel-title\" style=\"margin-top:12px; opacity:.95; font-weight:700;\">Growlight power warning</div>
               <label style=\"display:flex; align-items:center; gap:8px; margin-top:7px;\">
                 <input type=\"checkbox\" id=\"tentGrowlightPowerAlertEnabled\" />
                 <span id=\"tentGrowlightPowerAlertEnabledLabel\">Enable Growlight power-drop warning</span>
@@ -6464,12 +6564,14 @@ def setup_page(request: Request):
                 <span>W</span>
               </div>
               <div id=\"growlightPowerAlertHint\" class=\"muted\" style=\"margin-top:6px;\">Compares consecutive backend polls while the Growlight remains ON. Normal switch-off does not trigger a warning. One alert per drop episode; it rearms after power recovers or the light turns off. Uses the existing Pushover configuration.</div>
-              <div id=\"backendWriteConfigLabel\" style=\"margin-top:12px; opacity:.95; font-weight:700;\">Backend Write API</div>
+                  </div>
+                  <div class=\"tent-config-panel\">
+              <div id=\"backendWriteConfigLabel\" class=\"tent-config-panel-title\" style=\"margin-top:12px; opacity:.95; font-weight:700;\">Backend Write API</div>
               <label style=\"display:flex; align-items:center; gap:8px; margin-top:7px;\">
                 <input type=\"checkbox\" id=\"tentBackendWriteEnabled\" />
                 <span id=\"tentBackendWriteEnabledLabel\">Enable authenticated controller writes</span>
               </label>
-              <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:7px;\">
+              <div class=\"tent-security-fields\" style=\"margin-top:7px;\">
                 <input id=\"tentBackendControllerUrl\" placeholder=\"Controller URL/IP (http://192.168.178.58:8080)\" style=\"padding:8px 10px; border-radius:8px; width:min(430px, 90%);\" />
                 <input id=\"tentBackendHmacSecret\" type=\"password\" autocomplete=\"new-password\" placeholder=\"64-char lowercase HMAC secret\" style=\"padding:8px 10px; border-radius:8px; width:min(430px, 90%);\" />
               </div>
@@ -6478,22 +6580,30 @@ def setup_page(request: Request):
                 <span id=\"tentBackendHmacSecretClearLabel\">Remove stored HMAC secret</span>
               </label>
               <div id=\"backendWriteHint\" class=\"muted\" style=\"margin-top:6px;\">The GrowTent firmware must allow the TCP source IP it actually sees (with Docker NAT this is commonly the LAN IP of the Docker host). HTTP/8080 is authenticated with HMAC but is not encrypted.</div>
-              <div id=\"potStrainsLabel\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Pot strains</div>
-              <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;\">
+                  </div>
+                  <div class=\"tent-config-panel\">
+              <div id=\"potStrainsLabel\" class=\"tent-config-panel-title\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Pot strains</div>
+              <div class=\"tent-pot-grid\" style=\"margin-top:6px;\">
                 <select id=\"tentPot1Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 1 strain</option></select>
                 <select id=\"tentPot2Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 2 strain</option></select>
                 <select id=\"tentPot3Strain\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\"><option value=\"\">Pot 3 strain</option></select>
               </div>
-              <div id=\"soilSensorsSetupLabel\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Soil sensor IPs</div>
-              <div style=\"display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;\">
+                  </div>
+                  <div class=\"tent-config-panel\">
+              <div id=\"soilSensorsSetupLabel\" class=\"tent-config-panel-title\" style=\"margin-top:10px; opacity:.9; font-weight:700;\">Soil sensor IPs</div>
+              <div class=\"tent-pot-grid\" style=\"margin-top:6px;\">
                 <input id=\"tentSoilSensor1\" placeholder=\"Soil sensor 1 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
                 <input id=\"tentSoilSensor2\" placeholder=\"Soil sensor 2 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
                 <input id=\"tentSoilSensor3\" placeholder=\"Soil sensor 3 IP\" style=\"padding:8px 10px; border-radius:8px; min-width:180px;\" />
               </div>
+                </div>
+                </div>
               <button id=\"addTentBtn\" style=\"margin-top:8px;\">Add tent</button>
               <div id=\"tentMsg\" style=\"margin-top:10px;\"></div>
+              </details>
             </div>
 
+            </section>
             <div id=\"irPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1000; align-items:center; justify-content:center; padding:16px;\">
               <div class=\"card\" style=\"max-width:520px; width:100%;\">
                 <div style=\"display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;\">
@@ -6670,6 +6780,8 @@ def setup_page(request: Request):
               rubricStatus: 'Status notifications',
               rubricBackup: 'Backup',
               rubricDevices: 'Tents',
+              tentEditorTitle: 'Add or edit tent',
+              tentDetails: 'Details',
               pushoverTitle: 'Pushover status notifications',
               savePushover: 'Save Pushover',
               airSensorTitle: 'Air sensor',
@@ -6786,6 +6898,8 @@ def setup_page(request: Request):
               rubricStatus: 'Statusmeldungen',
               rubricBackup: 'Backup',
               rubricDevices: 'Zelte',
+              tentEditorTitle: 'Zelt hinzufügen oder bearbeiten',
+              tentDetails: 'Details',
               pushoverTitle: 'Pushover-Statusmeldungen',
               savePushover: 'Pushover speichern',
               airSensorTitle: 'Luftdatensensor',
@@ -6860,6 +6974,12 @@ def setup_page(request: Request):
             set('rubricStatus', tSetup('rubricStatus'));
             set('rubricBackup', tSetup('rubricBackup'));
             set('rubricDevices', tSetup('rubricDevices'));
+            set('jumpAppearance', tSetup('rubricAppearance'));
+            set('jumpAccess', tSetup('rubricAccess'));
+            set('jumpStatus', tSetup('rubricStatus'));
+            set('jumpBackup', tSetup('rubricBackup'));
+            set('jumpDevices', tSetup('rubricDevices'));
+            set('tentEditorTitle', tSetup('tentEditorTitle'));
             set('appearanceTitle', tSetup('appearance'));
             applyChartRangesI18n();
             set('labelTheme', tSetup('theme'));
@@ -7251,21 +7371,25 @@ def setup_page(request: Request):
                 const potTxt = formatPotStrains(t.pot_strains || {});
                 const soilTxt = formatSoilSensors(t.soil_sensors || []);
                 return `
-                <div style="padding:6px 0; border-bottom:1px solid var(--grid);">
-                  <strong>#${t.id} ${t.name}</strong><br>
-                  <span style="opacity:.85">API: ${t.source_url}</span><br>
-                  <span style="opacity:.85">RTSP: ${t.rtsp_url || '-'}</span><br>
-                  <span style="opacity:.85">Shelly Main Auth: ${(t.shelly_main_user || t.has_shelly_main_password) ? 'set' : '-'}</span><br>
-                  <span style="opacity:.85">${tSetup('potStrains')}: ${potTxt}</span><br>
-                  <span style="opacity:.85">${tSetup('soilSensors')}: ${soilTxt}</span><br>
-                  <span style="opacity:.85">${tSetup('irrigationPlan')}: ${planTxt}</span><br>
-                  <span style="opacity:.85">${tSetup('growlightPowerAlertStatus')}: ${t.growlight_power_alert_enabled ? ('&gt; ' + Number(t.growlight_power_drop_w || 20) + ' W') : '-'}</span><br>
-                  <span style="opacity:.85">${tSetup('backendWriteStatus')}: ${t.backend_write_enabled ? ((t.backend_controller_url || '-') + (t.has_backend_hmac_secret ? ' · HMAC set' : ' · HMAC missing')) : '-'}</span><br>
-                  <span style="opacity:.85; font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</span><br>
-                  <button data-edit-tent="${t.id}" style="margin-top:6px;">${tSetup('editTent')}</button>
-                  <button data-plan-tent="${t.id}" style="margin-top:6px; margin-left:6px;">${tSetup('irrigationPlan')}</button>
-                  <button data-delete-tent="${t.id}" style="margin-top:6px; margin-left:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('deleteTent')}</button>
-                </div>
+                <article class="setup-tent-item">
+                  <div class="setup-tent-heading"><span class="setup-tent-id">#${t.id}</span><strong>${t.name}</strong></div>
+                  <div class="setup-tent-source">API: ${t.source_url}</div>
+                  <div class="setup-tent-actions">
+                    <button data-edit-tent="${t.id}">${tSetup('editTent')}</button>
+                    <button data-plan-tent="${t.id}">${tSetup('irrigationPlan')}</button>
+                    <button data-delete-tent="${t.id}" style="background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('deleteTent')}</button>
+                  </div>
+                  <details class="setup-tent-details"><summary>${tSetup('tentDetails')}</summary>
+                    <div>RTSP: ${t.rtsp_url || '-'}</div>
+                    <div>Shelly Main Auth: ${(t.shelly_main_user || t.has_shelly_main_password) ? 'set' : '-'}</div>
+                    <div>${tSetup('potStrains')}: ${potTxt}</div>
+                    <div>${tSetup('soilSensors')}: ${soilTxt}</div>
+                    <div>${tSetup('irrigationPlan')}: ${planTxt}</div>
+                    <div>${tSetup('growlightPowerAlertStatus')}: ${t.growlight_power_alert_enabled ? ('&gt; ' + Number(t.growlight_power_drop_w || 20) + ' W') : '-'}</div>
+                    <div>${tSetup('backendWriteStatus')}: ${t.backend_write_enabled ? ((t.backend_controller_url || '-') + (t.has_backend_hmac_secret ? ' · HMAC set' : ' · HMAC missing')) : '-'}</div>
+                    <div style="font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</div>
+                  </details>
+                </article>
               `;
               }).join('');
 
@@ -7291,6 +7415,8 @@ def setup_page(request: Request):
                   fillSoilSensorInputs(tent.soil_sensors || []);
                   document.getElementById('addTentBtn').setAttribute('data-edit-id', String(id));
                   document.getElementById('addTentBtn').textContent = tSetup('saveTent');
+                  const editor = document.getElementById('tentEditor');
+                  if (editor) { editor.open = true; editor.scrollIntoView({block:'start', behavior:'smooth'}); }
                 });
               });
               list.querySelectorAll('button[data-plan-tent]').forEach(btn => {

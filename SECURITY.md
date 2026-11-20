@@ -1,4 +1,4 @@
-# Security — v0.395
+# Security — v0.397
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -165,3 +165,11 @@ The existing authorized, read-only export accepts two additional allowlisted his
 ## v0.395 historical grow phase export
 
 The read-only projection adds fixed phase codes, localized labels, validated integer weeks and fixed reference limits derived from the existing historical ESP settings. No new query, identifier, secret, user-supplied label, current status lookup or write operation is introduced. Mixed buckets retain counts without inventing phase assignments. Existing authentication, range validation and size limit are unchanged.
+
+## v0.396 Setup layout
+
+Only HTML grouping, presentation CSS, localization and opening the existing editor on Edit were changed; no authorization rules, persistence handlers, HMAC signatures, secret storage, backend routes or irrigation interlocks were altered. No credentials or tokens are sent to a new service. Tent details follow the existing administrator-only Setup access policy; a collapsed client-side panel is a visual affordance, not a security boundary. All interactions still require existing backend authorization checks.
+
+## v0.397 compact Setup grid
+
+CSS layout and existing semantic section wrappers only. No authentication, HMAC, backend API, backup, permissions, credential transport or ESP control paths change. All fields retain their identifiers and existing role checks.
