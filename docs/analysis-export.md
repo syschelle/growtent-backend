@@ -1,5 +1,35 @@
 # Historical analysis export: JSON and ZIP
 
+## Per-tent strain assignments (v0.404)
+
+Both `GET /api/export/analysis?tent_id=2&range=24h` (JSON) and the JSON
+contained in `GET /api/export/analysis.zip?tent_id=2&range=24h` now carry
+**the selected tent's currently saved Setup assignment**, for example:
+
+```json
+{
+  "tentId": 2,
+  "tent_name": "Zelt 2",
+  "pot_strains": {
+    "pot1": "Oreoz",
+    "pot2": "White Widow",
+    "pot3": ""
+  },
+  "pot_strains_source": "current_tent_configuration"
+}
+```
+
+`pot1`, `pot2`, and `pot3` map directly to the three numbered pots in the
+selected tent. An empty string means no strain is assigned; names are never
+inferred from sensor data or the strain catalogue. These strings come from the
+backend's existing `tents.pot_strains_json` database field. The `tent_name`
+and `tentId` identify the exported tent. The mapping describes the **current
+configuration at export time**, not the strain historically present during
+each sample or bucket. No other tents, passwords, addresses or controller
+settings are exported. Existing history, phase, ZIP images and size limits
+are unchanged.
+
+
 ## ZIP download with original + HDR-style camera images (v0.402)
 
 In the Dashboard, **Analyseexport (ZIP)** / **Analysis export (ZIP)** downloads a ZIP for the selected tent and 1h/6h/12h/24h/48h period. It contains the historical JSON file (same schema and values as the prior JSON export) and two renderings of **one current camera frame** when the camera is reachable: byte-identical `camera.jpg` (original) and `camera-hdr.jpg` (HDR-style tone-mapped JPEG). The camera is fetched at the **native resolution of its configured RTSP stream** through go2rtc, without the Dashboard preview's 1280 × 720 limit or artificial upscaling. The original JPEG bytes are stored unchanged whenever they fit. The picture is **not** an archival image from the selected historical period.

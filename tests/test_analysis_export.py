@@ -100,7 +100,9 @@ def exporter(db):
         @classmethod
         def now(cls,tz=None):return END
     ns={'datetime':Clock,'timezone':timezone,'timedelta':timedelta,'HTTPException':HTTPException,'Response':Response,'json':json,
-        'get_conn':db.connection,'get_tent_by_id':lambda tid: {'id':tid} if tid==2 else None,'build_analysis_export':build_analysis_export,'read_irrigation_events':read_irrigation_events,'ANALYSIS_EXPORT_HOURS':HOURS,'POLL_INTERVAL_SECONDS':10}
+        'get_conn':db.connection,'get_tent_by_id':lambda tid: {'id':tid, 'name':'Zelt 2', 'pot_strains':{'pot1':'Oreoz','pot2':'White Widow','pot3':''}} if tid==2 else None,
+        '_normalise_pot_strains':lambda p: {k: (p or {}).get(k,'') for k in ('pot1','pot2','pot3')},
+        'build_analysis_export':build_analysis_export,'read_irrigation_events':read_irrigation_events,'ANALYSIS_EXPORT_HOURS':HOURS,'POLL_INTERVAL_SECONDS':10}
     exec(compile(ast.Module(body=[node],type_ignores=[]),'api/app.py','exec'),ns)
     return ns['export_analysis_json']
 
@@ -111,6 +113,9 @@ def test_attachment_and_bounded_read_query():
     assert response.headers['content-disposition']=='attachment; filename="growtent-2_2026-11-15_1200Z_24h.json"'
     assert response.headers['cache-control']=='no-store' and response.media_type=='application/json'
     assert out['hours']==24 and out['sampleCount']==1 and db.rows==before
+    assert out['tentId']==2 and out['tent_name']=='Zelt 2'
+    assert out['pot_strains']=={'pot1':'Oreoz','pot2':'White Widow','pot3':''}
+    assert out['pot_strains_source']=='current_tent_configuration'
     assert all(sql.lstrip().startswith('SELECT') for sql,_ in db.statements)
     assert db.statements[0][1]==(2,END-timedelta(hours=24),END)
     with pytest.raises(HTTPException) as e:exporter(db)(2,'all')

@@ -52,7 +52,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.403"
+APP_VERSION = "v0.404"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5733,7 +5733,8 @@ def export_history_csv(tent_id: int, range_key: str = "24h"):
 def export_analysis_json(tent_id: int, range_key: str = "24h"):
     if range_key not in ANALYSIS_EXPORT_HOURS:
         raise HTTPException(status_code=400, detail="Unsupported export range")
-    if get_tent_by_id(tent_id) is None:
+    tent = get_tent_by_id(tent_id)
+    if tent is None:
         raise HTTPException(status_code=404, detail="Tent not found")
     hours = ANALYSIS_EXPORT_HOURS[range_key]
     end = datetime.now(timezone.utc)
@@ -5746,6 +5747,11 @@ def export_analysis_json(tent_id: int, range_key: str = "24h"):
     max_points = 720
     while True:
         payload = build_analysis_export(tent_id,rows,end,hours,POLL_INTERVAL_SECONDS,max_points=max_points,irrigation_rows=irrigation_rows)
+        # Current assignment from this tent's backend configuration, NOT a
+        # reconstruction of which strain grew in each historical window.
+        payload["tent_name"] = tent.get("name")
+        payload["pot_strains"] = _normalise_pot_strains(tent.get("pot_strains"))
+        payload["pot_strains_source"] = "current_tent_configuration"
         payload["sizeAdapted"] = max_points < 720
         encoded = json.dumps(payload,ensure_ascii=False,separators=(",",":"),allow_nan=False)
         if len(encoded.encode("utf-8")) <= 1_000_000:
@@ -5785,11 +5791,12 @@ def export_analysis_zip(tent_id: int, range_key: str = "24h"):
 def get_tent_by_id(tent_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password FROM tents WHERE id=%s", (tent_id,))
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json FROM tents WHERE id=%s", (tent_id,))
             row = cur.fetchone()
             if not row:
                 return None
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "_shelly_main_password": row[5] or ""}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "_shelly_main_password": row[5] or "",
+                    "pot_strains": _normalise_pot_strains(row[6])}
 
 
 def derive_controller_base_url(source_url: str) -> str:

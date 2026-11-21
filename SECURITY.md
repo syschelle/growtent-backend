@@ -1,4 +1,4 @@
-# Security — v0.403
+# Security — v0.404
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -202,3 +202,7 @@ The HDR preview is opt-in and read-only, using the same authorized per-tent JPEG
 ## v0.403 adaptive camera enhancement
 
 - The strengthened HDR appearance uses existing local frame bytes only; no new HTTP input surface, storage path, camera control or credential handling. Existing bounds on pixels, bytes, retries and image type remain in force.
+
+## v0.404 per-tent strain export
+
+The analysis export includes only the selected tent's public display name and its three saved strain-name labels, not the entire tent configuration. It remains covered by existing history export access restrictions. The SQL query uses the numeric bound tent ID; the export adds no input-controlled SQL, new endpoint or controller write. Credentials, controller URLs, HMAC secrets and all other tent settings are still excluded. The assignment reflects the current backend state and must not be mistaken for verified historical information.

@@ -1,4 +1,4 @@
-# Testing — v0.403
+# Testing — v0.404
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -233,3 +233,7 @@ Verify that the German and English Markdown sources and their pre-rendered HTML 
 ## v0.403 adaptive camera HDR regression
 
 - Test real exported frames for a visibly stronger result than v0.402 while ensuring an unchanged original image, bounded size, 4K retention, degenerate-frame resilience, and shared fullscreen/ZIP transformation.
+
+## v0.404 pot strain metadata in analysis exports
+
+Run `PYTHONPATH=api:tests python -m pytest -q tests/test_analysis_export.py tests/test_analysis_export_pot_strains.py tests/test_analysis_archive.py`. The tests confirm the selected tent's `pot_strains_json` is read with a bound tent ID, all three assigned names and blank slots are preserved in JSON and ZIP, historical points are not overwritten, and no unrelated config/credentials leak. The existing adaptive 1 MB JSON size guard is exercised. No live controller is queried.

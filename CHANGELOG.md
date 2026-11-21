@@ -1,3 +1,9 @@
+## v0.404 — Export assigned pot strains for each tent
+
+- Include the selected tent name and its three currently configured pot strain names in both analysis JSON and the JSON inside the analysis ZIP. Empty assignment slots remain empty, not guessed.
+- Tag assignments with `pot_strains_source: current_tent_configuration` so consumers do not confuse present configuration with historical strains.
+- Reuse the existing per-tent PostgreSQL `pot_strains_json` field. Preserve camera original/HDR, historic measurements, read-only routes, export size guard and existing permissions; no schema or ESP changes.
+
 ## v0.403 — Visible adaptive HDR-style camera images
 
 - Increase adaptive tonality, local clarity and restrained colour in camera HDR exports and fullscreen only. Original JPEG untouched.
