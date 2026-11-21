@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 import app as legacy
 from services.tent_service import TentService
 from core.dependencies import get_tent_service
-from models.schemas import GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload
+from models.schemas import GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload, CameraPositionsPayload
 
 router = APIRouter()
 
@@ -97,6 +97,17 @@ def export_heap_24h_csv(tent_id: int, request: Request):
 @router.get('/tents/{tent_id}/latest')
 def latest_state(tent_id: int, request: Request, service: TentService = Depends(get_tent_service)):
     return service.latest(tent_id, request)
+
+
+@router.get('/tents/{tent_id}/camera-positions')
+def get_camera_positions(tent_id: int):
+    return legacy.get_tent_camera_positions(tent_id)
+
+
+@router.put('/tents/{tent_id}/camera-positions')
+def update_camera_positions(tent_id: int, payload: CameraPositionsPayload, request: Request):
+    _admin_username(request)
+    return legacy.put_tent_camera_positions(tent_id, payload, request)
 
 
 @router.get('/tents/{tent_id}/preview')

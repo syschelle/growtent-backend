@@ -21,10 +21,11 @@ from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload, normalize_flowering_weeks
+from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload, CameraPositionsPayload, normalize_flowering_weeks
 from services.shelly_status import parse_rpc_status
 from services.analysis_export import build_analysis_export, read_irrigation_events, HOURS as ANALYSIS_EXPORT_HOURS
 from services.analysis_archive import get_camera_jpeg, make_analysis_zip, _hdr_style_camera_jpeg, MAX_CAMERA_FETCH_BYTES
+from services.pot_markers import normalize_pot_positions
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from services.vpd_channels import (
     finite_number as _finite_sensor_number,
@@ -52,7 +53,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.404"
+APP_VERSION = "v0.405"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1308,6 +1309,7 @@ def init_db():
                     irrigation_plan_json TEXT NOT NULL DEFAULT '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}',
                     irrigation_last_run_date DATE,
                     pot_strains_json TEXT NOT NULL DEFAULT '{"pot1":"","pot2":"","pot3":""}',
+                    pot_positions_json TEXT NOT NULL DEFAULT '{"pot1":null,"pot2":null,"pot3":null}',
                     soil_sensors_json TEXT NOT NULL DEFAULT '[]',
                     backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                     backend_controller_url TEXT,
@@ -1326,6 +1328,7 @@ def init_db():
             from services.irrigation_store import create_tables
             create_tables(cur)
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_strains_json TEXT NOT NULL DEFAULT '{\"pot1\":\"\",\"pot2\":\"\",\"pot3\":\"\"}';")
+            cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_positions_json TEXT NOT NULL DEFAULT '{\"pot1\":null,\"pot2\":null,\"pot3\":null}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS soil_sensors_json TEXT NOT NULL DEFAULT '[]';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_controller_url TEXT;")
@@ -4645,7 +4648,7 @@ def export_config_backup():
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
                        backend_write_enabled, backend_controller_url, backend_hmac_secret,
-                       growlight_power_alert_enabled, growlight_power_drop_w, created_at
+                       growlight_power_alert_enabled, growlight_power_drop_w, created_at, pot_positions_json
                 FROM tents
                 ORDER BY id
                 """
@@ -4698,6 +4701,7 @@ def export_config_backup():
                 "has_backend_hmac_secret": bool(r[12]),
                 "growlight_power_alert_enabled": bool(r[13]),
                 "growlight_power_drop_w": float(r[14] if r[14] is not None else 20.0),
+                "pot_positions": normalize_pot_positions(r[16]),
                 "created_at": r[15].isoformat() if r[15] else None,
             }
         )
@@ -4810,8 +4814,8 @@ def import_config_backup(payload: dict):
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                         irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
                         backend_write_enabled, backend_controller_url, backend_hmac_secret,
-                        growlight_power_alert_enabled, growlight_power_drop_w, created_at
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()))
+                        growlight_power_alert_enabled, growlight_power_drop_w, created_at, pot_positions_json
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()),%s)
                     """,
                     (
                         int(t.get("id") or 0),
@@ -4830,6 +4834,7 @@ def import_config_backup(payload: dict):
                         bool(t.get("growlight_power_alert_enabled", False)),
                         _normalise_growlight_power_drop_w(t.get("growlight_power_drop_w"), 20.0),
                         t.get("created_at"),
+                        json.dumps(normalize_pot_positions(t.get("pot_positions") or t.get("pot_positions_json")), ensure_ascii=False),
                     ),
                 )
 
@@ -5135,6 +5140,39 @@ def shelly_light_schedule(tent_id: int, refresh: bool = Query(False)):
         raise
     except Exception:
         raise HTTPException(status_code=502, detail="Shelly schedule unavailable")
+
+
+@app.get("/tents/{tent_id}/camera-positions")
+def get_tent_camera_positions(tent_id: int):
+    """Current (not historical) three pot coordinates and strain labels."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pot_positions_json, pot_strains_json FROM tents WHERE id=%s", (tent_id,))
+            row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="tent not found")
+    return JSONResponse({"tentId": tent_id,
+                         "positions": normalize_pot_positions(row[0]),
+                         "pot_strains": _normalise_pot_strains(row[1]),
+                         "source": "current_tent_configuration"},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.put("/tents/{tent_id}/camera-positions")
+def put_tent_camera_positions(tent_id: int, payload: CameraPositionsPayload, request: Request):
+    """Only administrators can save positions; never modify relay/ESP state."""
+    session = get_session(request.cookies.get("caop_session"))
+    if not session or session.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="admin required")
+    positions = normalize_pot_positions(payload.model_dump())
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE tents SET pot_positions_json=%s WHERE id=%s RETURNING id",
+                        (json.dumps(positions, ensure_ascii=False, separators=(',', ':')), tent_id))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="tent not found")
+    return JSONResponse({"ok": True, "tentId": tent_id, "positions": positions},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/tents/{tent_id}/latest")
@@ -5752,6 +5790,8 @@ def export_analysis_json(tent_id: int, range_key: str = "24h"):
         payload["tent_name"] = tent.get("name")
         payload["pot_strains"] = _normalise_pot_strains(tent.get("pot_strains"))
         payload["pot_strains_source"] = "current_tent_configuration"
+        payload["pot_positions"] = normalize_pot_positions(tent.get("pot_positions"))
+        payload["pot_positions_source"] = "current_tent_configuration"
         payload["sizeAdapted"] = max_points < 720
         encoded = json.dumps(payload,ensure_ascii=False,separators=(",",":"),allow_nan=False)
         if len(encoded.encode("utf-8")) <= 1_000_000:
@@ -5791,12 +5831,12 @@ def export_analysis_zip(tent_id: int, range_key: str = "24h"):
 def get_tent_by_id(tent_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json FROM tents WHERE id=%s", (tent_id,))
+            cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, pot_positions_json FROM tents WHERE id=%s", (tent_id,))
             row = cur.fetchone()
             if not row:
                 return None
             return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "_shelly_main_password": row[5] or "",
-                    "pot_strains": _normalise_pot_strains(row[6])}
+                    "pot_strains": _normalise_pot_strains(row[6]), "pot_positions": normalize_pot_positions(row[7])}
 
 
 def derive_controller_base_url(source_url: str) -> str:
@@ -12898,6 +12938,7 @@ def dashboard_page(request: Request):
 
               const w = window.open('about:blank', '_blank', 'width=1200,height=800');
               if (!w) return;
+              const popupTentId = Number(currentTentId); // stable if the dashboard changes tents
 
               w.document.title = 'CanopyOps Preview';
               const doc = w.document;
@@ -13152,7 +13193,20 @@ def dashboard_page(request: Request):
               zoomBadge.style.pointerEvents = 'none';
               zoomBadge.textContent = '100%';
 
-              stage.appendChild(img);
+              // An image-sized layer ensures percentage markers stay attached
+              // to the actual camera pixels through aspect-ratio changes, HDR
+              // switching, panning and zooming (not to letterbox margins).
+              const pictureLayer = doc.createElement('div');
+              pictureLayer.id = 'cameraPictureLayer';
+              pictureLayer.style.cssText = 'position:relative;display:inline-block;flex:none;'+
+                'max-width:100vw;max-height:calc(100vh - 48px);transform-origin:center center';
+              img.style.display = 'block';
+              const markersLayer = doc.createElement('div');
+              markersLayer.id = 'cameraPotMarkers';
+              markersLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+              pictureLayer.appendChild(img);
+              pictureLayer.appendChild(markersLayer);
+              stage.appendChild(pictureLayer);
               stage.appendChild(zoomBadge);
 
               // Preview-only, opt-in HDR look. Never modifies camera settings,
@@ -13186,6 +13240,186 @@ def dashboard_page(request: Request):
                 }
               };
               stage.appendChild(modeGroup);
+
+              // Pot labels are a read-only overlay by default, stored as
+              // normalized x/y coordinates separately for each tent.
+              const potKeys = ['pot1', 'pot2', 'pot3'];
+              const colorsPot = ['#3b82f6', '#06b6d4', '#f59e0b'];
+              const emptyPositions = () => ({pot1:null, pot2:null, pot3:null});
+              const clonePositions = positions => JSON.parse(JSON.stringify(positions));
+              const clampPot = value => Math.max(0, Math.min(1, value));
+              let potPositions = emptyPositions();
+              let draftPositions = emptyPositions();
+              let potStrains = {pot1:'', pot2:'', pot3:''};
+              let potEdit = false;
+              let potsVisible = true;
+              let namesVisible = true;
+              const canEditPots = typeof currentUserRole !== 'undefined' && currentUserRole === 'admin';
+              const potToolbar = doc.createElement('div');
+              potToolbar.id = 'cameraPotToolbar';
+              potToolbar.style.cssText = `position:absolute;top:54px;left:10px;right:10px;display:flex;`+
+                `flex-wrap:wrap;gap:5px;align-items:center;width:max-content;max-width:calc(100% - 20px);`+
+                `padding:4px 5px;border-radius:9px;background:${colors.headerBg};`+
+                `border:1px solid ${colors.btnBorder};z-index:7;box-sizing:border-box`;
+              const potButton = (id, label) => {
+                const button = doc.createElement('button');
+                button.id = id;
+                button.type = 'button';
+                button.textContent = label;
+                button.style.cssText = `border-radius:6px;padding:5px 8px;min-height:32px;`+
+                  `border:1px solid ${colors.btnBorder};background:${colors.btnBg};`+
+                  `color:${colors.btnText};font:600 12px Arial,sans-serif;cursor:pointer;`;
+                potToolbar.appendChild(button);
+                return button;
+              };
+              const showPotsBtn = potButton('cameraShowPots', currentLang==='de'?'Töpfe':'Pots');
+              const showNamesBtn = potButton('cameraShowPotNames', currentLang==='de'?'Sorten':'Strains');
+              const editPotsBtn = potButton('cameraEditPots', currentLang==='de'?'Positionieren':'Position');
+              const savePotsBtn = potButton('cameraSavePots', currentLang==='de'?'Speichern':'Save');
+              const cancelPotsBtn = potButton('cameraCancelPots', currentLang==='de'?'Abbrechen':'Cancel');
+              const potFeedback = doc.createElement('span');
+              potFeedback.id = 'cameraPotFeedback';
+              potFeedback.setAttribute('role','status');
+              potFeedback.style.cssText = `font:12px Arial,sans-serif;color:${colors.btnText};max-width:300px`;
+              potToolbar.appendChild(potFeedback);
+              stage.appendChild(potToolbar);
+
+              const updatePotToolbar = () => {
+                editPotsBtn.style.display = canEditPots && !potEdit ? '' : 'none';
+                savePotsBtn.style.display = canEditPots && potEdit ? '' : 'none';
+                cancelPotsBtn.style.display = canEditPots && potEdit ? '' : 'none';
+                showPotsBtn.disabled = potEdit;
+                showPotsBtn.setAttribute('aria-pressed',potsVisible?'true':'false');
+                showNamesBtn.setAttribute('aria-pressed',namesVisible?'true':'false');
+                showPotsBtn.style.opacity = potsVisible?'1':'.65';
+                showNamesBtn.style.opacity = namesVisible?'1':'.65';
+              };
+              function renderPotMarkers(){
+                markersLayer.replaceChildren();
+                if (!potsVisible && !potEdit) return;
+                const positions = potEdit ? draftPositions : potPositions;
+                for (const [index,key] of potKeys.entries()) {
+                  const position = positions[key];
+                  if (!position) continue;
+                  const marker = doc.createElement('div');
+                  marker.className = 'camera-pot-marker';
+                  marker.dataset.pot = key;
+                  marker.style.cssText = `position:absolute;left:${position.x*100}%;top:${position.y*100}%;`+
+                    `transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;`+
+                    `user-select:none;touch-action:none;pointer-events:${potEdit?'auto':'none'};`+
+                    `cursor:${potEdit?'grab':'default'};z-index:3;`;
+                  const dot = doc.createElement('div');
+                  dot.textContent = String(index+1);
+                  dot.style.cssText = `width:34px;height:34px;box-sizing:border-box;border-radius:50%;`+
+                    `display:grid;place-items:center;background:${colorsPot[index]};border:2px solid white;`+
+                    `color:white;font:bold 16px Arial,sans-serif;box-shadow:0 1px 5px #000c;`;
+                  const strainName = String(potStrains[key] || '').trim();
+                  marker.setAttribute('aria-label', `${currentLang==='de'?'Topf':'Pot'} ${index+1}` +
+                    (strainName ? `: ${strainName}` : ''));
+                  marker.tabIndex = potEdit ? 0 : -1;
+                  marker.appendChild(dot);
+                  if (namesVisible) {
+                    const label = doc.createElement('div');
+                    label.textContent = (currentLang==='de'?'Topf ':'Pot ')+(index+1)+
+                      (strainName ? ` · ${strainName}` : '');
+                    label.style.cssText = `white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis;`+
+                      `margin-top:4px;padding:4px 7px;border-radius:6px;background:#0b1220ec;`+
+                      `color:white;border:1px solid ${colorsPot[index]};font:600 12px Arial,sans-serif;`+
+                      `box-shadow:0 1px 4px #0009;`;
+                    marker.appendChild(label);
+                  }
+                  if (potEdit) {
+                    marker.addEventListener('pointerdown', e => {
+                      e.preventDefault();e.stopPropagation();
+                      marker.setPointerCapture?.(e.pointerId);
+                      marker.style.cursor = 'grabbing';
+                    });
+                    marker.addEventListener('pointermove', e => {
+                      if (!marker.hasPointerCapture?.(e.pointerId)) return;
+                      e.preventDefault();e.stopPropagation();
+                      const rect = pictureLayer.getBoundingClientRect();
+                      if (!rect.width || !rect.height) return;
+                      draftPositions[key] = {
+                        x: Math.round(clampPot((e.clientX-rect.left)/rect.width)*10000)/10000,
+                        y: Math.round(clampPot((e.clientY-rect.top)/rect.height)*10000)/10000
+                      };
+                      marker.style.left = `${draftPositions[key].x*100}%`;
+                      marker.style.top = `${draftPositions[key].y*100}%`;
+                    });
+                    marker.addEventListener('pointerup', e => {
+                      e.stopPropagation();marker.releasePointerCapture?.(e.pointerId);
+                      marker.style.cursor = 'grab';
+                    });
+                    marker.addEventListener('keydown', e => {
+                      const steps = {ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
+                      if (!steps[e.key]) return;
+                      e.preventDefault();
+                      const increment = e.shiftKey ? 0.05 : 0.01;
+                      draftPositions[key] = {
+                        x: Math.round(clampPot(draftPositions[key].x+steps[e.key][0]*increment)*10000)/10000,
+                        y: Math.round(clampPot(draftPositions[key].y+steps[e.key][1]*increment)*10000)/10000
+                      };
+                      marker.style.left = `${draftPositions[key].x*100}%`;
+                      marker.style.top = `${draftPositions[key].y*100}%`;
+                    });
+                  }
+                  markersLayer.appendChild(marker);
+                }
+              }
+              showPotsBtn.onclick = () => {
+                if (potEdit) return;
+                potsVisible = !potsVisible;
+                updatePotToolbar();renderPotMarkers();
+              };
+              showNamesBtn.onclick = () => {
+                namesVisible = !namesVisible;
+                updatePotToolbar();renderPotMarkers();
+              };
+              editPotsBtn.onclick = () => {
+                if (!canEditPots) return;
+                draftPositions = clonePositions(potPositions);
+                potKeys.forEach((key,idx) => {
+                  if (!draftPositions[key]) draftPositions[key]={x:(idx+1)/4,y:.65};
+                });
+                potEdit = true;potsVisible = true;
+                potFeedback.textContent = currentLang==='de'?'Markierungen auf die Töpfe ziehen':'Drag the markers onto the pots';
+                updatePotToolbar();renderPotMarkers();
+              };
+              cancelPotsBtn.onclick = () => {
+                potEdit = false;draftPositions = clonePositions(potPositions);
+                potFeedback.textContent = '';
+                updatePotToolbar();renderPotMarkers();
+              };
+              savePotsBtn.onclick = async () => {
+                if (!canEditPots || !potEdit) return;
+                savePotsBtn.disabled = true;
+                try {
+                  const response = await fetch(`/tents/${popupTentId}/camera-positions`,{
+                    method:'PUT',headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify(draftPositions),cache:'no-store'
+                  });
+                  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                  const saved = await response.json();
+                  potPositions = saved.positions;
+                  potEdit = false;
+                  potFeedback.textContent = currentLang==='de'?'Positionen gespeichert':'Positions saved';
+                  renderPotMarkers();
+                } catch {
+                  potFeedback.textContent = currentLang==='de'?'Speichern fehlgeschlagen':'Save failed';
+                } finally {savePotsBtn.disabled=false;updatePotToolbar();}
+              };
+              updatePotToolbar();
+              fetch(`/tents/${popupTentId}/camera-positions`,{cache:'no-store'})
+                .then(async response => {
+                  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                  const config = await response.json();
+                  potPositions = config.positions || emptyPositions();
+                  potStrains = config.pot_strains || {};
+                  if (!potEdit) renderPotMarkers();
+                })
+                .catch(() => {potFeedback.textContent = currentLang==='de'
+                  ? 'Topfpositionen nicht verfügbar':'Pot positions unavailable';});
+
               doc.body.appendChild(header);
               doc.body.appendChild(stage);
 
@@ -13252,9 +13486,9 @@ def dashboard_page(request: Request):
                   tick();
                 }
 
-                img.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+                pictureLayer.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
                 zoomBadge.textContent = `${Math.round(zoom * 100)}%`;
-                img.style.cursor = zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'default';
+                pictureLayer.style.cursor = zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'default';
               };
 
               const selectMode = (enableHdr) => {
@@ -13290,12 +13524,14 @@ def dashboard_page(request: Request):
               const dist = (t1, t2) => Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
 
               stage.addEventListener('wheel', (e) => {
+                if (potEdit) {e.preventDefault();return;}
                 e.preventDefault();
                 const step = e.deltaY < 0 ? 1.15 : 1 / 1.15;
                 zoomAt(e.clientX, e.clientY, zoom * step);
               }, { passive: false });
 
               stage.addEventListener('dblclick', (e) => {
+                if (potEdit) return;
                 e.preventDefault();
                 if (zoom > 1.01) {
                   zoom = 1;
@@ -13308,7 +13544,7 @@ def dashboard_page(request: Request):
               });
 
               stage.addEventListener('pointerdown', (e) => {
-                if (modeGroup.contains(e.target)) return; // Zoom/pan must not steal button clicks.
+                if (modeGroup.contains(e.target) || potToolbar.contains(e.target) || potEdit) return; // Editing and toolbar clicks must not pan.
                 if (e.pointerType !== 'touch' && zoom <= 1) return;
                 stage.setPointerCapture?.(e.pointerId);
                 dragging = true;
@@ -13362,7 +13598,7 @@ def dashboard_page(request: Request):
 
               const refreshPopupLiveMetrics = async () => {
                 try {
-                  const res = await fetch(`/tents/${currentTentId}/latest`, { cache:'no-store' });
+                  const res = await fetch(`/tents/${popupTentId}/latest`, { cache:'no-store' });
                   const latestJson = await res.json();
                   const payload = latestJson?.latest || {};
                   const tempC = firstNum(payload, ['sensors.cur.temperatureC', 'curTemperature']);

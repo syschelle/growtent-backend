@@ -42,7 +42,8 @@ def test_archive_carries_original_analysis_and_two_camera_jpegs():
     assert {k:v for k,v in data.items() if k!='camera_snapshot'} == json.loads(JSON_BYTES)
     assert data['camera_snapshot'] == {'status':'included','filename':'camera.jpg','width_px':160,'height_px':90,
         'retrieved_at_utc':'2026-11-21T10:00:00Z',
-        'hdr':{'status':'included','filename':CAMERA_HDR_FILENAME,'method':HDR_METHOD,'width_px':160,'height_px':90}}
+        'hdr':{'status':'included','filename':CAMERA_HDR_FILENAME,'method':HDR_METHOD,'width_px':160,'height_px':90},
+        'marked':{'status':'not_configured','filename':None,'width_px':None,'height_px':None,'source':'current_tent_configuration'}}
 
 
 def test_unavailable_camera_still_produces_valid_zip_and_bilingual_note():
@@ -50,7 +51,8 @@ def test_unavailable_camera_still_produces_valid_zip_and_bilingual_note():
     assert names == ['growtent-2_24h.json', 'camera-unavailable.txt']
     assert data['camera_snapshot'] == {'status':'unavailable','filename':None,'width_px':None,'height_px':None,
         'retrieved_at_utc':None,
-        'hdr':{'status':'unavailable','filename':None,'method':None,'width_px':None,'height_px':None}}
+        'hdr':{'status':'unavailable','filename':None,'method':None,'width_px':None,'height_px':None},
+        'marked':{'status':'unavailable','filename':None,'width_px':None,'height_px':None,'source':'current_tent_configuration'}}
     assert b'DE:' in contents['camera-unavailable.txt'] and b'EN:' in contents['camera-unavailable.txt']
 
 

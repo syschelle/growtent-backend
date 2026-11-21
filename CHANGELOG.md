@@ -1,3 +1,8 @@
+## v0.405 — Camera pot markers and annotated analysis snapshot
+- Configure three movable pot markers per tent in the fullscreen camera view (DE/EN, HDR, zoom, desktop and touch), with admin-only save/cancel and read-only guest viewing.
+- Export normalized pot positions and optional labelled `camera-marked.jpg` from the **same frame** alongside original/HDR; include positions in configuration backup.
+- No ESP, Shelly, watering or climate control changes; marker locations are current configuration, not historic observations.
+
 ## v0.404 — Export assigned pot strains for each tent
 
 - Include the selected tent name and its three currently configured pot strain names in both analysis JSON and the JSON inside the analysis ZIP. Empty assignment slots remain empty, not guessed.

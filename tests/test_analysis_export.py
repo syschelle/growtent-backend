@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.responses import Response
 import pytest
 from services.analysis_export import build_analysis_export,read_irrigation_events,HOURS
+from services.pot_markers import normalize_pot_positions
 from test_vpd_source import Database,sample
 
 END=datetime(2026,11,15,12,0,tzinfo=timezone.utc)
@@ -102,6 +103,7 @@ def exporter(db):
     ns={'datetime':Clock,'timezone':timezone,'timedelta':timedelta,'HTTPException':HTTPException,'Response':Response,'json':json,
         'get_conn':db.connection,'get_tent_by_id':lambda tid: {'id':tid, 'name':'Zelt 2', 'pot_strains':{'pot1':'Oreoz','pot2':'White Widow','pot3':''}} if tid==2 else None,
         '_normalise_pot_strains':lambda p: {k: (p or {}).get(k,'') for k in ('pot1','pot2','pot3')},
+        'normalize_pot_positions':normalize_pot_positions,
         'build_analysis_export':build_analysis_export,'read_irrigation_events':read_irrigation_events,'ANALYSIS_EXPORT_HOURS':HOURS,'POLL_INTERVAL_SECONDS':10}
     exec(compile(ast.Module(body=[node],type_ignores=[]),'api/app.py','exec'),ns)
     return ns['export_analysis_json']

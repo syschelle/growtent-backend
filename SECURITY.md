@@ -1,4 +1,4 @@
-# Security — v0.404
+# Security — v0.405
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -206,3 +206,9 @@ The HDR preview is opt-in and read-only, using the same authorized per-tent JPEG
 ## v0.404 per-tent strain export
 
 The analysis export includes only the selected tent's public display name and its three saved strain-name labels, not the entire tent configuration. It remains covered by existing history export access restrictions. The SQL query uses the numeric bound tent ID; the export adds no input-controlled SQL, new endpoint or controller write. Credentials, controller URLs, HMAC secrets and all other tent settings are still excluded. The assignment reflects the current backend state and must not be mistaken for verified historical information.
+
+## v0.405 camera marker persistence
+
+- `GET /tents/{id}/camera-positions` returns only numbered positions and assigned strain names, not RTSP URLs, credentials, HMAC secrets, or private controller settings. Guest sessions can read the overlay, but `PUT` requires a real administrator session checked in both modular and legacy endpoints. Reject unknown pot keys, nonfinite values and out-of-range coordinates; the database update is restricted to `pot_positions_json` for a single tent ID.
+- Saved data describes only **current** camera positions. Backups include positions so restoring or moving a tent retains the manual mapping; re-calibration is needed if camera placement changes. No camera photos, RTSP credentials or new recordings are stored in PostgreSQL.
+- `camera-marked.jpg` is rendered in memory from the same bounded single RTSP frame used for `camera.jpg` and HDR. Only numeric labels and current strain names are burned into this optional image. If annotation fails, the original and historic measurements remain available. The existing 1 MB JSON bound and camera JPEG/processing limits remain in force.

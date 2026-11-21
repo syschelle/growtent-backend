@@ -9,6 +9,7 @@ from zipfile import ZipFile
 from datetime import timezone
 from fastapi.responses import Response
 from services.analysis_archive import make_analysis_zip
+from services.pot_markers import normalize_pot_positions
 from test_analysis_export import END, exporter, reading
 from test_vpd_source import Database
 
@@ -38,13 +39,14 @@ class TentDatabase:
         # never escape the backend in a snapshot.
         return (2, 'Zelt Süd', 'http://device/api/state',
                 'rtsp://cam:secret@camera/live', 'shelly_user', 'shelly_password',
-                '{"pot1":"Oreoz", "pot2":"Blue Dream", "pot3":""}')
+                '{"pot1":"Oreoz", "pot2":"Blue Dream", "pot3":""}',
+                '{"pot1":{"x":0.25,"y":0.65},"pot2":null,"pot3":null}')
 
 
 def test_tent_lookup_loads_only_requested_tent_and_returns_three_assignments():
     db=TentDatabase()
     ns={'get_conn':db.connection, 'json':json,
-        'POT_STRAIN_KEYS':('pot1','pot2','pot3')}
+        'POT_STRAIN_KEYS':('pot1','pot2','pot3'), 'normalize_pot_positions':normalize_pot_positions}
     for name in ('_normalise_pot_strains','get_tent_by_id'):
         exec(_function(name),ns)
     result=ns['get_tent_by_id'](2)
@@ -53,6 +55,7 @@ def test_tent_lookup_loads_only_requested_tent_and_returns_three_assignments():
     assert 'pot_strains_json' in db.sql[0][0]
     assert result['pot_strains']=={'pot1':'Oreoz','pot2':'Blue Dream','pot3':''}
     assert result['name']=='Zelt Süd'
+    assert result['pot_positions']['pot1']=={'x':0.25,'y':0.65}
     assert result['_shelly_main_password']=='shelly_password'
 
 

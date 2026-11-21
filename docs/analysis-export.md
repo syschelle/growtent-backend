@@ -1,5 +1,69 @@
 # Historical analysis export: JSON and ZIP
 
+## Per-tent camera markers (v0.405)
+
+The Dashboard fullscreen camera provides **Töpfe / Pots** to show/hide the
+position overlay, **Sorten / Strains** to toggle its text labels, and (for
+administrators) **Positionieren / Position** with drag-and-drop, **Speichern /
+Save** and **Abbrechen / Cancel**. Only an explicit save persists the coordinates.
+The image overlay works in both Original and HDR mode, with pan/zoom and
+responsive previews. Coordinates are percentages of the *camera image*, not the
+browser window. Reposition the markers if the camera is moved. Guests may see
+but cannot edit markers.
+
+Current positions are in PostgreSQL `tents.pot_positions_json` as three optional
+normalized fractions (0–1), stored per tent. The position API is:
+
+- `GET /tents/{tent_id}/camera-positions` (authorized view)
+- `PUT /tents/{tent_id}/camera-positions` (administrator session required)
+
+Example PUT body:
+
+```json
+{"pot1":{"x":0.25,"y":0.65},"pot2":{"x":0.5,"y":0.65},"pot3":null}
+```
+
+Both JSON-only analysis exports and ZIP-embedded JSON add:
+
+```json
+"pot_positions": {
+  "pot1": {"x": 0.25, "y": 0.65},
+  "pot2": {"x": 0.5, "y": 0.65},
+  "pot3": null
+},
+"pot_positions_source": "current_tent_configuration"
+```
+
+These positions and `pot_strains` describe **only the current tent
+configuration**, not a historical grow state. A `null` slot means that no
+position has been saved for that pot. Import/export configuration backups keep
+the position mapping; older backups import unplaced pots.
+
+When a camera frame and at least one saved position exist, the analysis ZIP
+additionally contains `camera-marked.jpg`. It is rendered **from the same
+original camera frame** as `camera.jpg` and `camera-hdr.jpg`, without an extra
+RTSP fetch. The original camera file is not touched. `camera-marked.jpg` is a
+high-quality JPEG, preserving native resolution up to 16 MP (4K included) and
+rendering compact **numeric pot IDs plus optional strain names**, independent
+of UI language. `camera_snapshot.marked` describes the **actual output**:
+
+```json
+"marked": {
+  "status": "included",
+  "filename": "camera-marked.jpg",
+  "width_px": 3840,
+  "height_px": 2160,
+  "source": "current_tent_configuration"
+}
+```
+
+Status is `not_configured` when the camera is present but no pot has a saved
+position, `unavailable` when the camera is absent, and `error` if image
+annotation fails. The JSON and original/HDR export still succeed in all these
+cases. No labelled image is invented for unconfigured pots. This graphic is a
+**visual aid**, not automatic plant identification or a time-stamped record of
+historical pot placement.
+
 ## Per-tent strain assignments (v0.404)
 
 Both `GET /api/export/analysis?tent_id=2&range=24h` (JSON) and the JSON

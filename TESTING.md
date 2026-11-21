@@ -1,4 +1,4 @@
-# Testing — v0.404
+# Testing — v0.405
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -237,3 +237,10 @@ Verify that the German and English Markdown sources and their pre-rendered HTML 
 ## v0.404 pot strain metadata in analysis exports
 
 Run `PYTHONPATH=api:tests python -m pytest -q tests/test_analysis_export.py tests/test_analysis_export_pot_strains.py tests/test_analysis_archive.py`. The tests confirm the selected tent's `pot_strains_json` is read with a bound tent ID, all three assigned names and blank slots are preserved in JSON and ZIP, historical points are not overwritten, and no unrelated config/credentials leak. The existing adaptive 1 MB JSON size guard is exercised. No live controller is queried.
+
+## v0.405 camera pot markers
+
+- `PYTHONPATH=api:tests pytest -q tests/test_camera_pot_positions.py` validates coordinate normalization, rejected out-of-bounds/NaN/extra fields, read scoping, administrator-only writes, same-frame annotated ZIP, unconfigured behavior and source backup/migration contracts.
+- `PYTHONPATH=api:tests python tests/check_camera_pot_markers_browser.py` checks real Chromium drag, save/cancel, keyboard fine adjustment, mobile 320px, German/English, HDR switching, guest read-only rendering and no JS exceptions (with mocked cameras/API).
+- `PYTHONPATH=api:tests python tests/check_preview_hdr_browser.py` confirms existing HDR/zoom compatibility.
+- Existing Python and Node tests should also be run. PostgreSQL integration on a test schema, real RTSP cameras and Docker rebuild require deployment-specific verification.

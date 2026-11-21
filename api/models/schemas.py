@@ -56,6 +56,17 @@ class TentPayload(StrictModel):
         return (slots + ["", "", ""])[:3]
 
 
+class CameraPoint(StrictModel):
+    x: float = Field(ge=0, le=1, allow_inf_nan=False)
+    y: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+class CameraPositionsPayload(StrictModel):
+    pot1: CameraPoint | None = None
+    pot2: CameraPoint | None = None
+    pot3: CameraPoint | None = None
+
+
 class GrowProfilePatch(StrictModel):
     targetTemperature: float | None = None
     targetVPD: float | None = None

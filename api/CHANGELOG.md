@@ -1,3 +1,8 @@
+## v0.405 — Per-tent camera pot mapping
+- Add `pot_positions_json`, authenticated camera-position API, responsive fullscreen drag interface and read-only guest rendering.
+- Add optional `camera-marked.jpg` and `camera_snapshot.marked` ZIP metadata with image-safe label rendering, preserving camera originals and historical JSON.
+- Import/export pot locations in backup and expose current configuration as `pot_positions` in analysis JSON.
+
 ## v0.404 — Export assigned pot strains for each tent
 
 - Include the selected tent name and its three currently configured pot strain names in both analysis JSON and the JSON inside the analysis ZIP. Empty assignment slots remain empty, not guessed.

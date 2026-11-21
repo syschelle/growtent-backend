@@ -14,6 +14,7 @@ import json
 
 import httpx
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
+from services.pot_markers import draw_marked_camera_jpeg, normalize_pot_positions
 
 # Keep the normal 4K/8MP JPEG untouched. These bounds protect the API from an
 # unexpectedly huge camera response, independently of the 1 MB JSON limit.
@@ -22,6 +23,7 @@ MAX_CAMERA_FETCH_BYTES = 32_000_000
 MAX_CAMERA_PIXELS = 48_000_000
 CAMERA_FILENAME = 'camera.jpg'
 CAMERA_HDR_FILENAME = 'camera-hdr.jpg'
+CAMERA_MARKED_FILENAME = 'camera-marked.jpg'
 MAX_HDR_PIXELS = 16_000_000  # Bound image-processing memory; 4K stays native.
 HDR_METHOD = 'single_frame_adaptive_tone_mapping_v2'
 
@@ -237,6 +239,13 @@ def make_analysis_zip(json_bytes: bytes, json_filename: str, camera_jpeg: bytes 
         except (OSError, ValueError, UnidentifiedImageError):
             hdr_jpeg = None
             hdr_width = hdr_height = None
+    positions = normalize_pot_positions(analysis.get('pot_positions'))
+    has_positions = any(point is not None for point in positions.values())
+    marked = draw_marked_camera_jpeg(camera_jpeg, positions, analysis.get('pot_strains')) if included and has_positions else None
+    marked_jpeg, marked_width, marked_height = marked if marked is not None else (None, None, None)
+    marked_status = ('included' if marked_jpeg is not None else
+                     'unavailable' if not included else
+                     'not_configured' if not has_positions else 'error')
     analysis['camera_snapshot'] = {
         'status': 'included' if included else 'unavailable',
         'filename': CAMERA_FILENAME if included else None,
@@ -251,6 +260,13 @@ def make_analysis_zip(json_bytes: bytes, json_filename: str, camera_jpeg: bytes 
             'width_px': hdr_width,
             'height_px': hdr_height,
         },
+        'marked': {
+            'status': marked_status,
+            'filename': CAMERA_MARKED_FILENAME if marked_jpeg is not None else None,
+            'width_px': marked_width,
+            'height_px': marked_height,
+            'source': 'current_tent_configuration',
+        },
     }
     with BytesIO() as buffer:
         with ZipFile(buffer, 'w', compression=ZIP_DEFLATED, compresslevel=6) as archive:
@@ -258,6 +274,12 @@ def make_analysis_zip(json_bytes: bytes, json_filename: str, camera_jpeg: bytes 
             if included:
                 # JPEG is compressed already. Store byte-identically in ZIP.
                 archive.writestr(CAMERA_FILENAME, camera_jpeg, compress_type=ZIP_STORED)
+                if marked_jpeg is not None:
+                    archive.writestr(CAMERA_MARKED_FILENAME, marked_jpeg, compress_type=ZIP_STORED)
+                elif has_positions:
+                    archive.writestr('camera-marked-unavailable.txt',
+                        'DE: Das markierte Kamerabild konnte nicht erstellt werden. Original/HDR bleiben enthalten.\n'
+                        'EN: The labelled camera image could not be generated. Original/HDR are unaffected.\n')
                 if hdr_jpeg is not None:
                     archive.writestr(CAMERA_HDR_FILENAME, hdr_jpeg, compress_type=ZIP_STORED)
                 else:
