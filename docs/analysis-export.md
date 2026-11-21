@@ -92,3 +92,7 @@ Light times are the ESP-stored day-0 schedule, which the firmware exposes as the
 The existing download endpoint adapts window width to stay within 1,000,000 UTF-8 bytes. Minimums, maximums, valid sample counts, state/freshness counts, first/last energy values and total transition counts remain available as windows widen. Details are bounded; `eventDetailsOmitted` counts omitted target/switch details (the legacy humidifier field and its new Shelly entry do not double-count the same omission).
 
 All transition and context timestamps are backend polling observations. Switching between polls cannot be reconstructed. No live status is retroactively assigned to earlier samples.
+
+## HDR appearance update (v0.403)
+
+The optional fullscreen HDR button and `camera-hdr.jpg` now share a stronger, adaptive single-frame tone curve with local clarity. This makes moderate-contrast growtent images visibly easier to inspect. It is still not true multi-exposure HDR, and does not increase native detail. The method metadata is now `single_frame_adaptive_tone_mapping_v2`; `camera.jpg` is untouched.

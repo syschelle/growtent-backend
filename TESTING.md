@@ -1,4 +1,4 @@
-# Testing — v0.402
+# Testing — v0.403
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -229,3 +229,7 @@ Verify that the German and English Markdown sources and their pre-rendered HTML 
 ## v0.402 fullscreen Original/HDR camera viewer
 
 `PYTHONPATH=api pytest -q tests/test_preview_hdr.py` checks unchanged byte-for-byte normal preview, opt-in HDR output using the ZIP helper, invalid/failed image rejection, and real modular router/service propagation of `hdr=1` without importing a production database. `PYTHONPATH=api:tests python tests/check_preview_hdr_browser.py` uses Chromium with synthetic camera frames; it checks the Original/HDR controls (DE/EN), selected mode state, correct preview URL query parameters, switching at normal and 200% smart zoom, and visibility at 320 px. The test never contacts a real camera or controller. Local verification: 319 Python tests passed (excluding PostgreSQL-only integration), all five JavaScript suites passed, and export/fullscreen Chromium checks passed in DE/EN; run the normal regression suite and release-notes check as usual; Docker and live-camera operation remain to be verified.
+
+## v0.403 adaptive camera HDR regression
+
+- Test real exported frames for a visibly stronger result than v0.402 while ensuring an unchanged original image, bounded size, 4K retention, degenerate-frame resilience, and shared fullscreen/ZIP transformation.

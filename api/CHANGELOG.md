@@ -1,3 +1,7 @@
+## v0.403 — Visible adaptive HDR-style camera images
+
+- Increase adaptive tonality, local clarity and restrained colour in camera HDR exports and fullscreen only. Original JPEG untouched.
+
 ## v0.402 — Dual original + HDR-style camera export
 
 - The analysis ZIP now includes `camera.jpg` unchanged plus `camera-hdr.jpg` from the *same* frame via conservative single-exposure tone mapping (not true multi-exposure HDR). No extra RTSP fetches.

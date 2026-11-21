@@ -233,3 +233,40 @@ def test_hdr_failed_still_keeps_original_and_bilingual_note(monkeypatch):
 
 def test_hdr_style_rejects_invalid_source_without_exception():
     assert _hdr_style_camera_jpeg(b'not-jpeg') is None
+
+
+def test_hdr_adaptive_has_visible_effect_on_hazy_midtones():
+    """Guard against a regression to the nearly invisible v0.402 tone curve."""
+    from PIL import ImageStat
+    scene = Image.new('RGB', (480, 240))
+    painter = ImageDraw.Draw(scene)
+    for x in range(480):
+        value = int(78 + 132 * x / 479)
+        painter.line([(x, 0), (x, 239)], fill=(value, min(255, value + 9), min(255, value + 4)))
+    with BytesIO() as original_buffer:
+        scene.save(original_buffer, 'JPEG', quality=94, subsampling=0)
+        original_bytes = original_buffer.getvalue()
+    hdr_bytes = _hdr_style_camera_jpeg(original_bytes)
+    assert hdr_bytes is not None
+    with Image.open(BytesIO(original_bytes)).convert('RGB') as original, Image.open(BytesIO(hdr_bytes)).convert('RGB') as hdr:
+        assert hdr.size == original.size
+        # Average per-channel intensity difference, deliberately well above
+        # the tiny 2–3 levels seen on the user's v0.402 real snapshot.
+        from PIL import ImageChops
+        difference = ImageChops.difference(original, hdr)
+        mean_change = sum(ImageStat.Stat(difference).mean) / 3
+        assert mean_change >= 6.5
+        # Preserve useful brightness steps rather than flattening the scene.
+        assert hdr.getpixel((20, 120))[0] < hdr.getpixel((450, 120))[0]
+
+
+def test_hdr_adaptive_handles_flat_and_extreme_images():
+    for value in (0, 10, 36, 135, 235, 255):
+        with BytesIO() as b:
+            Image.new('RGB', (300, 180), (value, value, value)).save(b, 'JPEG')
+            src = b.getvalue()
+        hdr = _hdr_style_camera_jpeg(src)
+        assert hdr is not None
+        with Image.open(BytesIO(hdr)) as processed:
+            assert processed.size == (300, 180)
+            assert processed.format == 'JPEG'

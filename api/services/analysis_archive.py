@@ -2,7 +2,7 @@
 
 The camera is fetched at the *stream's native resolution*. We keep the original
 JPEG bytes wherever possible; the optional HDR-look variant uses single-frame
-shadow/highlight tone mapping, NOT multi-exposure true HDR. No RTSP URLs,
+adaptive tone mapping and clarity enhancement, NOT multi-exposure true HDR. No RTSP URLs,
 credentials, or images are persisted by this service.
 """
 
@@ -13,7 +13,7 @@ from zipfile import ZipFile, ZIP_DEFLATED, ZIP_STORED
 import json
 
 import httpx
-from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, UnidentifiedImageError
 
 # Keep the normal 4K/8MP JPEG untouched. These bounds protect the API from an
 # unexpectedly huge camera response, independently of the 1 MB JSON limit.
@@ -23,7 +23,7 @@ MAX_CAMERA_PIXELS = 48_000_000
 CAMERA_FILENAME = 'camera.jpg'
 CAMERA_HDR_FILENAME = 'camera-hdr.jpg'
 MAX_HDR_PIXELS = 16_000_000  # Bound image-processing memory; 4K stays native.
-HDR_METHOD = 'single_frame_tone_mapping'
+HDR_METHOD = 'single_frame_adaptive_tone_mapping_v2'
 
 
 def _high_quality_camera_jpeg(image: bytes) -> bytes | None:
@@ -65,13 +65,15 @@ def _high_quality_camera_jpeg(image: bytes) -> bytes | None:
 
 
 def _hdr_style_camera_jpeg(original_jpeg: bytes) -> bytes | None:
-    """Make a natural-looking *single-exposure* HDR-style JPEG.
+    """Enhanced single-frame HDR *look*, calibrated on real tent-camera samples.
 
-    Gently open local shadows and compress very bright regions on luminance
-    only, preserving colours. The camera's clipped detail cannot be recovered.
-    Keep 4K pixels, avoid upscaling or aggressive sharpening, and resize only
-    if the source is unusually large or the final JPEG exceeds its size cap.
-    The original camera JPEG is never modified or re-encoded by this function.
+    Older processing barely moved midtones, especially with diffuse LED light.
+    The new adaptive luminance curve brings back global separation, while a
+    bounded local-contrast pass makes existing detail easier to see. This does
+    not recover clipped highlights or lost optical focus, and is not true HDR.
+
+    Work on luminance, retain natural colour (only a small saturation lift),
+    and never affect the original JPEG. Keep 4K frames without resampling.
     """
     try:
         with Image.open(BytesIO(original_jpeg)) as image:
@@ -90,24 +92,67 @@ def _hdr_style_camera_jpeg(original_jpeg: bytes) -> bytes | None:
             ratio = (MAX_HDR_PIXELS / (source.width * source.height)) ** .5
             source = source.resize((max(1, int(source.width * ratio)), max(1, int(source.height * ratio))),
                                    Image.Resampling.LANCZOS, reducing_gap=3.0)
+
         y, cb, cr = source.convert('YCbCr').split()
-        # A broad illumination estimate prevents noisy per-pixel correction.
-        local = y.filter(ImageFilter.GaussianBlur(radius=max(4, min(source.size) / 150)))
-        def smoothstep(low: float, high: float, value: float) -> float:
-            f = min(1., max(0., (value - low) / (high - low)))
-            return f * f * (3. - 2. * f)
-        shadow_mask = local.point([round(105 * (1 - smoothstep(35, 165, v))) for v in range(256)])
-        high_mask = local.point([round(85 * smoothstep(135, 245, v)) for v in range(256)])
-        lifted = y.point([round(255 * (v / 255) ** .72) for v in range(256)])
-        compressed = y.point([round(v * (1 - .07 * (v / 255) ** 3)) for v in range(256)])
-        toned = Image.composite(lifted, y, shadow_mask)
-        toned = Image.composite(compressed, toned, high_mask)
+        histogram = y.histogram()
+        total = sum(histogram)
+        def percentile(fraction: float) -> int:
+            threshold = total * fraction
+            n = 0
+            for value, count in enumerate(histogram):
+                n += count
+                if n >= threshold:
+                    return value
+            return 255
+
+        p2, p10, p50, p90, p99 = (percentile(q) for q in (.02, .10, .50, .90, .99))
+        # For uniformly dark captures, lift shadows rather than crushing them.
+        # Otherwise, a gentle S curve improves the often hazy 10–90% range.
+        spread = p90 - p10
+        amount = min(1.0, max(0.0, (spread - 12) / 45))
+        def shift(value: int, delta: float) -> int:
+            return max(0, min(255, round(value + delta * amount)))
+        anchors = [
+            (0, 0),
+            (p2, shift(p2, 12 if p2 < 55 else -17)),
+            (p10, shift(p10, 10 if p10 < 68 else -16)),
+            (p50, shift(p50, 2)),
+            (p90, min(249, p99, shift(p90, 22))),
+            (p99, min(253, p99)),
+            (255, 255),
+        ]
+        # Flat/synthetic scenes can have identical percentiles. Coalesce
+        # repeated X values and keep a monotonically increasing mapping.
+        unique = []
+        for x, value in anchors:
+            if unique and x == unique[-1][0]:
+                unique[-1] = (x, value)
+            else:
+                unique.append((x, value))
+        knots = []
+        for x, value in unique:
+            knots.append((x, max(value, knots[-1][1] if knots else 0)))
+        lut = []
+        index = 0
+        for value in range(256):
+            while index < len(knots) - 2 and value > knots[index + 1][0]:
+                index += 1
+            x0, y0 = knots[index]
+            x1, y1 = knots[index + 1]
+            mapped = y0 if x0 == x1 else y0 + (y1 - y0) * (value - x0) / (x1 - x0)
+            lut.append(max(0, min(255, round(mapped))))
+        toned = y.point(lut)
+        # Clarity increases genuine local contrast, with a small threshold
+        # to avoid exaggerating JPEG grain and block artifacts.
+        if spread >= 24:
+            radius = max(2.0, min(source.size) / 130)
+            toned = toned.filter(ImageFilter.UnsharpMask(radius=radius, percent=120, threshold=3))
         result = Image.merge('YCbCr', (toned, cb, cr)).convert('RGB')
+        if spread >= 24:
+            result = ImageEnhance.Color(result).enhance(1.10)
         with BytesIO() as out:
             result.save(out, format='JPEG', quality=94, subsampling=0, optimize=True)
             jpg = out.getvalue()
-        # An extremely complex frame can still be large; apply the same
-        # bounded, high-quality rule as for the original (never upscale).
         return jpg if len(jpg) <= MAX_CAMERA_BYTES else _high_quality_camera_jpeg(jpg)
     except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError, MemoryError):
         return None

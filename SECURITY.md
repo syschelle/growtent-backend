@@ -1,4 +1,4 @@
-# Security — v0.402
+# Security — v0.403
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -198,3 +198,7 @@ The second JPEG is derived **only** from the already-authorized single live came
 ## v0.402 fullscreen camera HDR option
 
 The HDR preview is opt-in and read-only, using the same authorized per-tent JPEG and in-memory tone-mapping helper as the analysis ZIP. `hdr=1` is a boolean query flag, not an arbitrary URL; the response must be JPEG, is capped by the existing 32 MB input limit and limited to supported pixel dimensions. A processing failure returns 502 (never mislabeled as HDR) and leaves the normal JPEG preview unchanged. No new camera/RTSP credentials, data persistence, ESP control commands or public endpoints are introduced. The fullscreen HDR viewer requests a new frame no more frequently than every five seconds, and guards against stale responses when switching image modes.
+
+## v0.403 adaptive camera enhancement
+
+- The strengthened HDR appearance uses existing local frame bytes only; no new HTTP input surface, storage path, camera control or credential handling. Existing bounds on pixels, bytes, retries and image type remain in force.
