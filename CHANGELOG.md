@@ -1,4 +1,4 @@
-## v0.406 — Compact camera pot controls and number-only annotated image
+## v0.407 — Compact camera pot controls and number-only annotated image
 
 - Keep only Töpfe/Pots as an overlay control on the fullscreen camera. Move administrator Positionen bearbeiten/Edit positions, Speichern/Save and Abbrechen/Cancel into an independent toolbar above the image; preserve editing via mouse, touch and keyboard and guest read-only access.
 - Remove the Sorten/Strains image overlay switch and visible strain labels. The numbered pot circles remain; assignments remain linked per tent and are still exported as `pot_strains` in JSON.

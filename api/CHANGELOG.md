@@ -1,4 +1,4 @@
-## v0.406 — Numbered camera labels and separate edit toolbar
+## v0.407 — Numbered camera labels and separate edit toolbar
 
 - Move positioning/save/cancel controls out of the camera overlay into a bilingual admin bar above the picture. The image overlay retains only the Töpfe/Pots toggle.
 - Hide strain text in fullscreen, draw only 1/2/3 in `camera-marked.jpg`, and keep pot-to-strain mapping in JSON. Existing schema, API, image sources and permissions are unchanged.

@@ -2,18 +2,9 @@
 
 ## Per-tent camera markers (v0.405–v0.406)
 
-The Dashboard fullscreen camera shows **Töpfe / Pots** as the *only* pot
-control overlaid on the image. It toggles the numbered circle markers. The
-**Positionen bearbeiten / Edit positions**, **Speichern / Save**, and
-**Abbrechen / Cancel** controls sit in a separate slim toolbar **above the
-picture**, available to administrators only. The removed Sorten/Strains toggle
+The Dashboard fullscreen camera keeps **all pot controls above the image**. The toolbar contains **Töpfe / Pots** to toggle the numbered circle markers plus, for administrators, **Positionen bearbeiten / Edit positions**, **Speichern / Save**, and **Abbrechen / Cancel**. No pot button covers the picture. The removed Sorten/Strains toggle
 is not needed: strain assignments remain linked to the numbered pots in JSON
-and Setup. No strain text is shown on top of the camera image. Only explicit
-Save persists new coordinates.
-The image overlay works in both Original and HDR mode, with pan/zoom and
-responsive previews. Coordinates are percentages of the *camera image*, not the
-browser window. Reposition the markers if the camera is moved. Guests may see
-but cannot edit markers.
+and Setup. No strain text is shown on top of the camera image. Instead, hovering or focusing a numbered marker shows the current strain assignment as a small hint. Only explicit Save persists new coordinates. The image overlay works in both Original and HDR mode, with pan/zoom and responsive previews. Coordinates are percentages of the *camera image*, not the browser window. Reposition the markers if the camera is moved. Guests may see but cannot edit markers.
 
 Current positions are in PostgreSQL `tents.pot_positions_json` as three optional
 normalized fractions (0–1), stored per tent. The position API is:

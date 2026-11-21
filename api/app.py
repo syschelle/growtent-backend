@@ -53,7 +53,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.406"
+APP_VERSION = "v0.407"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -13250,21 +13250,17 @@ def dashboard_page(request: Request):
               const clampPot = value => Math.max(0, Math.min(1, value));
               let potPositions = emptyPositions();
               let draftPositions = emptyPositions();
+              let potStrains = {pot1:'', pot2:'', pot3:''};
               let potEdit = false;
               let potsVisible = true;
               const canEditPots = typeof currentUserRole !== 'undefined' && currentUserRole === 'admin';
 
-              // Only the Pots toggle is overlaid on the camera picture.
-              // Edit/Save/Cancel live in their own bar OUTSIDE the image.
+              // Pot controls live in their own toolbar OUTSIDE the image so the
+              // camera pixels remain unobstructed. Only numbered markers stay on the picture.
               const potToolbar = doc.createElement('div');
               potToolbar.id = 'cameraPotToolbar';
-              potToolbar.style.cssText = `position:absolute;top:12px;left:12px;display:flex;gap:5px;`+
-                `padding:4px;border-radius:9px;background:${colors.headerBg};`+
-                `border:1px solid ${colors.btnBorder};z-index:7;box-sizing:border-box`;
-              const potEditBar = doc.createElement('div');
-              potEditBar.id = 'cameraPotEditBar';
-              potEditBar.style.cssText = `display:${canEditPots?'flex':'none'};flex-wrap:wrap;align-items:center;`+
-                `gap:6px;box-sizing:border-box;min-width:0;padding:6px 12px;`+
+              potToolbar.style.cssText = `display:flex;flex-wrap:wrap;align-items:center;gap:6px;`+
+                `box-sizing:border-box;min-width:0;padding:6px 12px;`+
                 `background:${colors.headerBg};border-bottom:1px solid ${colors.border}`;
               const potButton = (parent, id, label) => {
                 const button = doc.createElement('button');
@@ -13278,24 +13274,17 @@ def dashboard_page(request: Request):
                 return button;
               };
               const showPotsBtn = potButton(potToolbar,'cameraShowPots',currentLang==='de'?'Töpfe':'Pots');
-              const editPotsBtn = potButton(potEditBar,'cameraEditPots',currentLang==='de'?'Positionen bearbeiten':'Edit positions');
-              const savePotsBtn = potButton(potEditBar,'cameraSavePots',currentLang==='de'?'Speichern':'Save');
-              const cancelPotsBtn = potButton(potEditBar,'cameraCancelPots',currentLang==='de'?'Abbrechen':'Cancel');
+              const editPotsBtn = potButton(potToolbar,'cameraEditPots',currentLang==='de'?'Positionen bearbeiten':'Edit positions');
+              const savePotsBtn = potButton(potToolbar,'cameraSavePots',currentLang==='de'?'Speichern':'Save');
+              const cancelPotsBtn = potButton(potToolbar,'cameraCancelPots',currentLang==='de'?'Abbrechen':'Cancel');
               const potFeedback = doc.createElement('span');
               potFeedback.id = 'cameraPotFeedback';
               potFeedback.setAttribute('role','status');
               potFeedback.style.cssText = `font:12px Arial,sans-serif;color:${colors.btnText};flex:1 1 160px;min-width:0`;
-              potEditBar.appendChild(potFeedback);
-              stage.appendChild(potToolbar);
+              potToolbar.appendChild(potFeedback);
 
-              // The edit bar occupies its own grid row; never covers camera pixels.
-              doc.body.style.gridTemplateRows = canEditPots
-                ? '48px auto minmax(0,1fr)' : '48px minmax(0,1fr)';
-              if (!canEditPots) {
-                // Guests keep the full preview height without an empty edit row.
-                img.style.maxHeight = 'calc(100vh - 48px)';
-                pictureLayer.style.maxHeight = 'calc(100vh - 48px)';
-              }
+              // The toolbar occupies its own grid row; it never covers camera pixels.
+              doc.body.style.gridTemplateRows = '48px auto minmax(0,1fr)';
               const updatePotToolbar = () => {
                 editPotsBtn.style.display = canEditPots && !potEdit ? '' : 'none';
                 savePotsBtn.style.display = canEditPots && potEdit ? '' : 'none';
@@ -13316,7 +13305,7 @@ def dashboard_page(request: Request):
                   marker.dataset.pot = key;
                   marker.style.cssText = `position:absolute;left:${position.x*100}%;top:${position.y*100}%;`+
                     `transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;`+
-                    `user-select:none;touch-action:none;pointer-events:${potEdit?'auto':'none'};`+
+                    `user-select:none;touch-action:none;pointer-events:auto;`+
                     `cursor:${potEdit?'grab':'default'};z-index:3;`;
                   const dot = doc.createElement('div');
                   dot.textContent = String(index+1);
@@ -13324,8 +13313,28 @@ def dashboard_page(request: Request):
                     `display:grid;place-items:center;background:${colorsPot[index]};border:2px solid white;`+
                     `color:white;font:bold 16px Arial,sans-serif;box-shadow:0 1px 5px #000c;`;
                   marker.setAttribute('aria-label', `${currentLang==='de'?'Topf':'Pot'} ${index+1}`);
-                  marker.tabIndex = potEdit ? 0 : -1;
+                  marker.tabIndex = potEdit ? 0 : 0;
                   marker.appendChild(dot);
+                  const strainName = String((potStrains && potStrains[key]) || '').trim();
+                  const tooltip = doc.createElement('div');
+                  tooltip.className = 'camera-pot-tooltip';
+                  tooltip.textContent = strainName || (currentLang==='de' ? 'Keine Sorte' : 'No strain');
+                  tooltip.hidden = true;
+                  tooltip.style.cssText = `margin-top:6px;padding:4px 7px;max-width:180px;`+
+                    `border-radius:7px;background:rgba(8,15,30,.92);border:1px solid rgba(255,255,255,.18);`+
+                    `color:#fff;font:600 12px Arial,sans-serif;line-height:1.25;`+
+                    `box-shadow:0 1px 5px #000a;white-space:nowrap;pointer-events:none;`;
+                  marker.title = strainName || (currentLang==='de' ? 'Keine Sorte zugeordnet' : 'No strain assigned');
+                  marker.appendChild(tooltip);
+                  const showTooltip = () => {
+                    if (potEdit) return;
+                    tooltip.hidden = false;
+                  };
+                  const hideTooltip = () => { tooltip.hidden = true; };
+                  marker.addEventListener('mouseenter', showTooltip);
+                  marker.addEventListener('mouseleave', hideTooltip);
+                  marker.addEventListener('focus', showTooltip);
+                  marker.addEventListener('blur', hideTooltip);
                   if (potEdit) {
                     marker.addEventListener('pointerdown', e => {
                       e.preventDefault();e.stopPropagation();
@@ -13408,13 +13417,14 @@ def dashboard_page(request: Request):
                   if (!response.ok) throw new Error(`HTTP ${response.status}`);
                   const config = await response.json();
                   potPositions = config.positions || emptyPositions();
+                  potStrains = config.pot_strains || {pot1:'', pot2:'', pot3:''};
                   if (!potEdit) renderPotMarkers();
                 })
                 .catch(() => {potFeedback.textContent = currentLang==='de'
                   ? 'Topfpositionen nicht verfügbar':'Pot positions unavailable';});
 
               doc.body.appendChild(header);
-              if (canEditPots) doc.body.appendChild(potEditBar);
+              doc.body.appendChild(potToolbar);
               doc.body.appendChild(stage);
 
               let zoom = 1;
