@@ -1,3 +1,9 @@
+## v0.406 — Compact camera pot controls and number-only annotated image
+
+- Keep only Töpfe/Pots as an overlay control on the fullscreen camera. Move administrator Positionen bearbeiten/Edit positions, Speichern/Save and Abbrechen/Cancel into an independent toolbar above the image; preserve editing via mouse, touch and keyboard and guest read-only access.
+- Remove the Sorten/Strains image overlay switch and visible strain labels. The numbered pot circles remain; assignments remain linked per tent and are still exported as `pot_strains` in JSON.
+- Render `camera-marked.jpg` with just the three numeric pot circles; preserve the byte-identical original, HDR image, coordinates, authorization and all backend/ESP functionality.
+
 ## v0.405 — Camera pot markers and annotated analysis snapshot
 - Configure three movable pot markers per tent in the fullscreen camera view (DE/EN, HDR, zoom, desktop and touch), with admin-only save/cancel and read-only guest viewing.
 - Export normalized pot positions and optional labelled `camera-marked.jpg` from the **same frame** alongside original/HDR; include positions in configuration backup.

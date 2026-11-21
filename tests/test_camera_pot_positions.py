@@ -124,6 +124,24 @@ def test_archive_labels_only_saved_coordinates_and_keeps_original_and_hdr():
     assert draw_marked_camera_jpeg(original,{'pot1':None,'pot2':None,'pot3':None},STR) is None
 
 
+
+def test_annotated_export_contains_numbers_only_without_strain_names():
+    """Marker picture must never expose the strain name; JSON still does."""
+    src=_jpg(960,540)
+    with_strains=draw_marked_camera_jpeg(src,POS,STR)
+    renamed=draw_marked_camera_jpeg(src,POS,{'pot1':'Completely different', 'pot2':'New'})
+    assert with_strains is not None and renamed is not None
+    assert with_strains[0]==renamed[0], 'Strain names must not be drawn into camera-marked.jpg'
+    with Image.open(BytesIO(with_strains[0])) as img:
+        # Former text box sat beneath the marker; it is now camera pixels.
+        x=round(.24*959); y=round(.73*539)+40
+        r,g,b=img.getpixel((x,y))
+        assert abs(r-75)<12 and abs(g-100)<12 and abs(b-115)<12
+    with ZipFile(BytesIO(make_analysis_zip(json.dumps({'tentId':2,'pot_strains':STR,
+            'pot_positions':POS}).encode(),'a.json',src))) as archive:
+        assert json.loads(archive.read('a.json'))['pot_strains']==STR
+        assert archive.read('camera.jpg')==src
+
 def test_no_saved_positions_does_not_generate_false_camera_marked_file():
     analysis={'tentId':2,'pot_strains':STR,'pot_positions':{'pot1':None,'pot2':None,'pot3':None}}
     with ZipFile(BytesIO(make_analysis_zip(json.dumps(analysis).encode(),'a.json',_jpg()))) as z:

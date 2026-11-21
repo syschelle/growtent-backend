@@ -66,10 +66,21 @@ def run(browser, role='admin', mobile=False, lang='de'):
     popup.wait_for_selector('[data-pot=pot1]')
     popup.locator('img[alt=Preview]').evaluate('(el,src)=>{el.src=src}', 'data:image/jpeg;base64,'+JPG)
     popup.wait_for_function("document.querySelector('img[alt=Preview]').naturalWidth > 0")
-    assert popup.locator('[data-pot=pot1]').get_attribute('aria-label') == ('Topf 1: Oreoz' if lang=='de' else 'Pot 1: Oreoz')
-    assert popup.locator('[data-pot=pot2]').count()==0
-    assert popup.locator('#cameraEditPots').count()==1
+    assert popup.locator('[data-pot=pot1]').get_attribute('aria-label') == ('Topf 1' if lang=='de' else 'Pot 1')
+    assert popup.locator('#cameraShowPotNames').count() == 0
+    assert popup.locator('#cameraPotToolbar button').count() == 1
+    assert popup.locator('#cameraPotToolbar button').inner_text() == ('Töpfe' if lang=='de' else 'Pots')
     if role == 'admin':
+        assert popup.locator('#cameraEditPots').inner_text() == ('Positionen bearbeiten' if lang=='de' else 'Edit positions')
+        assert popup.locator('#cameraPotEditBar').evaluate('el=>el.parentElement === document.body')
+    assert popup.locator('#cameraPotToolbar').evaluate('el=>el.closest("#cameraPotEditBar") === null')
+    assert popup.locator('.camera-pot-marker').first.locator('div').count() == 1
+    assert 'Oreoz' not in popup.locator('#cameraPotMarkers').inner_text()
+    assert popup.locator('[data-pot=pot2]').count()==0
+    assert popup.locator('#cameraEditPots').count() == (1 if role == 'admin' else 0)
+    if role == 'admin':
+        assert popup.locator('#cameraPotEditBar').is_visible()
+        assert popup.locator('#cameraEditPots').bounding_box()['y'] < popup.locator('img[alt=Preview]').bounding_box()['y']
         popup.locator('#cameraEditPots').click()
         popup.wait_for_selector('[data-pot=pot3]')
         assert popup.locator('#cameraSavePots').is_visible()
@@ -93,6 +104,7 @@ def run(browser, role='admin', mobile=False, lang='de'):
         assert len([p for p in writes[0].values() if p])==3
     else:
         assert not popup.locator('#cameraEditPots').is_visible()
+        assert popup.locator('#cameraPotEditBar').count() == 0
     popup.locator('#previewModeHDR').click()
     assert popup.locator('#previewModeHDR').get_attribute('aria-pressed')=='true'
     assert popup.locator('[data-pot=pot1]').count()==1
@@ -103,6 +115,10 @@ def run(browser, role='admin', mobile=False, lang='de'):
     popup.set_viewport_size({'width':320,'height':568})
     toolbar=popup.locator('#cameraPotToolbar').bounding_box()
     assert toolbar['x']>=0 and toolbar['x']+toolbar['width']<=322, toolbar
+    if role == 'admin':
+        edit_bar=popup.locator('#cameraPotEditBar').bounding_box()
+        assert edit_bar['x']>=0 and edit_bar['x']+edit_bar['width']<=322, edit_bar
+    assert popup.evaluate('document.documentElement.scrollWidth <= innerWidth+2')
     assert not errors,errors
     popup.close();page.close();context.close()
 

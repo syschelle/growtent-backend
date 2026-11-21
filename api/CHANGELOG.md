@@ -1,3 +1,8 @@
+## v0.406 — Numbered camera labels and separate edit toolbar
+
+- Move positioning/save/cancel controls out of the camera overlay into a bilingual admin bar above the picture. The image overlay retains only the Töpfe/Pots toggle.
+- Hide strain text in fullscreen, draw only 1/2/3 in `camera-marked.jpg`, and keep pot-to-strain mapping in JSON. Existing schema, API, image sources and permissions are unchanged.
+
 ## v0.405 — Per-tent camera pot mapping
 - Add `pot_positions_json`, authenticated camera-position API, responsive fullscreen drag interface and read-only guest rendering.
 - Add optional `camera-marked.jpg` and `camera_snapshot.marked` ZIP metadata with image-safe label rendering, preserving camera originals and historical JSON.

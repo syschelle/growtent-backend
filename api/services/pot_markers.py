@@ -53,7 +53,7 @@ def _font(pixel_size: int):
 
 
 def draw_marked_camera_jpeg(original_jpeg: bytes, pot_positions: dict, pot_strains: dict | None = None):
-    """Produce a labelled JPEG or None. Never alter original input bytes.
+    """Produce a number-only JPEG or None. Never alter original input bytes.
 
     Returns (jpeg, width, height), with dimensions of the *actual* output.
     JPEG is generated only when at least one saved pot position exists.
@@ -80,10 +80,8 @@ def draw_marked_camera_jpeg(original_jpeg: bytes, pot_positions: dict, pot_strai
         draw = ImageDraw.Draw(image)
         scale = max(0.5, min(w / 1920, h / 1080))
         radius = round(17 * scale)
-        pad = round(8 * scale)
         font = _font(max(11, round(20 * scale)))
         colors = ('#3b82f6', '#06b6d4', '#f59e0b')
-        strains = pot_strains if isinstance(pot_strains, dict) else {}
         for i, key in enumerate(POT_KEYS):
             point = positions[key]
             if point is None:
@@ -97,21 +95,6 @@ def draw_marked_camera_jpeg(original_jpeg: bytes, pot_positions: dict, pot_strai
             nr = draw.textbbox((0, 0), n, font=font)
             draw.text((x - (nr[2]-nr[0])/2, y - (nr[3]-nr[1])/2 - nr[1]), n,
                       fill='white', font=font, stroke_width=1, stroke_fill='#142033')
-            strain = str(strains.get(key) or '').strip()[:90]
-            label = str(i+1) + (f' · {strain}' if strain else '')
-            # Keep very long strain names legible inside the actual image.
-            while len(label) > 1 and draw.textbbox((0, 0), label, font=font)[2] > w * .90:
-                label = label[:-2].rstrip(' …') + '…'
-            bb = draw.textbbox((0, 0), label, font=font)
-            text_width, text_height = bb[2]-bb[0], bb[3]-bb[1]
-            left = max(0, min(w - text_width - 2*pad, x - text_width//2 - pad))
-            top = y + radius + pad
-            if top + text_height + 2*pad > h:
-                top = max(0, y - radius - 2*pad - text_height)
-            right = min(w, left + text_width + 2*pad)
-            bottom = min(h, top + text_height + 2*pad)
-            draw.rounded_rectangle((left, top, right, bottom), radius=max(3, round(7*scale)), fill='#0b1220', outline=color, width=max(1, round(scale)))
-            draw.text((left + pad, top + pad - bb[1]), label, font=font, fill='white')
         with BytesIO() as out:
             image.save(out, format='JPEG', quality=94, subsampling=0, optimize=True)
             result = out.getvalue()

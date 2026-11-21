@@ -1,4 +1,4 @@
-# Security — v0.405
+# Security — v0.406
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -211,4 +211,8 @@ The analysis export includes only the selected tent's public display name and it
 
 - `GET /tents/{id}/camera-positions` returns only numbered positions and assigned strain names, not RTSP URLs, credentials, HMAC secrets, or private controller settings. Guest sessions can read the overlay, but `PUT` requires a real administrator session checked in both modular and legacy endpoints. Reject unknown pot keys, nonfinite values and out-of-range coordinates; the database update is restricted to `pot_positions_json` for a single tent ID.
 - Saved data describes only **current** camera positions. Backups include positions so restoring or moving a tent retains the manual mapping; re-calibration is needed if camera placement changes. No camera photos, RTSP credentials or new recordings are stored in PostgreSQL.
-- `camera-marked.jpg` is rendered in memory from the same bounded single RTSP frame used for `camera.jpg` and HDR. Only numeric labels and current strain names are burned into this optional image. If annotation fails, the original and historic measurements remain available. The existing 1 MB JSON bound and camera JPEG/processing limits remain in force.
+- `camera-marked.jpg` is rendered in memory from the same bounded single RTSP frame used for `camera.jpg` and HDR. Only numbered circles 1–3 are drawn into this optional image; no strain names appear in the image. Assignments remain in the companion JSON. If annotation fails, the original and historic measurements remain available. The existing 1 MB JSON bound and camera JPEG/processing limits remain in force.
+
+## v0.406 numeric-only camera markers
+
+The camera viewer places position-edit controls in a separate row outside the image while retaining administrator-only backend authorization. Only pot numbers appear in `camera-marked.jpg`; names remain in the existing, authorized analysis JSON and are never rendered as pixels. The change adds no routes, credentials, database columns, device actions or RTSP requests.

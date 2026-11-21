@@ -1,11 +1,15 @@
 # Historical analysis export: JSON and ZIP
 
-## Per-tent camera markers (v0.405)
+## Per-tent camera markers (v0.405–v0.406)
 
-The Dashboard fullscreen camera provides **Töpfe / Pots** to show/hide the
-position overlay, **Sorten / Strains** to toggle its text labels, and (for
-administrators) **Positionieren / Position** with drag-and-drop, **Speichern /
-Save** and **Abbrechen / Cancel**. Only an explicit save persists the coordinates.
+The Dashboard fullscreen camera shows **Töpfe / Pots** as the *only* pot
+control overlaid on the image. It toggles the numbered circle markers. The
+**Positionen bearbeiten / Edit positions**, **Speichern / Save**, and
+**Abbrechen / Cancel** controls sit in a separate slim toolbar **above the
+picture**, available to administrators only. The removed Sorten/Strains toggle
+is not needed: strain assignments remain linked to the numbered pots in JSON
+and Setup. No strain text is shown on top of the camera image. Only explicit
+Save persists new coordinates.
 The image overlay works in both Original and HDR mode, with pan/zoom and
 responsive previews. Coordinates are percentages of the *camera image*, not the
 browser window. Reposition the markers if the camera is moved. Guests may see
@@ -44,8 +48,9 @@ additionally contains `camera-marked.jpg`. It is rendered **from the same
 original camera frame** as `camera.jpg` and `camera-hdr.jpg`, without an extra
 RTSP fetch. The original camera file is not touched. `camera-marked.jpg` is a
 high-quality JPEG, preserving native resolution up to 16 MP (4K included) and
-rendering compact **numeric pot IDs plus optional strain names**, independent
-of UI language. `camera_snapshot.marked` describes the **actual output**:
+rendering **only numbered pot circles (1–3)**, with no strain-name text or
+extra label boxes. `pot_strains` in the companion JSON still links pot IDs to
+the assigned strains. Number-only marking works independently of UI language. `camera_snapshot.marked` describes the **actual output**:
 
 ```json
 "marked": {
