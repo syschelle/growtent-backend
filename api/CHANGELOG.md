@@ -1,3 +1,10 @@
+## v0.401 — Camera snapshot in historical analysis ZIP
+
+- Download a ZIP with the unchanged historical JSON and one current `camera.jpg` from the selected tent (when available), with UTC retrieval metadata and an explicit camera-unavailable note when the stream fails.
+- Retain the original `/api/export/analysis` JSON endpoint for integrations; new `/api/export/analysis.zip` is used by the Dashboard. Bound camera size, timeout and format; never persist camera pixels or RTSP credentials.
+- Preserve full camera-stream resolution and the original JPEG bytes where possible (max 20 MB ZIP image); only oversized sources are recompressed once or proportionally resized with LANCZOS.
+- Bilingual export dialog, same read-only history/aggregation and permissions. No firmware/database/control changes.
+
 ## v0.400 — Clarify autoflower cuttings in GrowGuide
 
 - Shorten and clarify the DE/EN autoflower propagation note: cuttings retain the mother plant's biological age, making cloning impractical for a full cycle.

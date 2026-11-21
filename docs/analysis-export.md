@@ -1,4 +1,28 @@
-# Historical analysis JSON export
+# Historical analysis export: JSON and ZIP
+
+## ZIP download with camera image (v0.401)
+
+In the Dashboard, **Analyseexport (ZIP)** / **Analysis export (ZIP)** downloads a ZIP for the selected tent and 1h/6h/12h/24h/48h period. It contains the historical JSON file (same schema and values as the prior JSON export) and one **current** camera JPEG (`camera.jpg`) when the camera is reachable. The camera is fetched at the **native resolution of its configured RTSP stream** through go2rtc, without the Dashboard preview's 1280 × 720 limit or artificial upscaling. The original JPEG bytes are stored unchanged whenever they fit. The picture is **not** an archival image from the selected historical period.
+
+The JSON in the ZIP has an additional optional top-level object:
+
+```json
+"camera_snapshot": {
+  "status": "included",
+  "filename": "camera.jpg",
+  "width_px": 3840,
+  "height_px": 2160,
+  "retrieved_at_utc": "2026-11-21T10:10:00Z"
+}
+```
+
+`width_px` and `height_px` show the resolution of the JPEG actually saved inside the archive, not a promised camera specification. `retrieved_at_utc` is the time at which the backend **received** the JPEG, not a precise camera exposure timestamp. When the camera is unavailable, `status` is `"unavailable"`, the other fields are null, and the ZIP contains `camera-unavailable.txt` (German and English) instead of a JPEG. **Historical sensor data is still exported unchanged.** Do not treat a missing image as a failed measurement export. The image and RTSP credentials are not stored in the database or mirrored into JSON. Only the JSON remains subject to the original 1 MB export bound. For safety, the camera fetch is capped at 32 MB and a single JPEG in the ZIP at 20 MB. The typical high-resolution photo stays **byte-identical**; only if larger than 20 MB is it recompressed once at JPEG quality 94 (4:4:4, optimized), then, if still necessary, resized proportionally using LANCZOS from the original frame. An exceptionally large HTTP source (>32 MB) is retried at 3840 and 2560 pixels wide via the same internal go2rtc service. Invalid JPEG and unavailable camera responses are handled without breaking the JSON export. The resolution cannot exceed the configured RTSP source stream's actual resolution.
+
+- `GET /api/export/analysis?tent_id=2&range=24h` remains the **original JSON-only endpoint**, unchanged for existing integrations.
+- `GET /api/export/analysis.zip?tent_id=2&range=24h` returns `application/zip` and a `.zip` attachment for the Dashboard.
+- The archive is produced in memory and has a single camera frame, not a video or historical timelapse.
+
+
 
 The download uses stored `tent_state.payload` samples in the requested half-open UTC range. It never contacts Shellys or substitutes current settings. Dashboard-only direct readings that were not stored cannot be recovered. Existing `growtent.analysis.v1` climate, target and humidifier fields remain available; v0.385 adds the fields below.
 

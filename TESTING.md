@@ -1,4 +1,4 @@
-# Testing — v0.400
+# Testing — v0.401
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -217,3 +217,7 @@ The Chromium Setup regression checks that Cancel/Abbrechen is translated, discar
 ## v0.400 autoflower note
 
 Verify that the German and English Markdown sources and their pre-rendered HTML both show the concise age-based autoflower cutting note; keep all 20 chapters and ensure no controller/UI logic changes. Verify the current-only release notes tag.
+
+## v0.401 camera snapshot analysis ZIP
+
+`PYTHONPATH=api python -m pytest -q tests/test_analysis_archive.py tests/test_analysis_export.py` verifies the preserved legacy JSON endpoint, bounded native-resolution snapshot acquisition from go2rtc (JPEG-only, 32 MB input, 20 MB image, 9 s timeout), successful ZIP contents, safe missing-camera ZIP with DE/EN note, scrubbed metadata, unchanged historical climate records and read-only response headers. `python tests/render_analysis_export.py /tmp/analysis-export.json` plus `node tests/test_analysis_export_browser.cjs /tmp/analysis-export.json` checks the production download dialog and ZIP filename with a synthetic ZIP fixture; the optional Python Chromium smoke check is `PYTHONPATH=api:tests python tests/check_analysis_zip_browser.py --browser /usr/bin/chromium`. No actual camera/RTSP endpoint is contacted by these tests. Local result: 303 Python tests passed excluding the PostgreSQL-only integration test module, and Python Chromium smoke passed for DE/EN and mobile/desktop. The separate Node browser CI run, PostgreSQL integration, Docker build and live go2rtc validation remain open.

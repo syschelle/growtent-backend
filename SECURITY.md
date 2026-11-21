@@ -1,4 +1,4 @@
-# Security — v0.400
+# Security — v0.401
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -186,3 +186,7 @@ The guide does not issue controller requests, ESP commands or backend writes. Th
 ## v0.400 read-only GrowGuide wording
 
 Documentation wording in the existing static guide only. No new inputs, network calls, permissions, stored settings or backend API behavior.
+
+## v0.401 analysis ZIP with camera image
+
+New read-only `/api/export/analysis.zip` uses the same session middleware and existing data read access as `/api/export/analysis`; it does not grant new write permissions. It fetches one JPEG from the configured internal go2rtc endpoint using the selected tent's existing RTSP reference, not an arbitrary client-supplied URL. Disable redirects, cap downloaded bytes at 3 MB, require JPEG content-type and byte markers, and use short timeouts. Camera failures never block the historical JSON download and cannot introduce a second streaming or authentication flow. Archive metadata excludes RTSP URLs, credentials and environment secrets. The ZIP can contain a real camera image of the grow tent: protect it like other private exports and check before sharing externally. Neither the image nor a copy of the archive is persisted to disk or the history database by this feature.

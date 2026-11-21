@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload, normalize_flowering_weeks
 from services.shelly_status import parse_rpc_status
 from services.analysis_export import build_analysis_export, read_irrigation_events, HOURS as ANALYSIS_EXPORT_HOURS
+from services.analysis_archive import get_camera_jpeg, make_analysis_zip
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from services.vpd_channels import (
     finite_number as _finite_sensor_number,
@@ -51,7 +52,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.400"
+APP_VERSION = "v0.401"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5745,6 +5746,30 @@ def export_analysis_json(tent_id: int, range_key: str = "24h"):
         media_type="application/json",headers={"Content-Disposition":f'attachment; filename="{filename}"',"Cache-Control":"no-store"})
 
 
+
+def export_analysis_zip(tent_id: int, range_key: str = "24h"):
+    """Download the original historical JSON plus a *current* optional camera frame."""
+    # Reuse all validation, read-only queries, and the 1 MB JSON bound.
+    json_response = export_analysis_json(tent_id, range_key)
+    json_filename = f"growtent-{int(tent_id)}_{range_key}.json"
+    # Keep the existing fully qualified JSON export filename inside the ZIP.
+    match = re.search(r'filename="([a-zA-Z0-9_.-]+\.json)"', json_response.headers.get('content-disposition', ''))
+    if match:
+        json_filename = match.group(1)
+    tent = get_tent_by_id(tent_id)
+    # A configured RTSP source is tried first, otherwise go2rtc's named stream.
+    image = get_camera_jpeg(GO2RTC_BASE_URL, tent_id, tent.get('rtsp_url') if tent else None)
+    retrieved_at = datetime.now(timezone.utc) if image is not None else None
+    content = make_analysis_zip(json_response.body, json_filename, image, retrieved_at)
+    return Response(
+        content=content,
+        media_type='application/zip',
+        headers={
+            'Content-Disposition': f'attachment; filename="{json_filename[:-5]}.zip"',
+            'Cache-Control': 'no-store',
+        },
+    )
+
 def get_tent_by_id(tent_id: int):
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -10446,7 +10471,7 @@ def dashboard_page(request: Request):
           <div class=\"title-actions\">
             <div id=\"floodStatusWidget\" class=\"flood-status unknown\" style=\"display:none;\"><div id=\"floodStatusMain\" class=\"flood-status-main\"></div><div id=\"floodStatusMeta\" class=\"flood-status-meta\"></div></div>
             <span id=\"uptimeBadge\" class=\"small\" style=\"display:none;\">-</span>
-            <button id=\"exportCsvBtn\" type=\"button\">Export JSON</button>
+            <button id=\"exportCsvBtn\" type=\"button\">Export ZIP</button>
             <a id=\"espOpenBtn\" class=\"stream-open-btn\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:none;\">Open ESP</a>
             <a id=\"espStatsBtn\" class=\"stream-open-btn\" href=\"#\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"display:none;\">Open stats</a>
             <a id=\"pollErrorsBtn\" class=\"stream-open-btn\" href=\"#\" rel=\"noopener noreferrer\" style=\"display:none;\">Poll errors</a>
@@ -10672,7 +10697,7 @@ def dashboard_page(request: Request):
 
         <dialog id=\"analysisExportDialog\" class=\"target-dialog\" aria-labelledby=\"analysisExportTitle\">
           <form id=\"analysisExportForm\">
-            <h2 id=\"analysisExportTitle\">Export JSON</h2>
+            <h2 id=\"analysisExportTitle\">Export ZIP</h2>
             <label class=\"target-dialog-field\"><span id=\"analysisExportRangeLabel\">Period</span>
               <select id=\"analysisExportRange\"><option value=\"1h\">1 h</option><option value=\"6h\">6 h</option><option value=\"12h\">12 h</option><option value=\"24h\" selected>24 h</option><option value=\"48h\">48 h</option></select>
             </label>
@@ -10837,7 +10862,7 @@ def dashboard_page(request: Request):
               heapLargest: 'Largest free block',
               heapSize: 'Heap size',
               heapHistoryHint: 'Shows ESP memory trends over time. Free heap = currently available RAM; Min free heap = lowest value since boot; Largest free block = biggest contiguous memory block. Warnings trigger when values stay below configured limits for multiple samples (defaults: free < 120000 B, largest block < 60000 B, or largest/free < 0.35). Recovery is sent only after several stable samples and with cooldown to avoid spam.',
-              exportCsv: 'Export JSON',
+              exportCsv: 'Export ZIP',
               consumptionToday: 'Consumption / cost today (0-24)',
               tankLevel: 'Tank level',
               tankDistance: 'Distance',
@@ -11036,7 +11061,7 @@ def dashboard_page(request: Request):
               heapLargest: 'Größter freier Block',
               heapSize: 'Heap-Größe',
               heapHistoryHint: 'Zeigt den ESP-Speicherverlauf über die Zeit. Freier Heap = aktuell verfügbarer RAM; Min. freier Heap = niedrigster Wert seit dem Boot; Größter freier Block = größter zusammenhängender Speicherblock. Warnungen kommen nur, wenn Werte über mehrere Messungen unter den Schwellwerten bleiben (Standard: free < 120000 B, largest block < 60000 B oder largest/free < 0.35). Recovery wird erst nach mehreren stabilen Messungen und mit Cooldown gesendet, damit es nicht spammt.',
-              exportCsv: 'JSON exportieren',
+              exportCsv: 'ZIP exportieren',
               consumptionToday: 'Verbrauch / Kosten heute (0-24)',
               tankLevel: 'Tankfüllstand',
               tankDistance: 'Abstand',
@@ -14692,11 +14717,11 @@ def dashboard_page(request: Request):
           let analysisExportTent = null;
           function analysisExportLabels(){
             const de=currentLang==='de';
-            document.getElementById('analysisExportTitle').textContent=de?'JSON exportieren':'Export JSON';
+            document.getElementById('analysisExportTitle').textContent=de?'Analyseexport (ZIP)':'Analysis export (ZIP)';
             document.getElementById('analysisExportRangeLabel').textContent=de?'Zeitraum':'Period';
             document.getElementById('analysisExportHint').textContent=de?
-              'Dieser Export ist für die Datenanalyse mit einer KI, z. B. ChatGPT, gedacht.':
-              'This export is intended for data analysis with an AI, such as ChatGPT.';
+              'Für die KI-Auswertung: JSON + aktuelles Kamerabild (falls erreichbar). Ohne Kamera: JSON und Hinweismeldung.':
+              'For AI analysis: JSON + current camera image (if available). Without camera: JSON and a note.';
             document.getElementById('analysisExportCancel').textContent=de?'Abbrechen':'Cancel';
             document.getElementById('analysisExportDownload').textContent=de?'Herunterladen':'Download';
           }
@@ -14716,7 +14741,7 @@ def dashboard_page(request: Request):
             button.disabled=true;
             document.getElementById('analysisExportStatus').textContent=currentLang==='de'?'Datei wird erstellt …':'Creating file …';
             try {
-              const response=await fetch(`/api/export/analysis?tent_id=${encodeURIComponent(tent)}&range=${encodeURIComponent(range)}`,{cache:'no-store'});
+              const response=await fetch(`/api/export/analysis.zip?tent_id=${encodeURIComponent(tent)}&range=${encodeURIComponent(range)}`,{cache:'no-store'});
               if(response.status===413){
                 document.getElementById('analysisExportStatus').textContent=currentLang==='de'?'Datei zu groß. Bitte einen kürzeren Zeitraum auswählen.':'File too large. Please select a shorter period.';
                 return;
@@ -14724,7 +14749,7 @@ def dashboard_page(request: Request):
               if(!response.ok)throw new Error(`HTTP ${response.status}`);
               const blob=await response.blob(),url=URL.createObjectURL(blob),anchor=document.createElement('a');
               const filename=(response.headers.get('Content-Disposition')||'').match(/filename="([a-zA-Z0-9_.-]+)"/);
-              anchor.href=url;anchor.download=filename?filename[1]:`growtent-${tent}_${range}.json`;
+              anchor.href=url;anchor.download=filename?filename[1]:`growtent-${tent}_${range}.zip`;
               document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
               document.getElementById('analysisExportDialog').close();
             } catch {

@@ -1,0 +1,164 @@
+"""Camera ZIP regressions: optional live JPEG, intact historic JSON, no network leaks."""
+import ast
+from datetime import datetime, timezone
+from io import BytesIO
+import json
+from pathlib import Path
+from zipfile import ZipFile, ZIP_STORED
+from PIL import Image
+
+import httpx
+import pytest
+from fastapi import HTTPException
+from fastapi.responses import Response
+from services.analysis_archive import get_camera_jpeg, make_analysis_zip, MAX_CAMERA_BYTES, MAX_CAMERA_FETCH_BYTES, _high_quality_camera_jpeg
+
+with BytesIO() as _jpeg_buffer:
+    Image.new('RGB', (160, 90), (35, 80, 125)).save(_jpeg_buffer, format='JPEG', quality=95)
+    JPEG = _jpeg_buffer.getvalue()
+JSON_BYTES = json.dumps({'schema': 'growtent.analysis.v1', 'tentId': 2, 'points': [{'metrics': {'vpd': {'avg': 1.2}}}],
+    'grow_phase': {'label_de': 'Blüte · Woche 6 · spät'}}).encode()
+
+
+def unpack(result):
+    with ZipFile(BytesIO(result), 'r') as z:
+        names = z.namelist()
+        data = json.loads(z.read('growtent-2_24h.json'))
+        return names, data, {name: z.read(name) for name in names}
+
+
+def test_archive_carries_original_analysis_and_single_camera_jpeg():
+    archived = make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', JPEG, datetime(2026,11,21,10,0,tzinfo=timezone.utc))
+    names, data, contents = unpack(archived)
+    assert names == ['growtent-2_24h.json', 'camera.jpg']
+    assert contents['camera.jpg'] == JPEG
+    with ZipFile(BytesIO(archived), 'r') as archive:
+        assert archive.getinfo('camera.jpg').compress_type == ZIP_STORED
+    assert {k:v for k,v in data.items() if k!='camera_snapshot'} == json.loads(JSON_BYTES)
+    assert data['camera_snapshot'] == {'status':'included','filename':'camera.jpg','width_px':160,'height_px':90,'retrieved_at_utc':'2026-11-21T10:00:00Z'}
+
+
+def test_unavailable_camera_still_produces_valid_zip_and_bilingual_note():
+    names, data, contents = unpack(make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', None))
+    assert names == ['growtent-2_24h.json', 'camera-unavailable.txt']
+    assert data['camera_snapshot'] == {'status':'unavailable','filename':None,'width_px':None,'height_px':None,'retrieved_at_utc':None}
+    assert b'DE:' in contents['camera-unavailable.txt'] and b'EN:' in contents['camera-unavailable.txt']
+
+
+@pytest.mark.parametrize('status,ctype,body,length,expected', [
+    (200,'image/jpeg',JPEG,'',JPEG),
+    (200,'image/jpeg; charset=binary',JPEG,'',JPEG),
+    (200,'text/html',b'<html>not a camera</html>','',None),
+    (502,'image/jpeg',b'', '',None),
+    (302,'image/jpeg',b'', '',None),
+    (200,'image/jpeg',b'not-jpeg', '',None),
+    (200,'image/jpeg',JPEG,str(MAX_CAMERA_FETCH_BYTES+1),None),
+    (200,'image/jpeg',b'\xff\xd8'+b'0'*(MAX_CAMERA_FETCH_BYTES+1)+b'\xff\xd9','',None),
+])
+def test_camera_http_responses_are_bounded_and_jpeg_validated(monkeypatch,status,ctype,body,length,expected):
+    called = []
+    def handler(request):
+        called.append(request)
+        headers = {'Content-Type': ctype}
+        if length:
+            headers['Content-Length'] = length
+        return httpx.Response(status, content=body, headers=headers)
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.Client
+    monkeypatch.setattr('services.analysis_archive.httpx.Client',lambda **kwargs: real_client(transport=transport,**kwargs))
+    assert get_camera_jpeg('http://go2rtc:1984/',2,'rtsp://user:secret@192.168.1.2/stream') == expected
+    assert len(called) == (3 if expected is None and (length or len(body)>MAX_CAMERA_FETCH_BYTES) else 1)
+    assert called[0].url.host == 'go2rtc'
+    assert called[0].url.path == '/api/frame.jpeg'
+    assert called[0].url.params['src'].startswith('rtsp://user:secret@')
+    assert 'width' not in called[0].url.params  # native stream resolution
+    assert 'height' not in called[0].url.params
+    assert 'q' not in called[0].url.params
+    if len(called) == 3:
+        assert [c.url.params.get('width') for c in called] == [None, '3840', '2560']
+
+
+def test_go2rtc_failure_does_not_raise(monkeypatch):
+    def handler(request):
+        raise httpx.ConnectError('camera unavailable',request=request)
+    transport=httpx.MockTransport(handler)
+    real_client = httpx.Client
+    monkeypatch.setattr('services.analysis_archive.httpx.Client',lambda **kwargs: real_client(transport=transport,**kwargs))
+    assert get_camera_jpeg('http://go2rtc:1984',2,None) is None
+
+
+def test_endpoint_reuses_json_export_and_preserves_old_handler():
+    """Test route body without loading production DB, configuration or RTSP secrets."""
+    tree=ast.parse((Path(__file__).parents[1]/'api/app.py').read_text())
+    func=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='export_analysis_zip')
+    assert any(isinstance(n,ast.FunctionDef) and n.name=='export_analysis_json' for n in tree.body)
+    source={}
+    camera_calls=[]
+    def fake_json(tent,range_key):
+        assert (tent,range_key)==(2,'24h')
+        return Response(content=JSON_BYTES,media_type='application/json',headers={'Content-Disposition':'attachment; filename="growtent-2_24h.json"'})
+    def fake_camera(base,tid,rtsp):
+        camera_calls.append((base,tid,rtsp))
+        return JPEG
+    ns={'export_analysis_json':fake_json, 'get_tent_by_id': lambda tid:{'rtsp_url':'rtsp://secret:pw@camera/stream'},
+        'get_camera_jpeg':fake_camera,'make_analysis_zip':make_analysis_zip,'Response':Response,
+        're':__import__('re'),'datetime':datetime,'timezone':timezone,'GO2RTC_BASE_URL':'http://go2rtc:1984'}
+    exec(compile(ast.Module(body=[func],type_ignores=[]),'api/app.py','exec'),ns)
+    response=ns['export_analysis_zip'](2)
+    assert response.media_type=='application/zip'
+    assert response.headers['content-disposition']=='attachment; filename="growtent-2_24h.zip"'
+    assert response.headers['cache-control']=='no-store'
+    names,data,contents=unpack(response.body)
+    assert names==['growtent-2_24h.json','camera.jpg']
+    assert camera_calls==[('http://go2rtc:1984',2,'rtsp://secret:pw@camera/stream')]
+    assert 'secret:pw' not in json.dumps(data)
+    assert data['points']==json.loads(JSON_BYTES)['points']
+
+
+def test_route_is_registered_without_replacing_old_json():
+    source=(Path(__file__).parents[1]/'api/routes/system.py').read_text()
+    assert "@router.get('/api/export/analysis')" in source
+    assert "@router.get('/api/export/analysis.zip')" in source
+    assert 'legacy.export_analysis_zip(tent_id, range)' in source
+
+
+def test_native_4k_jpeg_is_preserved_byte_for_byte(monkeypatch):
+    with BytesIO() as buffer:
+        Image.new('RGB', (3840, 2160), (50, 110, 150)).save(buffer, format='JPEG', quality=96)
+        source = buffer.getvalue()
+    assert _high_quality_camera_jpeg(source) == source
+    def handler(request):
+        assert 'width' not in request.url.params and 'height' not in request.url.params
+        return httpx.Response(200, content=source, headers={'Content-Type': 'image/jpeg'})
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.Client
+    monkeypatch.setattr('services.analysis_archive.httpx.Client', lambda **kwargs: real_client(transport=transport,**kwargs))
+    assert get_camera_jpeg('http://go2rtc:1984', 2, None) == source
+
+
+def test_oversized_snapshot_uses_high_quality_proportional_downscale(monkeypatch):
+    # Set a tiny simulated ZIP limit so a normal image exercises the resize path.
+    monkeypatch.setattr('services.analysis_archive.MAX_CAMERA_BYTES', 110_000)
+    with BytesIO() as buffer:
+        Image.effect_noise((1800, 1200), 58).convert('RGB').save(buffer, format='JPEG', quality=96)
+        source = buffer.getvalue()
+    assert len(source) > 110_000
+    image = _high_quality_camera_jpeg(source)
+    assert image and len(image) <= 110_000
+    with Image.open(BytesIO(image)) as processed:
+        width, height = processed.size
+        assert width <= 1800 and height <= 1200
+        assert abs(width / height - 1.5) < 0.02
+        processed.verify()
+    # Image stays a valid JPEG and is not shrunk to a thumbnail arbitrarily.
+    assert width >= 270 and height >= 180
+
+
+def test_invalid_jpeg_is_rejected_even_with_valid_markers():
+    assert _high_quality_camera_jpeg(b'\xff\xd8not-a-jpeg\xff\xd9') is None
+
+
+def test_invalid_final_image_does_not_break_archive():
+    names, data, _ = unpack(make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', b'not-a-jpeg'))
+    assert names == ['growtent-2_24h.json', 'camera-unavailable.txt']
+    assert data['camera_snapshot']['status'] == 'unavailable'
