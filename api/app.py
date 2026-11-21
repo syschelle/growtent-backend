@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from models.schemas import AirSensorSettings, ExhaustVpdPlanPayload, GrowProfilePatch, IrrigationPlanPayload, ManualIrrigationPayload, StrainPayload, TentPayload, normalize_flowering_weeks
 from services.shelly_status import parse_rpc_status
 from services.analysis_export import build_analysis_export, read_irrigation_events, HOURS as ANALYSIS_EXPORT_HOURS
-from services.analysis_archive import get_camera_jpeg, make_analysis_zip
+from services.analysis_archive import get_camera_jpeg, make_analysis_zip, _hdr_style_camera_jpeg, MAX_CAMERA_FETCH_BYTES
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from services.vpd_channels import (
     finite_number as _finite_sensor_number,
@@ -52,7 +52,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.401"
+APP_VERSION = "v0.402"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -5197,6 +5197,7 @@ def tent_preview(
     w: int = Query(1280, ge=320, le=3840),
     h: int = Query(720, ge=180, le=2160),
     q: int = Query(85, ge=30, le=100),
+    hdr: bool = Query(False),
 ):
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -5218,6 +5219,17 @@ def tent_preview(
             if r.status_code != 200:
                 raise HTTPException(status_code=502, detail="preview unavailable")
             content_type = r.headers.get("content-type", "image/jpeg")
+            if hdr:
+                # Opt-in only: ordinary previews are not decoded/re-encoded.
+                # Reuse exactly the single-frame tone mapping used by the ZIP.
+                if (len(r.content) > MAX_CAMERA_FETCH_BYTES or
+                        content_type.split(';')[0].strip().lower() != 'image/jpeg'):
+                    raise HTTPException(status_code=502, detail="HDR preview unavailable")
+                hdr_jpeg = _hdr_style_camera_jpeg(r.content)
+                if hdr_jpeg is None:
+                    raise HTTPException(status_code=502, detail="HDR preview unavailable")
+                return Response(content=hdr_jpeg, media_type="image/jpeg",
+                                headers={"Cache-Control": "no-store"})
             return Response(content=r.content, media_type=content_type)
     except HTTPException:
         raise
@@ -12902,6 +12914,9 @@ def dashboard_page(request: Request):
               doc.body.style.height = '100vh';
               doc.body.style.display = 'grid';
               doc.body.style.gridTemplateRows = '48px 1fr';
+              doc.body.style.gridTemplateColumns = 'minmax(0, 1fr)';
+              doc.body.style.width = '100vw';
+              doc.body.style.overflow = 'hidden';
 
               const header = doc.createElement('div');
               header.style.display = 'flex';
@@ -12910,6 +12925,9 @@ def dashboard_page(request: Request):
               header.style.padding = '0 12px';
               header.style.background = colors.headerBg;
               header.style.borderBottom = `1px solid ${colors.border}`;
+              header.style.minWidth = '0';
+              header.style.overflowX = 'auto'; // Keep toolbar usable on narrow screens.
+              header.style.boxSizing = 'border-box';
 
               const titleWrap = doc.createElement('div');
               titleWrap.style.display = 'flex';
@@ -12948,8 +12966,8 @@ def dashboard_page(request: Request):
 
               const showHelpHint = () => {
                 const msg = currentLang === 'de'
-                  ? 'Vollbild-Hinweis:\\n• Mausrad/Pinch: Zoomen\\n• Ziehen: Bild verschieben\\n• Doppelklick: Reset\\n• Ab ~180% Zoom wird automatisch ein 2K-Frame geladen, intern auf 4K hochskaliert und als Standbild gehalten.'
-                  : 'Fullscreen hint:\\n• Wheel/pinch: zoom\\n• Drag: pan image\\n• Double click: reset\\n• From ~180% zoom a 2K frame is fetched, upscaled to 4K and held as a still image.';
+                  ? 'Vollbild-Hinweis:\\n• Original/HDR: Bildmodus (HDR-ähnliche Optimierung, kein echtes HDR)\\n• Mausrad/Pinch: Zoomen\\n• Ziehen: Bild verschieben\\n• Doppelklick: Reset\\n• Ab ~180% Zoom wird automatisch ein 2K-Frame geladen, intern auf 4K hochskaliert und als Standbild gehalten.'
+                  : 'Fullscreen hint:\\n• Original/HDR: image mode (HDR-style enhancement, not true HDR)\\n• Wheel/pinch: zoom\\n• Drag: pan image\\n• Double click: reset\\n• From ~180% zoom a 2K frame is fetched, upscaled to 4K and held as a still image.';
                 helpPopover.textContent = msg;
                 helpPopover.style.display = 'block';
                 const r = helpBtn.getBoundingClientRect();
@@ -13102,6 +13120,7 @@ def dashboard_page(request: Request):
               stage.style.background = colors.stageBg;
               stage.style.overflow = 'hidden';
               stage.style.touchAction = 'none';
+              stage.style.minWidth = '0'; // Long header may not expand the image stage.
 
               const img = doc.createElement('img');
               img.alt = 'Preview';
@@ -13128,6 +13147,38 @@ def dashboard_page(request: Request):
 
               stage.appendChild(img);
               stage.appendChild(zoomBadge);
+
+              // Preview-only, opt-in HDR look. Never modifies camera settings,
+              // inline preview or the separately packaged analysis images.
+              const modeGroup = doc.createElement('div');
+              modeGroup.id = 'previewImageModes';
+              modeGroup.setAttribute('role', 'group');
+              modeGroup.setAttribute('aria-label', currentLang === 'de' ? 'Bildmodus' : 'Image mode');
+              modeGroup.style.cssText = `position:absolute;top:12px;right:12px;display:flex;gap:3px;`+
+                `padding:3px;border-radius:9px;background:${colors.headerBg};border:1px solid ${colors.btnBorder};z-index:5`;
+              const makeModeButton = (id, name) => {
+                const btn = doc.createElement('button');
+                btn.id = id;
+                btn.type = 'button';
+                btn.textContent = name;
+                btn.style.cssText = `padding:6px 9px;border-radius:6px;border:0;cursor:pointer;`+
+                  `font:600 12px Arial,sans-serif;min-height:30px;color:${colors.btnText}`;
+                modeGroup.appendChild(btn);
+                return btn;
+              };
+              const originalModeButton = makeModeButton('previewModeOriginal', 'Original');
+              const hdrModeButton = makeModeButton('previewModeHDR', 'HDR');
+              hdrModeButton.title = currentLang === 'de'
+                ? 'HDR-ähnliche Tonwertkorrektur aus einem Einzelbild (kein echtes HDR)'
+                : 'HDR-style tone mapping from a single frame (not true HDR)';
+              const updateModeButtons = () => {
+                for (const [button, selected] of [[originalModeButton, !hdrEnabled], [hdrModeButton, hdrEnabled]]) {
+                  button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+                  button.style.background = selected ? 'rgba(59,130,246,.65)' : 'transparent';
+                  button.style.fontWeight = selected ? '700' : '600';
+                }
+              };
+              stage.appendChild(modeGroup);
               doc.body.appendChild(header);
               doc.body.appendChild(stage);
 
@@ -13139,7 +13190,12 @@ def dashboard_page(request: Request):
               let dragging = false;
               let pinchStartDist = 0;
               let pinchStartZoom = 1;
+              let hdrEnabled = false;
+              let previewModeEpoch = 0;
+              const modePreview = (url) => hdrEnabled ? `${url}&hdr=1` : url;
               let popupPreviewBase = fullscreenPreviewBaseReduced;
+              let lastHdrPreviewRequest = 0;
+              let hdrPreviewPending = false;
               const ZOOM_MIN = 1;
               const ZOOM_MAX = 6;
               const SMART_ZOOM_THRESHOLD = 1.8;
@@ -13155,10 +13211,12 @@ def dashboard_page(request: Request):
                 const wantFreeze = zoom >= SMART_ZOOM_THRESHOLD;
                 if (wantFreeze && !smartFreezeActive && !smartFreezeLoading) {
                   smartFreezeLoading = true;
-                  const sep = fullscreenPreviewBaseZoomSource2k.includes('?') ? '&' : '?';
-                  const src2k = `${fullscreenPreviewBaseZoomSource2k}${sep}t=${Date.now()}`;
+                  const zoomBase = modePreview(fullscreenPreviewBaseZoomSource2k);
+                  const src2k = `${zoomBase}&t=${Date.now()}`;
+                  const epoch = previewModeEpoch;
                   const hi = new w.Image();
                   hi.onload = () => {
+                    if (epoch !== previewModeEpoch || zoom < SMART_ZOOM_THRESHOLD) return;
                     try {
                       const c = doc.createElement('canvas');
                       c.width = 3840;
@@ -13174,11 +13232,16 @@ def dashboard_page(request: Request):
                       smartFreezeLoading = false;
                     }
                   };
-                  hi.onerror = () => { smartFreezeLoading = false; };
+                  hi.onerror = () => {
+                    if (epoch === previewModeEpoch) {
+                      smartFreezeLoading = false;
+                      stamp.textContent = currentLang === 'de' ? 'Bild nicht verfügbar' : 'Image unavailable';
+                    }
+                  };
                   hi.src = src2k;
                 } else if (!wantFreeze && smartFreezeActive) {
                   smartFreezeActive = false;
-                  popupPreviewBase = fullscreenPreviewBaseReduced;
+                  popupPreviewBase = modePreview(fullscreenPreviewBaseReduced);
                   tick();
                 }
 
@@ -13186,6 +13249,23 @@ def dashboard_page(request: Request):
                 zoomBadge.textContent = `${Math.round(zoom * 100)}%`;
                 img.style.cursor = zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'default';
               };
+
+              const selectMode = (enableHdr) => {
+                if (hdrEnabled === enableHdr) return;
+                hdrEnabled = enableHdr;
+                previewModeEpoch++; // Ignore frames loaded under the previous mode.
+                smartFreezeActive = false;
+                smartFreezeLoading = false;
+                hdrPreviewPending = false;
+                lastHdrPreviewRequest = 0;
+                popupPreviewBase = modePreview(fullscreenPreviewBaseReduced);
+                updateModeButtons();
+                if (zoom >= SMART_ZOOM_THRESHOLD) updateTransform();
+                else tick();
+              };
+              originalModeButton.onclick = () => selectMode(false);
+              hdrModeButton.onclick = () => selectMode(true);
+              updateModeButtons();
 
               const zoomAt = (clientX, clientY, nextZoom) => {
                 const rect = img.getBoundingClientRect();
@@ -13221,6 +13301,7 @@ def dashboard_page(request: Request):
               });
 
               stage.addEventListener('pointerdown', (e) => {
+                if (modeGroup.contains(e.target)) return; // Zoom/pan must not steal button clicks.
                 if (e.pointerType !== 'touch' && zoom <= 1) return;
                 stage.setPointerCapture?.(e.pointerId);
                 dragging = true;
@@ -13292,23 +13373,38 @@ def dashboard_page(request: Request):
               let popupLastOkTs = 0;
               function tick(){
                 if (!popupPreviewBase) return;
+                // HDR tone mapping needs more CPU than a normal JPEG preview.
+                // Keep original refresh at 2.5 s; throttle only HDR to 5 s.
+                if (hdrEnabled) {
+                  if (hdrPreviewPending || Date.now() - lastHdrPreviewRequest < 5000) return;
+                  hdrPreviewPending = true;
+                  lastHdrPreviewRequest = Date.now();
+                }
                 const sep = popupPreviewBase.includes('?') ? '&' : '?';
                 const nextSrc = `${popupPreviewBase}${sep}t=${Date.now()}`;
+                const epoch = previewModeEpoch;
                 const pre = new w.Image();
                 pre.onload = () => {
+                  if (epoch !== previewModeEpoch || !popupPreviewBase) return;
+                  hdrPreviewPending = false;
                   img.src = nextSrc;
                   popupLastOkTs = Date.now();
                   stamp.textContent = `${tr('streamUpdate')}: ${new Date(popupLastOkTs).toLocaleTimeString()}`;
                 };
                 pre.onerror = () => {
+                  if (epoch === previewModeEpoch) {
+                    hdrPreviewPending = false;
+                    stamp.textContent = currentLang === 'de' ? 'Bild nicht verfügbar' : 'Image unavailable';
+                  }
                   // Keep last good image, retry on next tick.
                 };
                 pre.src = nextSrc;
               }
               tick();
-              w.setInterval(tick, 2500);
+              const popupImageTimer = w.setInterval(tick, 2500);
               w.addEventListener('beforeunload', () => {
                 w.clearInterval(popupMetricsTimer);
+                w.clearInterval(popupImageTimer);
                 asmrAudio.pause();
                 asmrAudio.removeAttribute('src');
                 asmrAudio.load();
@@ -14720,8 +14816,8 @@ def dashboard_page(request: Request):
             document.getElementById('analysisExportTitle').textContent=de?'Analyseexport (ZIP)':'Analysis export (ZIP)';
             document.getElementById('analysisExportRangeLabel').textContent=de?'Zeitraum':'Period';
             document.getElementById('analysisExportHint').textContent=de?
-              'Für die KI-Auswertung: JSON + aktuelles Kamerabild (falls erreichbar). Ohne Kamera: JSON und Hinweismeldung.':
-              'For AI analysis: JSON + current camera image (if available). Without camera: JSON and a note.';
+              'Für die KI-Auswertung: JSON + aktuelles Kamerabild als Original und als HDR-Tonwertvariante (falls erreichbar). Ohne Kamera: JSON und Hinweismeldung.':
+              'For AI analysis: JSON + current camera image, original and HDR-style tone-mapped (if available). Without camera: JSON and a note.';
             document.getElementById('analysisExportCancel').textContent=de?'Abbrechen':'Cancel';
             document.getElementById('analysisExportDownload').textContent=de?'Herunterladen':'Download';
           }

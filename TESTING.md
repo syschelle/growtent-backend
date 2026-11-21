@@ -1,4 +1,4 @@
-# Testing — v0.401
+# Testing — v0.402
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -221,3 +221,11 @@ Verify that the German and English Markdown sources and their pre-rendered HTML 
 ## v0.401 camera snapshot analysis ZIP
 
 `PYTHONPATH=api python -m pytest -q tests/test_analysis_archive.py tests/test_analysis_export.py` verifies the preserved legacy JSON endpoint, bounded native-resolution snapshot acquisition from go2rtc (JPEG-only, 32 MB input, 20 MB image, 9 s timeout), successful ZIP contents, safe missing-camera ZIP with DE/EN note, scrubbed metadata, unchanged historical climate records and read-only response headers. `python tests/render_analysis_export.py /tmp/analysis-export.json` plus `node tests/test_analysis_export_browser.cjs /tmp/analysis-export.json` checks the production download dialog and ZIP filename with a synthetic ZIP fixture; the optional Python Chromium smoke check is `PYTHONPATH=api:tests python tests/check_analysis_zip_browser.py --browser /usr/bin/chromium`. No actual camera/RTSP endpoint is contacted by these tests. Local result: 303 Python tests passed excluding the PostgreSQL-only integration test module, and Python Chromium smoke passed for DE/EN and mobile/desktop. The separate Node browser CI run, PostgreSQL integration, Docker build and live go2rtc validation remain open.
+
+## v0.402 dual camera snapshot
+
+`PYTHONPATH=api python -m pytest -q tests/test_analysis_archive.py` verifies the original JPEG stays byte-identical, a second HDR-style JPEG is generated from the same frame, the exported metadata records correct dimensions and the single-frame processing method, 4K quality and resolution, bounded resizing of oversized HDR frames, and the camera/HDR fallback cases. No new camera capture or RTSP service is used. Local results: 312 Python tests passed excluding `tests/test_irrigation_postgres.py`; five `.mjs` suites passed, and the Python Chromium ZIP export browser check passed for DE/EN on desktop/mobile. A separate Node browser check was blocked because the Node `playwright` package is not installed in the environment. Docker build, live camera and PostgreSQL integration remain outstanding.
+
+## v0.402 fullscreen Original/HDR camera viewer
+
+`PYTHONPATH=api pytest -q tests/test_preview_hdr.py` checks unchanged byte-for-byte normal preview, opt-in HDR output using the ZIP helper, invalid/failed image rejection, and real modular router/service propagation of `hdr=1` without importing a production database. `PYTHONPATH=api:tests python tests/check_preview_hdr_browser.py` uses Chromium with synthetic camera frames; it checks the Original/HDR controls (DE/EN), selected mode state, correct preview URL query parameters, switching at normal and 200% smart zoom, and visibility at 320 px. The test never contacts a real camera or controller. Local verification: 319 Python tests passed (excluding PostgreSQL-only integration), all five JavaScript suites passed, and export/fullscreen Chromium checks passed in DE/EN; run the normal regression suite and release-notes check as usual; Docker and live-camera operation remain to be verified.

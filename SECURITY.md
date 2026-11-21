@@ -1,4 +1,4 @@
-# Security — v0.401
+# Security — v0.402
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -189,4 +189,12 @@ Documentation wording in the existing static guide only. No new inputs, network 
 
 ## v0.401 analysis ZIP with camera image
 
-New read-only `/api/export/analysis.zip` uses the same session middleware and existing data read access as `/api/export/analysis`; it does not grant new write permissions. It fetches one JPEG from the configured internal go2rtc endpoint using the selected tent's existing RTSP reference, not an arbitrary client-supplied URL. Disable redirects, cap downloaded bytes at 3 MB, require JPEG content-type and byte markers, and use short timeouts. Camera failures never block the historical JSON download and cannot introduce a second streaming or authentication flow. Archive metadata excludes RTSP URLs, credentials and environment secrets. The ZIP can contain a real camera image of the grow tent: protect it like other private exports and check before sharing externally. Neither the image nor a copy of the archive is persisted to disk or the history database by this feature.
+New read-only `/api/export/analysis.zip` uses the same session middleware and existing data read access as `/api/export/analysis`; it does not grant new write permissions. It fetches one JPEG from the configured internal go2rtc endpoint using the selected tent's existing RTSP reference, not an arbitrary client-supplied URL. Disable redirects, cap downloaded bytes at 32 MB, require JPEG content-type and byte markers, and use short timeouts. Camera failures never block the historical JSON download and cannot introduce a second streaming or authentication flow. Archive metadata excludes RTSP URLs, credentials and environment secrets. The ZIP can contain a real camera image of the grow tent: protect it like other private exports and check before sharing externally. Neither the image nor a copy of the archive is persisted to disk or the history database by this feature.
+
+## v0.402 HDR-style camera export
+
+The second JPEG is derived **only** from the already-authorized single live camera frame; there is no second RTSP call, user-controlled camera URL or external service. HDR processing is read-only, in-memory and bounded (16 MP for HDR processing; 20 MB for each JPEG); failures return the original image plus a bilingual note, without blocking historical JSON. Output remains a sensitive visual export requiring the same access controls as before. The camera fetch cap remains 32 MB, with a separate 20 MB cap for each saved JPEG.
+
+## v0.402 fullscreen camera HDR option
+
+The HDR preview is opt-in and read-only, using the same authorized per-tent JPEG and in-memory tone-mapping helper as the analysis ZIP. `hdr=1` is a boolean query flag, not an arbitrary URL; the response must be JPEG, is capped by the existing 32 MB input limit and limited to supported pixel dimensions. A processing failure returns 502 (never mislabeled as HDR) and leaves the normal JPEG preview unchanged. No new camera/RTSP credentials, data persistence, ESP control commands or public endpoints are introduced. The fullscreen HDR viewer requests a new frame no more frequently than every five seconds, and guards against stale responses when switching image modes.

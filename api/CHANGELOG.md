@@ -1,3 +1,10 @@
+## v0.402 — Dual original + HDR-style camera export
+
+- The analysis ZIP now includes `camera.jpg` unchanged plus `camera-hdr.jpg` from the *same* frame via conservative single-exposure tone mapping (not true multi-exposure HDR). No extra RTSP fetches.
+- Keep up to 4K resolution for both, use high-quality JPEG for the HDR variant, and resize HDR only for extremely large inputs; keep image caps. Add structured `camera_snapshot.hdr` metadata and a bilingual note if rendering fails.
+- Preserve the JSON-only API, old ZIP metadata fields, climate exports, authorization, database, firmware and existing controllers. Update DE/EN export-dialog hints.
+- The fullscreen camera view additionally offers an opt-in `Original` / `HDR` toggle (German/English). It uses the same single-frame tone-mapping method as the ZIP and preserves the normal inline preview. HDR is fetched on demand through the existing preview endpoint's `hdr` flag; switch and 2K smart zoom stay supported.
+
 ## v0.401 — Camera snapshot in historical analysis ZIP
 
 - Download a ZIP with the unchanged historical JSON and one current `camera.jpg` from the selected tent (when available), with UTC retrieval metadata and an explicit camera-unavailable note when the stream fails.

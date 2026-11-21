@@ -5,13 +5,14 @@ from io import BytesIO
 import json
 from pathlib import Path
 from zipfile import ZipFile, ZIP_STORED
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import Response
-from services.analysis_archive import get_camera_jpeg, make_analysis_zip, MAX_CAMERA_BYTES, MAX_CAMERA_FETCH_BYTES, _high_quality_camera_jpeg
+from services.analysis_archive import (get_camera_jpeg, make_analysis_zip, MAX_CAMERA_BYTES, MAX_CAMERA_FETCH_BYTES,
+    _high_quality_camera_jpeg, _hdr_style_camera_jpeg, HDR_METHOD, CAMERA_HDR_FILENAME)
 
 with BytesIO() as _jpeg_buffer:
     Image.new('RGB', (160, 90), (35, 80, 125)).save(_jpeg_buffer, format='JPEG', quality=95)
@@ -27,21 +28,29 @@ def unpack(result):
         return names, data, {name: z.read(name) for name in names}
 
 
-def test_archive_carries_original_analysis_and_single_camera_jpeg():
+def test_archive_carries_original_analysis_and_two_camera_jpegs():
     archived = make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', JPEG, datetime(2026,11,21,10,0,tzinfo=timezone.utc))
     names, data, contents = unpack(archived)
-    assert names == ['growtent-2_24h.json', 'camera.jpg']
+    assert names == ['growtent-2_24h.json', 'camera.jpg', CAMERA_HDR_FILENAME]
     assert contents['camera.jpg'] == JPEG
+    assert contents[CAMERA_HDR_FILENAME] != JPEG
+    with Image.open(BytesIO(contents[CAMERA_HDR_FILENAME])) as hdr:
+        assert hdr.format == 'JPEG' and hdr.size == (160, 90)
     with ZipFile(BytesIO(archived), 'r') as archive:
         assert archive.getinfo('camera.jpg').compress_type == ZIP_STORED
+        assert archive.getinfo(CAMERA_HDR_FILENAME).compress_type == ZIP_STORED
     assert {k:v for k,v in data.items() if k!='camera_snapshot'} == json.loads(JSON_BYTES)
-    assert data['camera_snapshot'] == {'status':'included','filename':'camera.jpg','width_px':160,'height_px':90,'retrieved_at_utc':'2026-11-21T10:00:00Z'}
+    assert data['camera_snapshot'] == {'status':'included','filename':'camera.jpg','width_px':160,'height_px':90,
+        'retrieved_at_utc':'2026-11-21T10:00:00Z',
+        'hdr':{'status':'included','filename':CAMERA_HDR_FILENAME,'method':HDR_METHOD,'width_px':160,'height_px':90}}
 
 
 def test_unavailable_camera_still_produces_valid_zip_and_bilingual_note():
     names, data, contents = unpack(make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', None))
     assert names == ['growtent-2_24h.json', 'camera-unavailable.txt']
-    assert data['camera_snapshot'] == {'status':'unavailable','filename':None,'width_px':None,'height_px':None,'retrieved_at_utc':None}
+    assert data['camera_snapshot'] == {'status':'unavailable','filename':None,'width_px':None,'height_px':None,
+        'retrieved_at_utc':None,
+        'hdr':{'status':'unavailable','filename':None,'method':None,'width_px':None,'height_px':None}}
     assert b'DE:' in contents['camera-unavailable.txt'] and b'EN:' in contents['camera-unavailable.txt']
 
 
@@ -109,7 +118,7 @@ def test_endpoint_reuses_json_export_and_preserves_old_handler():
     assert response.headers['content-disposition']=='attachment; filename="growtent-2_24h.zip"'
     assert response.headers['cache-control']=='no-store'
     names,data,contents=unpack(response.body)
-    assert names==['growtent-2_24h.json','camera.jpg']
+    assert names==['growtent-2_24h.json','camera.jpg',CAMERA_HDR_FILENAME]
     assert camera_calls==[('http://go2rtc:1984',2,'rtsp://secret:pw@camera/stream')]
     assert 'secret:pw' not in json.dumps(data)
     assert data['points']==json.loads(JSON_BYTES)['points']
@@ -162,3 +171,65 @@ def test_invalid_final_image_does_not_break_archive():
     names, data, _ = unpack(make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', b'not-a-jpeg'))
     assert names == ['growtent-2_24h.json', 'camera-unavailable.txt']
     assert data['camera_snapshot']['status'] == 'unavailable'
+
+
+def test_hdr_style_improves_dark_detail_without_color_overdrive():
+    scene = Image.new('RGB', (480, 240))
+    paint = ImageDraw.Draw(scene)
+    paint.rectangle((0, 0, 239, 239), fill=(36, 40, 45))
+    paint.rectangle((240, 0, 479, 239), fill=(235, 235, 235))
+    with BytesIO() as buffer:
+        scene.save(buffer, 'JPEG', quality=96, subsampling=0)
+        original = buffer.getvalue()
+    hdr = _hdr_style_camera_jpeg(original)
+    assert hdr is not None and hdr != original and len(hdr) <= MAX_CAMERA_BYTES
+    with Image.open(BytesIO(hdr)) as result:
+        assert result.size == scene.size
+        left = result.getpixel((100, 120))
+        right = result.getpixel((360, 120))
+        assert sum(left) / 3 > 36  # Dark regions are more visible.
+        assert sum(right) / 3 <= 239  # No exaggerated highlight clipping.
+        assert max(left) - min(left) < 20  # No exaggerated saturation/hue shift.
+
+
+def test_hdr_style_keeps_4k_resolution_and_original_is_bit_identical():
+    with BytesIO() as buffer:
+        Image.new('RGB', (3840, 2160), (25, 45, 80)).save(buffer, 'JPEG', quality=92)
+        original = buffer.getvalue()
+    hdr = _hdr_style_camera_jpeg(original)
+    assert hdr and hdr != original
+    assert len(hdr) <= MAX_CAMERA_BYTES
+    with Image.open(BytesIO(hdr)) as check:
+        assert check.size == (3840, 2160)
+    names, data, contents = unpack(make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', original))
+    assert contents['camera.jpg'] == original  # No mutation of original JPEG.
+    assert data['camera_snapshot']['hdr']['width_px'] == 3840
+    assert data['camera_snapshot']['hdr']['height_px'] == 2160
+
+
+def test_hdr_style_scales_only_large_frames(monkeypatch):
+    import services.analysis_archive as service
+    monkeypatch.setattr(service, 'MAX_HDR_PIXELS', 100_000)
+    with BytesIO() as buffer:
+        Image.new('RGB', (800, 600), (110, 70, 45)).save(buffer, 'JPEG')
+        original = buffer.getvalue()
+    hdr = _hdr_style_camera_jpeg(original)
+    assert hdr
+    with Image.open(BytesIO(hdr)) as image:
+        assert image.width <= 800 and image.height <= 600
+        assert image.width * image.height <= 100_000
+        assert abs(image.width / image.height - 800 / 600) < 0.015
+
+
+def test_hdr_failed_still_keeps_original_and_bilingual_note(monkeypatch):
+    monkeypatch.setattr('services.analysis_archive._hdr_style_camera_jpeg', lambda original: None)
+    names, data, contents = unpack(make_analysis_zip(JSON_BYTES, 'growtent-2_24h.json', JPEG))
+    assert names == ['growtent-2_24h.json', 'camera.jpg', 'camera-hdr-unavailable.txt']
+    assert contents['camera.jpg'] == JPEG
+    assert b'DE:' in contents['camera-hdr-unavailable.txt'] and b'EN:' in contents['camera-hdr-unavailable.txt']
+    assert data['camera_snapshot']['hdr']['status'] == 'unavailable'
+    assert data['camera_snapshot']['status'] == 'included'
+
+
+def test_hdr_style_rejects_invalid_source_without_exception():
+    assert _hdr_style_camera_jpeg(b'not-jpeg') is None

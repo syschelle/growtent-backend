@@ -1,8 +1,8 @@
 # Historical analysis export: JSON and ZIP
 
-## ZIP download with camera image (v0.401)
+## ZIP download with original + HDR-style camera images (v0.402)
 
-In the Dashboard, **Analyseexport (ZIP)** / **Analysis export (ZIP)** downloads a ZIP for the selected tent and 1h/6h/12h/24h/48h period. It contains the historical JSON file (same schema and values as the prior JSON export) and one **current** camera JPEG (`camera.jpg`) when the camera is reachable. The camera is fetched at the **native resolution of its configured RTSP stream** through go2rtc, without the Dashboard preview's 1280 × 720 limit or artificial upscaling. The original JPEG bytes are stored unchanged whenever they fit. The picture is **not** an archival image from the selected historical period.
+In the Dashboard, **Analyseexport (ZIP)** / **Analysis export (ZIP)** downloads a ZIP for the selected tent and 1h/6h/12h/24h/48h period. It contains the historical JSON file (same schema and values as the prior JSON export) and two renderings of **one current camera frame** when the camera is reachable: byte-identical `camera.jpg` (original) and `camera-hdr.jpg` (HDR-style tone-mapped JPEG). The camera is fetched at the **native resolution of its configured RTSP stream** through go2rtc, without the Dashboard preview's 1280 × 720 limit or artificial upscaling. The original JPEG bytes are stored unchanged whenever they fit. The picture is **not** an archival image from the selected historical period.
 
 The JSON in the ZIP has an additional optional top-level object:
 
@@ -12,17 +12,28 @@ The JSON in the ZIP has an additional optional top-level object:
   "filename": "camera.jpg",
   "width_px": 3840,
   "height_px": 2160,
-  "retrieved_at_utc": "2026-11-21T10:10:00Z"
+  "retrieved_at_utc": "2026-11-21T10:10:00Z",
+  "hdr": {
+    "status": "included",
+    "filename": "camera-hdr.jpg",
+    "method": "single_frame_tone_mapping",
+    "width_px": 3840,
+    "height_px": 2160
+  }
 }
 ```
 
-`width_px` and `height_px` show the resolution of the JPEG actually saved inside the archive, not a promised camera specification. `retrieved_at_utc` is the time at which the backend **received** the JPEG, not a precise camera exposure timestamp. When the camera is unavailable, `status` is `"unavailable"`, the other fields are null, and the ZIP contains `camera-unavailable.txt` (German and English) instead of a JPEG. **Historical sensor data is still exported unchanged.** Do not treat a missing image as a failed measurement export. The image and RTSP credentials are not stored in the database or mirrored into JSON. Only the JSON remains subject to the original 1 MB export bound. For safety, the camera fetch is capped at 32 MB and a single JPEG in the ZIP at 20 MB. The typical high-resolution photo stays **byte-identical**; only if larger than 20 MB is it recompressed once at JPEG quality 94 (4:4:4, optimized), then, if still necessary, resized proportionally using LANCZOS from the original frame. An exceptionally large HTTP source (>32 MB) is retried at 3840 and 2560 pixels wide via the same internal go2rtc service. Invalid JPEG and unavailable camera responses are handled without breaking the JSON export. The resolution cannot exceed the configured RTSP source stream's actual resolution.
+`width_px` and `height_px` show the resolution of the JPEG actually saved inside the archive, not a promised camera specification. `retrieved_at_utc` is the time at which the backend **received** the JPEG, not a precise camera exposure timestamp. When the camera is unavailable, `status` and `hdr.status` are `"unavailable"`, their other fields are null, and the ZIP contains `camera-unavailable.txt` (German and English) instead of JPEG files. When the camera is present but HDR-style processing fails, the ZIP still includes `camera.jpg` and a bilingual `camera-hdr-unavailable.txt`; `hdr.status` is `"unavailable"`. **Historical sensor data is still exported unchanged.** Do not treat a missing image as a failed measurement export. The image and RTSP credentials are not stored in the database or mirrored into JSON. Only the JSON remains subject to the original 1 MB export bound. Each image independently respects the 20 MB limit; with both images, an export can contain up to approximately 40 MB of image data. For safety, the camera fetch is capped at 32 MB and a single JPEG in the ZIP at 20 MB. The typical high-resolution photo stays **byte-identical**; only if larger than 20 MB is it recompressed once at JPEG quality 94 (4:4:4, optimized), then, if still necessary, resized proportionally using LANCZOS from the original frame. An exceptionally large HTTP source (>32 MB) is retried at 3840 and 2560 pixels wide via the same internal go2rtc service. Invalid JPEG and unavailable camera responses are handled without breaking the JSON export. The resolution cannot exceed the configured RTSP source stream's actual resolution.
 
 - `GET /api/export/analysis?tent_id=2&range=24h` remains the **original JSON-only endpoint**, unchanged for existing integrations.
 - `GET /api/export/analysis.zip?tent_id=2&range=24h` returns `application/zip` and a `.zip` attachment for the Dashboard.
-- The archive is produced in memory and has a single camera frame, not a video or historical timelapse.
+- The archive is produced in memory, with **one** camera frame represented twice; it is not a video or a historical timelapse. The second image is an **HDR-like visualization of a single exposure**, not real HDR fusion: it gently opens shadows and compresses highlights using local luminance, without recovering clipped sensor detail. Original color is preserved as much as possible. HDR output uses high-quality JPEG 94 with 4:4:4 chroma, keeping original dimensions up to 16 MP (including native 4K); exceptionally large frames can be resized proportionally with LANCZOS. Metadata records its actual dimensions and method. No extra camera call or AI enhancement occurs.
 
 
+
+## Fullscreen camera display (v0.402)
+
+The camera fullscreen popup ("Vollbild" / "Fullscreen") has two optional view modes, **Original** (default) and **HDR** (single-frame tone mapping, **not** multiple exposure HDR). The main Dashboard's lightweight camera preview remains unchanged. The popup uses the existing `GET /tents/{tent_id}/preview` with an optional `hdr=1` query parameter. This flag is propagated through the modular router and service to the JPEG endpoint and uses the **same** processing function as `camera-hdr.jpg`. On errors the previous image stays visible and the popup reports "Bild nicht verfügbar" / "Image unavailable". No image is persisted by this display route. HDR live refresh is throttled to 5 seconds (normal preview remains 2.5 seconds) to limit CPU usage, and the existing high-resolution still-frame zoom continues to work in either mode. Camera configuration, access checks and all exported files are unchanged.
 
 The download uses stored `tent_state.payload` samples in the requested half-open UTC range. It never contacts Shellys or substitutes current settings. Dashboard-only direct readings that were not stored cannot be recovered. Existing `growtent.analysis.v1` climate, target and humidifier fields remain available; v0.385 adds the fields below.
 

@@ -136,8 +136,8 @@ class TentService:
     def latest(self, tent_id: int, request):
         return legacy.latest_state(tent_id, request)
 
-    def preview(self, tent_id: int, w: int = 1280, h: int = 720, q: int = 85):
-        return legacy.tent_preview(tent_id, w=w, h=h, q=q)
+    def preview(self, tent_id: int, w: int = 1280, h: int = 720, q: int = 85, hdr: bool = False):
+        return legacy.tent_preview(tent_id, w=w, h=h, q=q, hdr=hdr)
 
     def shelly_last_switches(self, tent_id: int, max_rows: int):
         return legacy.shelly_last_switches(tent_id, max_rows)

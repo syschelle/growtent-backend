@@ -1,8 +1,9 @@
-"""Read-only ZIP packaging of the historical analysis JSON and one live camera frame.
+"""Read-only ZIP packaging of historical analysis JSON and two camera renderings.
 
 The camera is fetched at the *stream's native resolution*. We keep the original
-JPEG bytes wherever possible; only an exceptionally large image is recompressed
-or reduced. No RTSP URLs, credentials, or images are persisted by this service.
+JPEG bytes wherever possible; the optional HDR-look variant uses single-frame
+shadow/highlight tone mapping, NOT multi-exposure true HDR. No RTSP URLs,
+credentials, or images are persisted by this service.
 """
 
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from zipfile import ZipFile, ZIP_DEFLATED, ZIP_STORED
 import json
 
 import httpx
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
 # Keep the normal 4K/8MP JPEG untouched. These bounds protect the API from an
 # unexpectedly huge camera response, independently of the 1 MB JSON limit.
@@ -20,6 +21,9 @@ MAX_CAMERA_BYTES = 20_000_000
 MAX_CAMERA_FETCH_BYTES = 32_000_000
 MAX_CAMERA_PIXELS = 48_000_000
 CAMERA_FILENAME = 'camera.jpg'
+CAMERA_HDR_FILENAME = 'camera-hdr.jpg'
+MAX_HDR_PIXELS = 16_000_000  # Bound image-processing memory; 4K stays native.
+HDR_METHOD = 'single_frame_tone_mapping'
 
 
 def _high_quality_camera_jpeg(image: bytes) -> bytes | None:
@@ -56,6 +60,56 @@ def _high_quality_camera_jpeg(image: bytes) -> bytes | None:
                         return output.getvalue()
         return None
     except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError):
+        return None
+
+
+
+def _hdr_style_camera_jpeg(original_jpeg: bytes) -> bytes | None:
+    """Make a natural-looking *single-exposure* HDR-style JPEG.
+
+    Gently open local shadows and compress very bright regions on luminance
+    only, preserving colours. The camera's clipped detail cannot be recovered.
+    Keep 4K pixels, avoid upscaling or aggressive sharpening, and resize only
+    if the source is unusually large or the final JPEG exceeds its size cap.
+    The original camera JPEG is never modified or re-encoded by this function.
+    """
+    try:
+        with Image.open(BytesIO(original_jpeg)) as image:
+            if image.format != 'JPEG':
+                return None
+            w, h = image.size
+            if not w or not h or w * h > MAX_CAMERA_PIXELS:
+                return None
+            if w * h > MAX_HDR_PIXELS:
+                ratio = (MAX_HDR_PIXELS / (w * h)) ** .5
+                image.draft('RGB', (round(w * ratio), round(h * ratio)))
+            source = ImageOps.exif_transpose(image)
+            source.load()
+            source = source.convert('RGB')
+        if source.width * source.height > MAX_HDR_PIXELS:
+            ratio = (MAX_HDR_PIXELS / (source.width * source.height)) ** .5
+            source = source.resize((max(1, int(source.width * ratio)), max(1, int(source.height * ratio))),
+                                   Image.Resampling.LANCZOS, reducing_gap=3.0)
+        y, cb, cr = source.convert('YCbCr').split()
+        # A broad illumination estimate prevents noisy per-pixel correction.
+        local = y.filter(ImageFilter.GaussianBlur(radius=max(4, min(source.size) / 150)))
+        def smoothstep(low: float, high: float, value: float) -> float:
+            f = min(1., max(0., (value - low) / (high - low)))
+            return f * f * (3. - 2. * f)
+        shadow_mask = local.point([round(105 * (1 - smoothstep(35, 165, v))) for v in range(256)])
+        high_mask = local.point([round(85 * smoothstep(135, 245, v)) for v in range(256)])
+        lifted = y.point([round(255 * (v / 255) ** .72) for v in range(256)])
+        compressed = y.point([round(v * (1 - .07 * (v / 255) ** 3)) for v in range(256)])
+        toned = Image.composite(lifted, y, shadow_mask)
+        toned = Image.composite(compressed, toned, high_mask)
+        result = Image.merge('YCbCr', (toned, cb, cr)).convert('RGB')
+        with BytesIO() as out:
+            result.save(out, format='JPEG', quality=94, subsampling=0, optimize=True)
+            jpg = out.getvalue()
+        # An extremely complex frame can still be large; apply the same
+        # bounded, high-quality rule as for the original (never upscale).
+        return jpg if len(jpg) <= MAX_CAMERA_BYTES else _high_quality_camera_jpeg(jpg)
+    except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError, MemoryError):
         return None
 
 
@@ -126,6 +180,18 @@ def make_analysis_zip(json_bytes: bytes, json_filename: str, camera_jpeg: bytes 
             # A corrupt final image must never break the climate export.
             included = False
             camera_jpeg = None
+    hdr_jpeg = _hdr_style_camera_jpeg(camera_jpeg) if included else None
+    hdr_width = hdr_height = None
+    if hdr_jpeg is not None:
+        try:
+            with Image.open(BytesIO(hdr_jpeg)) as image:
+                hdr_width, hdr_height = image.size
+                if image.format != 'JPEG':
+                    raise ValueError('not a JPEG')
+                image.verify()
+        except (OSError, ValueError, UnidentifiedImageError):
+            hdr_jpeg = None
+            hdr_width = hdr_height = None
     analysis['camera_snapshot'] = {
         'status': 'included' if included else 'unavailable',
         'filename': CAMERA_FILENAME if included else None,
@@ -133,6 +199,13 @@ def make_analysis_zip(json_bytes: bytes, json_filename: str, camera_jpeg: bytes 
         'height_px': height_px,
         # Time of the camera response, not the historical end of the metrics window.
         'retrieved_at_utc': retrieved_at.astimezone(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z') if included and retrieved_at else None,
+        'hdr': {
+            'status': 'included' if hdr_jpeg is not None else 'unavailable',
+            'filename': CAMERA_HDR_FILENAME if hdr_jpeg is not None else None,
+            'method': HDR_METHOD if hdr_jpeg is not None else None,
+            'width_px': hdr_width,
+            'height_px': hdr_height,
+        },
     }
     with BytesIO() as buffer:
         with ZipFile(buffer, 'w', compression=ZIP_DEFLATED, compresslevel=6) as archive:
@@ -140,6 +213,12 @@ def make_analysis_zip(json_bytes: bytes, json_filename: str, camera_jpeg: bytes 
             if included:
                 # JPEG is compressed already. Store byte-identically in ZIP.
                 archive.writestr(CAMERA_FILENAME, camera_jpeg, compress_type=ZIP_STORED)
+                if hdr_jpeg is not None:
+                    archive.writestr(CAMERA_HDR_FILENAME, hdr_jpeg, compress_type=ZIP_STORED)
+                else:
+                    archive.writestr('camera-hdr-unavailable.txt',
+                        'DE: Die HDR-Tonwertvariante konnte nicht erstellt werden. Das Originalbild bleibt enthalten.\n'
+                        'EN: The HDR-style image could not be created. The original camera image is included.\n')
             else:
                 archive.writestr('camera-unavailable.txt',
                     'DE: Zum Exportzeitpunkt war kein Kamerabild verfügbar. Die historischen Messwerte sind vollständig enthalten.\n'

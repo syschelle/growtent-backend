@@ -105,9 +105,10 @@ def preview(
     w: int = 1280,
     h: int = 720,
     q: int = 85,
+    hdr: bool = False,
     service: TentService = Depends(get_tent_service),
 ):
-    return service.preview(tent_id, w=w, h=h, q=q)
+    return service.preview(tent_id, w=w, h=h, q=q, hdr=hdr)
 
 
 @router.get('/tents/{tent_id}/shelly/last-switches')

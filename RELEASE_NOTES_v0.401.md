@@ -1,8 +1,0 @@
-# GrowTent Backend v0.401 – Camera snapshot in analysis ZIP export
-
-- The Dashboard Analysis Export now downloads a ZIP containing the existing historical `growtent-...json` file and, when available, one current `camera.jpg` snapshot from the selected tent's configured go2rtc stream.
-- Existing `/api/export/analysis` remains a JSON download for backwards compatibility. New read-only `/api/export/analysis.zip` produces the archive; the JSON records and the original 1 MB historical payload limit remain in place.
-- ZIP JSON adds a `camera_snapshot` marker with `status`, `filename`, actual exported image dimensions in pixels, and the frame retrieval time in UTC. The photo is current at download time, **not** a photo from the historical climate range.
-- Camera images are requested at native source resolution, not the low-bandwidth dashboard preview size. Keep original JPEG bytes byte-identical up to 20 MB; above that use a single high-quality JPEG encode and, only if necessary, proportional LANCZOS downsampling. Cap input at 32 MB with a bounded-width internal go2rtc retry for extreme frames. If the stream is missing, invalid or unavailable, the ZIP still contains historical JSON plus bilingual `camera-unavailable.txt`. No RTSP credentials or image bytes are persisted.
-- Bilingual DE/EN Dashboard labels and hints explain the ZIP behavior. No ESP firmware, database migration, Shelly or watering control changes.
-- Local checks: 303 Python tests passed excluding the PostgreSQL integration module; five Node `.mjs` suites, browser ZIP export with synthetic response, and ZIP/release validation passed. PostgreSQL integration, CI Node browser run, Docker build and live camera test are still pending.
