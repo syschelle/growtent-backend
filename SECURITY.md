@@ -1,8 +1,8 @@
-# Security — v0.407
+# Security — v0.408
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
-Only administrator write sessions may change plans or request manual cycles. Existing guest/anonymous write restrictions remain in force. A displayed expected revision fences stale plan edits. The ESP retains physical authority and validates clock, Drying, pump/volume settings, Flood, overlap, storage and event capacity.
+Only authenticated administrator sessions may change plans or request manual cycles. Anonymous access is not allowed, and authenticated guest sessions remain read-only. A displayed expected revision fences stale plan edits. The ESP retains physical authority and validates clock, Drying, pump/volume settings, Flood, overlap, storage and event capacity.
 
 Manual commands are persisted before transport. Retries retain command_id and expiry with fresh authentication nonces. After an authenticated acceptance, a failed status read is uncertain and cannot justify a replacement identity. Firmware durably claims IDs before execution, retains unexpired claims and rejects unknown expired commands. Backend PostgreSQL advisory locks serialize per-controller UI and poll operations across workers.
 
@@ -216,3 +216,11 @@ The analysis export includes only the selected tent's public display name and it
 ## v0.407 numeric-only camera markers
 
 The camera viewer places position-edit controls in a separate row outside the image while retaining administrator-only backend authorization. Only pot numbers appear in `camera-marked.jpg`; names remain in the existing, authorized analysis JSON and are never rendered as pixels. The change adds no routes, credentials, database columns, device actions or RTSP requests.
+
+## v0.408 — Fail-closed auth and XSS fixes
+
+**Critical trust boundary:** PostgreSQL/auth configuration failure MUST NOT mean authentication is disabled. `load_auth_config` rejects a missing configuration row and `auth_middleware` returns HTTP 503 instead of falling back to anonymous read access; `require_admin` verifies that auth configuration was loaded and independently requires a valid admin session for sensitive operations. The former anonymous read-only setting is abolished: a valid session is required regardless of a legacy `enabled=false` database value. A DB outage can temporarily make the application unavailable; availability is intentionally sacrificed to protect confidentiality. All app routes, including `/health`, require an authenticated session. Only login/favicon and the first-installation bootstrap remain unauthenticated. Setup now reports login as mandatory and the configuration API rejects `enabled=false`. On startup legacy `enabled=false` rows migrate to TRUE without changing users/password hashes. The `manage_auth.py` recovery tool refuses `--disable-auth`; configuration backups cannot restore the anonymous mode, and a backup containing no usable admin is rejected. Public first-time installation is denied when an administrator exists in the separate admin-user table even if the legacy password mirror is empty.
+
+**HTML/DOM boundary:** Never interpolate untrusted text or attribute values directly into `innerHTML`/template strings. Escape names, RTSP/controller URLs, Shelly IP addresses/schedule payloads, guest fields, dashboard navigation labels and 2FA QR/recovery values with the local contextual HTML escape helper. The only rich HTML in the affected templates is authored static markup. Use `textContent` when practical for future UI changes.
+
+**Residual risk:** These targeted fixes are not a penetration-test certificate. Run authenticated network checks, dependency audits, browser security-header/CSP review, CSRF/origin checks on all write routes and PostgreSQL integration tests before declaring a comprehensive security sign-off. Existing SameSite cookies, admin write checks and ESP HMAC do not replace those checks.

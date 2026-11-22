@@ -67,6 +67,7 @@ jobs:
       - run: python -m playwright install chromium
       - run: python tests/check_strain_popover_browser.py
       - run: python tests/check_setup_layout_browser.py
+      - run: PYTHONPATH=api:tests python tests/check_security_xss_browser.py
       - run: python tests/check_grow_guide_browser.py
       - run: PYTHONPATH=api:tests python tests/check_analysis_zip_browser.py
       - run: PYTHONPATH=api:tests python tests/check_preview_hdr_browser.py

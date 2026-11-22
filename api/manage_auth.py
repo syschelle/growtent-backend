@@ -53,7 +53,7 @@ def _ensure_auth_table(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS app_auth_config (
             id INTEGER PRIMARY KEY,
-            enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
             username TEXT,
             password_hash TEXT,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -72,7 +72,7 @@ def _ensure_auth_table(cur) -> None:
     cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS pushover_user_key TEXT;")
     cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS gromate_api_password TEXT;")
     cur.execute("ALTER TABLE app_auth_config ADD COLUMN IF NOT EXISTS history_api_enabled BOOLEAN NOT NULL DEFAULT TRUE;")
-    cur.execute("INSERT INTO app_auth_config(id, enabled) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;")
+    cur.execute("INSERT INTO app_auth_config(id, enabled) VALUES (1, TRUE) ON CONFLICT (id) DO UPDATE SET enabled=TRUE;")
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS app_admin_users (
@@ -180,9 +180,9 @@ def cmd_set_admin(args: argparse.Namespace) -> int:
     password = _read_password(args)
     password_hash = _hash_password(password) if password is not None else None
 
-    if args.enable_auth and args.disable_auth:
-        raise SystemExit("Use either --enable-auth or --disable-auth, not both")
-    enabled = False if args.disable_auth else True
+    if args.disable_auth:
+        raise SystemExit("Authentication is mandatory and cannot be disabled.")
+    enabled = True
 
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -265,7 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_admin.add_argument("--password-stdin", action="store_true", help="Read the new password from standard input.")
     p_admin.add_argument("--prompt-password", action="store_true", help="Prompt interactively and require confirmation.")
     p_admin.add_argument("--enable-auth", action="store_true", help="Enable authentication. This is the default for set-admin.")
-    p_admin.add_argument("--disable-auth", action="store_true", help="Disable global authentication while keeping configured admin credentials.")
+    p_admin.add_argument("--disable-auth", action="store_true", help="Unsupported: authentication is mandatory and cannot be disabled.")
     p_admin.add_argument("--disable-2fa", action="store_true", help="Disable 2FA and clear TOTP/recovery data.")
     p_admin.set_defaults(func=cmd_set_admin)
 

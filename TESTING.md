@@ -1,4 +1,4 @@
-# Testing — v0.407
+# Testing — v0.408
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -250,3 +250,12 @@ Run `PYTHONPATH=api:tests python -m pytest -q tests/test_analysis_export.py test
 - `PYTHONPATH=api:tests pytest -q tests/test_camera_pot_positions.py tests/test_analysis_archive.py tests/test_analysis_export_pot_strains.py`: verify number-only annotated JPEG is invariant under strain-name changes, current names still exist in JSON, byte-identical original, preserved HDR, and no output for unplaced pots.
 - `PYTHONPATH=api:tests python tests/check_camera_pot_markers_browser.py`: verify the only image-overlay control is Töpfe/Pots, the separate editor bar sits outside camera pixels, and drag, cancel, save, keyboard control, DE/EN, guest access, HDR and 320px remain operational.
 - Run `PYTHONPATH=api python -m pytest -q --ignore=tests/test_irrigation_postgres.py` and all five `tests/*.mjs` suites; PostgreSQL test setup, Docker rebuild and real RTSP remain deployment checks.
+
+## v0.408 security regressions
+
+- `PYTHONPATH=api:tests pytest -q tests/test_security_hardening.py`: verify DB errors/malformed auth configuration fail closed (503), protected endpoints never execute and admin session enforcement remains effective. Legacy `enabled=false` now denies anonymous access, including GETs, camera frames, ZIP/JSON exports and `/health`. The API rejects attempts to disable auth; session-based guest/admin viewing still works.
+- `PYTHONPATH=api:tests python tests/check_security_xss_browser.py`: actual Chromium with mocked API payloads tries to inject HTML/event handlers through Setup tent labels/details, guest accounts, navigation and dashboard Shelly IP/schedule/generation. No external devices, network requests, or live credentials are used. This check is now also part of the GitHub browser test job.
+- `PYTHONPATH=api:tests python tests/check_setup_layout_browser.py`, `PYTHONPATH=api:tests python tests/check_camera_pot_markers_browser.py` and `PYTHONPATH=api:tests python tests/check_preview_hdr_browser.py`: verify Setup forms and responsive layout, marker editing and HDR/zoom after UI output escaping. The camera browser test was brought up to date with v0.407's unified toolbar and hover hint.
+- `PYTHONPATH=api:tests pytest -q --ignore=tests/test_irrigation_postgres.py` and all five `node tests/*.mjs` suites: full regression coverage outside the optional PostgreSQL test database.
+- `PYTHONPATH=api:tests python -m pytest -q --ignore=tests/test_db_integration.py --ignore=tests/test_irrigation_postgres.py`: regression run without PostgreSQL client/service; the mandatory-login tests cover 19 routes with legacy and current settings, HTML redirect, login/guest/admin distinctions, recovery-CLI denial, and bootstrap validation.
+- Do not treat browser mocks as actual deployed authorization/traffic/RTSP testing; PostgreSQL integration and container rebuild still need verification.

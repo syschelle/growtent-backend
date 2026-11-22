@@ -1,3 +1,10 @@
+## v0.408 — Fail-closed authentication and safe dynamic markup
+
+- Deny protected requests with 503 instead of falling back to authentication disabled when auth configuration is unavailable, missing or invalid; harden direct administrator checks.
+- HTML-escape dynamic tent, guest, Shelly, navigation and 2FA values before templating into the browser DOM.
+- Remove anonymous read-only mode: require sessions for all app routes even if legacy auth-enabled=false, deny `/health` without a login, and reject attempts to disable login via settings API. Preserve signed-in guest read-only behavior and installer/login bootstrap.
+- Add DB outage and XSS regression tests; preserve existing device protocols and ZIP/JSON export schema.
+
 ## v0.407 — Numbered camera labels and separate edit toolbar
 
 - Move positioning/save/cancel controls out of the camera overlay into a bilingual admin bar above the picture. The image overlay retains only the Töpfe/Pots toggle.

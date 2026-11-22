@@ -91,7 +91,7 @@ Session cookies use the `Secure` flag by default (`SESSION_COOKIE_SECURE=true`).
 
 Project ZIP download is disabled by default (`PROJECT_DOWNLOAD_ENABLED=false`). If explicitly enabled, it is administrator-only and excludes `.env`, `.env.*`, private keys and similar secret material.
 
-Even when normal dashboard authentication is globally disabled, Setup, `/config/*`, project downloads, poll diagnostics and API documentation still require an authenticated administrator session. Administrator login always validates real credentials.
+**Login is mandatory for all application content.** Unauthenticated visitors see only the sign-in page (and, before first installation, the token-protected initial setup). Dashboard, cameras, JSON/ZIP exports, API responses, GrowGuide, and even `/health` require a valid login session. Guest accounts remain signed-in read-only users; administrative endpoints require an administrator. The former anonymous read-only mode has been removed and cannot be re-enabled in Setup or via the API.
 
 ## VPD reference table
 
@@ -702,7 +702,7 @@ For heap/fragmentation investigations, open the **dashboard of the affected tent
 
 The downloaded file `growtent-heap-tent-<id>-24h-<UTC>.csv` contains all available successful controller polls in the **preceding 24 hours**. Each line includes the UTC capture timestamp, ESP uptime in seconds (useful for detecting reboots), free heap, minimum free heap, largest free block, total heap size (all in bytes), and the largest-free-block/free-heap ratio. Missing values remain blank; gaps in polling remain visible as timestamp gaps. These are unfiltered observations from PostgreSQL, not chart-smoothed values. Existing `tent_state` retention is 7 days by default, so this export requires **no new firmware, controller polling, or migration**. Data from before telemetry collection started cannot be reconstructed.
 
-The download endpoint is `GET /tents/{tent_id}/heap/export.csv` and requires an authenticated administrator session, even when general dashboard authentication is disabled. The CSV contains no HMAC secrets, Shelly credentials, or unrelated sensor values. Download each affected tent separately and share those files for a side-by-side heap trend analysis.
+The download endpoint is `GET /tents/{tent_id}/heap/export.csv` and requires an authenticated administrator session. The CSV contains no HMAC secrets, Shelly credentials, or unrelated sensor values. Download each affected tent separately and share those files for a side-by-side heap trend analysis.
 
 ---
 

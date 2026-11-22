@@ -1,3 +1,9 @@
+## v0.408 — Authentication fails closed; XSS-safe Setup and Shelly UI
+
+- Return 503 for protected requests if the authentication configuration cannot be read, its row is missing, or it is malformed. Remove the former anonymous read-only mode: every app request requires an authenticated session, including when legacy `enabled=false` remains stored. Protect `/health`, APIs, camera and exports; leave login/first install accessible. Reject disabling authentication in Setup and via the API.
+- Escape dynamic HTML text and attributes in tent cards, guest list, tent menus, dashboard Shelly tiles, and 2FA QR/recovery panels, preventing HTML/script injection from stored labels or controller payloads.
+- Add auth-outage and Chromium XSS regression tests, wire the XSS check into CI, and preserve existing ESP/HDR/ZIP/Setup/DE/EN behavior.
+
 ## v0.407 — Compact camera pot controls and number-only annotated image
 
 - Keep only Töpfe/Pots as an overlay control on the fullscreen camera. Move administrator Positionen bearbeiten/Edit positions, Speichern/Save and Abbrechen/Cancel into an independent toolbar above the image; preserve editing via mouse, touch and keyboard and guest read-only access.

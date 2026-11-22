@@ -11,7 +11,7 @@ def fixture():
     html = render('dashboard_page')
     script = '\n'.join(extract_scripts(html))
     names = ('finiteNumber', 'normalizeShellyDeviceFromPayload', 'shellyIcon',
-             'shellyName', 'formatShellyChangeTime', 'renderShellyDevices')
+             'shellyName', 'formatShellyChangeTime', 'escHtml', 'renderShellyDevices')
     functions = []
     for name in names:
         # All these functions are top-level dashboard functions with the same indentation.

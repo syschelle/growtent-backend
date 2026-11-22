@@ -53,7 +53,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.407"
+APP_VERSION = "v0.408"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -600,7 +600,7 @@ def auth_logout(request: Request):
 def auth_whoami(request: Request):
     s = get_session(request.cookies.get("caop_session"))
     if not s:
-        return {"authenticated": False, "role": "none"}
+        raise HTTPException(status_code=401, detail="Authentication required")
     return {
         "authenticated": True,
         "role": s.get("role") or "admin",
@@ -767,7 +767,9 @@ def load_auth_config():
             cur.execute("SELECT enabled, username, password_hash, twofa_enabled, totp_secret, recovery_codes_json, guest_enabled, guest_username, guest_password_hash, guest_expires_at, pushover_device, pushover_app_token, pushover_user_key, gromate_api_password, history_api_enabled, air_sensor_enabled, air_sensor_host, soil_moisture_alert_enabled FROM app_auth_config WHERE id=1")
             row = cur.fetchone()
             if not row:
-                return {"enabled": False, "username": None, "password_hash": None, "twofa_enabled": False, "totp_secret": None, "recovery_codes_json": "[]", "guest_enabled": False, "guest_username": None, "guest_password_hash": None, "guest_expires_at": None, "pushover_device": "", "pushover_app_token": "", "pushover_user_key": "", "gromate_api_password": "", "history_api_enabled": True, "air_sensor_enabled": False, "air_sensor_host": None, "soil_moisture_alert_enabled": True}
+                # init_db always creates this row, including on first install.
+                # An absent row later must never silently disable authentication.
+                raise RuntimeError("Authentication configuration row missing")
             return {
                 "enabled": bool(row[0]),
                 "username": row[1],
@@ -921,9 +923,13 @@ def is_initial_install_available() -> bool:
         with conn.cursor() as cur:
             cur.execute("SELECT password_hash FROM app_auth_config WHERE id=1")
             row = cur.fetchone()
-            if not row:
-                return True
-            return not bool(row[0])
+            if row and row[0]:
+                return False
+            # An existing administrator is not a new installation, even if
+            # its legacy mirror password is empty. Never offer public bootstrap
+            # as a password-recovery mechanism; use manage_auth.py instead.
+            cur.execute("SELECT 1 FROM app_admin_users WHERE COALESCE(password_hash, '') <> '' LIMIT 1")
+            return cur.fetchone() is None
 
 
 def _create_admin_session_response(username: str, admin_id: int | None = None):
@@ -1197,10 +1203,14 @@ def is_valid_session(token: str | None) -> bool:
 
 def require_admin(request: Request):
     try:
-        if not bool(load_auth_config().get("enabled")):
-            return
+        cfg = load_auth_config()
     except Exception:
-        pass
+        LOGGER.exception("Cannot read authentication configuration for administrator check")
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("enabled"), bool):
+        LOGGER.error("Invalid authentication configuration during administrator check")
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    # Administrator operations always require an authenticated admin session.
     token = request.cookies.get("caop_session")
     session = get_session(token)
     if not session or (session.get("role") or "admin") != "admin":
@@ -1211,8 +1221,8 @@ def require_admin(request: Request):
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     public_exact = {
-        "/health", "/favicon.svg", "/favicon.ico",
-        "/auth/login", "/auth/login/2fa", "/auth/whoami",
+        "/favicon.svg", "/favicon.ico",
+        "/auth/login", "/auth/login/2fa",
         "/install", "/api/install",
     }
     if path in public_exact:
@@ -1222,10 +1232,18 @@ async def auth_middleware(request: Request, call_next):
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         return response
 
+    # Every application route requires a valid session. Database/configuration
+    # errors must never weaken authentication (also for legacy enabled=false).
     try:
         cfg = load_auth_config()
     except Exception:
-        cfg = {"enabled": False}
+        LOGGER.exception("Cannot read authentication configuration")
+        return JSONResponse(status_code=503, content={"detail": "Authentication service unavailable"},
+                            headers={"Cache-Control": "no-store"})
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("enabled"), bool):
+        LOGGER.error("Invalid authentication configuration")
+        return JSONResponse(status_code=503, content={"detail": "Authentication service unavailable"},
+                            headers={"Cache-Control": "no-store"})
 
     try:
         install_available = is_initial_install_available()
@@ -1237,8 +1255,8 @@ async def auth_middleware(request: Request, call_next):
     token = request.cookies.get("caop_session")
     session = get_session(token)
 
-    # Security-sensitive URLs always require a real administrator session,
-    # even when normal dashboard authentication is globally disabled.
+    # Sensitive administrator-only URLs are checked separately from regular
+    # authenticated user/guest access.
     grow_profile_shell = path == "/app" and request.query_params.get("page") == "grow-profile"
     always_admin = (
         path == "/setup"
@@ -1259,15 +1277,15 @@ async def auth_middleware(request: Request, call_next):
                 return RedirectResponse(url="/auth/login", status_code=302)
             return JSONResponse(status_code=403, content={"detail": "admin required"})
 
-    if cfg.get("enabled") and not session:
+    # Mandatory login, regardless of the legacy app_auth_config.enabled bit.
+    # Browsers see only the login page; APIs, camera feeds, previews, static
+    # assets and even /health reveal no application data without a session.
+    if not session:
         if "text/html" in (request.headers.get("accept") or ""):
-            return RedirectResponse(url="/auth/login", status_code=302)
-        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
-
-    # Authentication-disabled mode remains read-only for anonymous clients.
-    # An administrator must still authenticate with real credentials before writes.
-    if not cfg.get("enabled") and not session and request.method.upper() != "GET":
-        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+            return RedirectResponse(url="/auth/login", status_code=302,
+                                    headers={"Cache-Control": "no-store"})
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"},
+                            headers={"Cache-Control": "no-store"})
 
     if session and (session.get("role") or "admin") == "guest":
         if path.startswith("/config") or always_admin:
@@ -1432,7 +1450,7 @@ def init_db():
                 """
                 CREATE TABLE IF NOT EXISTS app_auth_config (
                     id INTEGER PRIMARY KEY,
-                    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     username TEXT,
                     password_hash TEXT,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1537,8 +1555,9 @@ def init_db():
             cur.execute(
                 """
                 INSERT INTO app_auth_config(id, enabled)
-                VALUES (1, FALSE)
-                ON CONFLICT (id) DO NOTHING;
+                VALUES (1, TRUE)
+                ON CONFLICT (id) DO UPDATE SET enabled=TRUE
+                WHERE app_auth_config.enabled IS DISTINCT FROM TRUE;
                 """
             )
             _migrate_legacy_admin_if_needed(cur)
@@ -3552,7 +3571,7 @@ def get_auth_config():
         otpauth_url = pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name="CanopyOps")
         qr_png_url = f"/auth/qr.png?u={quote_plus(otpauth_url)}"
     return {
-        "enabled": bool(cfg.get("enabled")),
+        "enabled": True,  # Mandatory-login policy, including legacy installations.
         "username": username,
         "twofa_enabled": bool(cfg.get("twofa_enabled")),
         "totp_configured": bool(cfg.get("totp_secret")),
@@ -3684,7 +3703,7 @@ import qrcode
 
 
 class AuthConfigPayload(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     username: str | None = None
     password: str | None = None
     password_confirm: str | None = None
@@ -3722,7 +3741,10 @@ def set_auth_config(payload: AuthConfigPayload):
         s = str(v).strip().lower()
         return s in {"1", "true", "yes", "on"}
 
-    enabled = as_bool(payload.enabled)
+    # Never re-enable anonymous read mode through the configuration API.
+    if not as_bool(payload.enabled):
+        raise HTTPException(status_code=400, detail="Authentication cannot be disabled")
+    enabled = True
     username = (payload.username or "").strip()
     password = payload.password
     revoke_primary_admin_id = None
@@ -4842,7 +4864,7 @@ def import_config_backup(payload: dict):
                 cur.execute(
                     """
                     UPDATE app_auth_config
-                    SET enabled=%s,
+                    SET enabled=TRUE,
                         username=%s,
                         password_hash=%s,
                         twofa_enabled=%s,
@@ -4860,7 +4882,6 @@ def import_config_backup(payload: dict):
                     WHERE id=1
                     """,
                     (
-                        bool(auth.get("enabled", False)),
                         (str(auth.get("username")).strip() if auth.get("username") else None),
                         _clean_imported_secret_hash(auth.get("password_hash")),
                         bool(auth.get("twofa_enabled", False)),
@@ -4943,7 +4964,7 @@ def import_config_backup(payload: dict):
                         ),
                     )
                     restored_admins += 1
-                if bool((auth or {}).get("enabled", False)) and restored_admins == 0:
+                if restored_admins == 0:
                     raise HTTPException(status_code=400, detail="backup contains no usable administrator")
                 if restored_admins:
                     cur.execute("SELECT COALESCE(MAX(id),1) FROM app_admin_users")
@@ -4951,7 +4972,10 @@ def import_config_backup(payload: dict):
                     cur.execute("SELECT setval(pg_get_serial_sequence('app_admin_users','id'), %s, true)", (max_admin_id,))
                     _sync_legacy_admin_mirror(cur)
             elif auth and isinstance(auth, dict):
-                # Old backup format: restore exactly one legacy admin, then migrate it.
+                # Old backups must still contain a valid admin, not just
+                # legacy enabled=false anonymous-access settings.
+                if not (str(auth.get("username") or "").strip() and _clean_imported_secret_hash(auth.get("password_hash"))):
+                    raise HTTPException(status_code=400, detail="backup contains no usable administrator")
                 cur.execute("DELETE FROM app_admin_users")
                 _migrate_legacy_admin_if_needed(cur)
 
@@ -6521,8 +6545,8 @@ def setup_page(request: Request):
             <div class=\"card\" id=\"accessCard\" style=\"margin-bottom:12px; max-width:540px;\">
               <div style=\"margin-bottom:8px;\"><strong id=\"accessTitle\">Access</strong></div>
               <label style=\"display:flex; align-items:center; gap:8px; margin-bottom:10px;\">
-                <input type=\"checkbox\" id=\"authEnabled\" />
-                <span id=\"authEnabledLabel\">Enable user authentication</span>
+                <input type=\"checkbox\" id=\"authEnabled\" checked disabled style=\"display:none;\" />
+                <span id=\"authEnabledLabel\">Login always required</span>
               </label>
               <div id=\"accessAdminHint\" class=\"muted\" style=\"margin-bottom:10px;\">Administrator usernames, passwords and 2FA are managed per account below.</div>
               <button type=\"button\" id=\"saveAuthBtn\">Save</button>
@@ -6822,7 +6846,7 @@ def setup_page(request: Request):
               tents: 'Tents',
               save: 'Save',
               access: 'Access',
-              enableAuth: 'Enable user authentication',
+              enableAuth: 'Login always required',
               username: 'Username',
               passwordHint: 'New password (leave empty to keep unchanged)',
               passwordConfirm: 'Repeat new password',
@@ -6941,7 +6965,7 @@ def setup_page(request: Request):
               tents: 'Zelte',
               save: 'Speichern',
               access: 'Zugriff',
-              enableAuth: 'Benutzerauth aktivieren',
+              enableAuth: 'Anmeldung immer erforderlich',
               username: 'Benutzername',
               passwordHint: 'Neues Passwort (beide Felder leer = unverändert)',
               passwordConfirm: 'Neues Passwort wiederholen',
@@ -7493,22 +7517,22 @@ def setup_page(request: Request):
                 const soilTxt = formatSoilSensors(t.soil_sensors || []);
                 return `
                 <article class="setup-tent-item">
-                  <div class="setup-tent-heading"><span class="setup-tent-id">#${t.id}</span><strong>${t.name}</strong></div>
-                  <div class="setup-tent-source">API: ${t.source_url}</div>
+                  <div class="setup-tent-heading"><span class="setup-tent-id">#${escapeSetupHtml(t.id)}</span><strong>${escapeSetupHtml(t.name)}</strong></div>
+                  <div class="setup-tent-source">API: ${escapeSetupHtml(t.source_url)}</div>
                   <div class="setup-tent-actions">
-                    <button data-edit-tent="${t.id}">${tSetup('editTent')}</button>
-                    <button data-plan-tent="${t.id}">${tSetup('irrigationPlan')}</button>
-                    <button data-delete-tent="${t.id}" style="background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('deleteTent')}</button>
+                    <button data-edit-tent="${escapeSetupHtml(t.id)}">${escapeSetupHtml(tSetup('editTent'))}</button>
+                    <button data-plan-tent="${escapeSetupHtml(t.id)}">${escapeSetupHtml(tSetup('irrigationPlan'))}</button>
+                    <button data-delete-tent="${escapeSetupHtml(t.id)}" style="background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${escapeSetupHtml(tSetup('deleteTent'))}</button>
                   </div>
-                  <details class="setup-tent-details"><summary>${tSetup('tentDetails')}</summary>
-                    <div>RTSP: ${t.rtsp_url || '-'}</div>
+                  <details class="setup-tent-details"><summary>${escapeSetupHtml(tSetup('tentDetails'))}</summary>
+                    <div>RTSP: ${escapeSetupHtml(t.rtsp_url || '-')}</div>
                     <div>Shelly Main Auth: ${(t.shelly_main_user || t.has_shelly_main_password) ? 'set' : '-'}</div>
-                    <div>${tSetup('potStrains')}: ${potTxt}</div>
-                    <div>${tSetup('soilSensors')}: ${soilTxt}</div>
-                    <div>${tSetup('irrigationPlan')}: ${planTxt}</div>
-                    <div>${tSetup('growlightPowerAlertStatus')}: ${t.growlight_power_alert_enabled ? ('&gt; ' + Number(t.growlight_power_drop_w || 20) + ' W') : '-'}</div>
-                    <div>${tSetup('backendWriteStatus')}: ${t.backend_write_enabled ? ((t.backend_controller_url || '-') + (t.has_backend_hmac_secret ? ' · HMAC set' : ' · HMAC missing')) : '-'}</div>
-                    <div style="font-family:monospace; word-break:break-all;">${tSetup('apiHistoryPerTent')}: /api/history?deviceId=${t.id}</div>
+                    <div>${escapeSetupHtml(tSetup('potStrains'))}: ${escapeSetupHtml(potTxt)}</div>
+                    <div>${escapeSetupHtml(tSetup('soilSensors'))}: ${escapeSetupHtml(soilTxt)}</div>
+                    <div>${escapeSetupHtml(tSetup('irrigationPlan'))}: ${escapeSetupHtml(planTxt)}</div>
+                    <div>${escapeSetupHtml(tSetup('growlightPowerAlertStatus'))}: ${t.growlight_power_alert_enabled ? ('&gt; ' + Number(t.growlight_power_drop_w || 20) + ' W') : '-'}</div>
+                    <div>${escapeSetupHtml(tSetup('backendWriteStatus'))}: ${t.backend_write_enabled ? (escapeSetupHtml(t.backend_controller_url || '-') + (t.has_backend_hmac_secret ? ' · HMAC set' : ' · HMAC missing')) : '-'}</div>
+                    <div style="font-family:monospace; word-break:break-all;">${escapeSetupHtml(tSetup('apiHistoryPerTent'))}: /api/history?deviceId=${encodeURIComponent(String(t.id))}</div>
                   </details>
                 </article>
               `;
@@ -7840,9 +7864,9 @@ def setup_page(request: Request):
               }
               guestUsersListEl.innerHTML = items.map(g => `
                 <div style="padding:6px 0; border-bottom:1px solid var(--grid);">
-                  <strong>${g.username}</strong> · ${g.enabled ? 'enabled' : 'disabled'}<br>
-                  <span style="opacity:.85">expires: ${g.expires_at ? String(g.expires_at).slice(0,16).replace('T',' ') : '-'}</span><br>
-                  <button data-delete-guest="${g.id}" style="margin-top:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${tSetup('guestDelete')}</button>
+                  <strong>${escapeSetupHtml(g.username)}</strong> · ${g.enabled ? 'enabled' : 'disabled'}<br>
+                  <span style="opacity:.85">expires: ${escapeSetupHtml(g.expires_at ? String(g.expires_at).slice(0,16).replace('T',' ') : '-')}</span><br>
+                  <button data-delete-guest="${escapeSetupHtml(g.id)}" style="margin-top:6px; background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${escapeSetupHtml(tSetup('guestDelete'))}</button>
                 </div>
               `).join('');
               guestUsersListEl.querySelectorAll('button[data-delete-guest]').forEach(btn => {
@@ -7866,7 +7890,7 @@ def setup_page(request: Request):
             try {
               const res = await fetch('/config/auth', { cache: 'no-store' });
               const cfg = await res.json();
-              authEnabledEl.checked = !!cfg.enabled;
+              authEnabledEl.checked = true;
               authUsernameEl.value = cfg.username || 'admin';
               authHasPassword = !!cfg.has_password;
               if (authPasswordEl) authPasswordEl.value = '';
@@ -7994,9 +8018,9 @@ def setup_page(request: Request):
                 if (body?.pending_2fa && (body?.qr_png_url || body?.otpauth_url)) {
                   pending2faToken = body?.verify_token || '';
                   const qr = body?.qr_png_url || `/auth/qr.png?u=${encodeURIComponent(body.otpauth_url)}`;
-                  parts.push(`<div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${qr}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>`);
+                  parts.push(`<div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${escapeSetupHtml(qr)}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>`);
                   if (Array.isArray(body?.recovery_codes) && body.recovery_codes.length) {
-                    parts.push(`<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${body.recovery_codes.join('\\n')}</code></div>`);
+                    parts.push(`<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(body.recovery_codes.join('\\n'))}</code></div>`);
                   }
                   parts.push(`<div style="margin-top:8px;"><input id="verify2faCode" placeholder="2FA Code aus App" style="padding:8px 10px; border-radius:8px; width:220px;" /> <button id="verify2faBtn" style="margin-top:8px;">2FA verifizieren</button></div>`);
                   twofaInfoEl.innerHTML = parts.join('');
@@ -8036,7 +8060,7 @@ def setup_page(request: Request):
                 return;
               }
               if (Array.isArray(body?.recovery_codes) && body.recovery_codes.length && twofaInfoEl) {
-                twofaInfoEl.innerHTML = `<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${body.recovery_codes.join('\\n')}</code></div>`;
+                twofaInfoEl.innerHTML = `<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(body.recovery_codes.join('\\n'))}</code></div>`;
               }
               if (regenRecoveryCodesEl) regenRecoveryCodesEl.checked = false;
               if (recoveryMsgEl) recoveryMsgEl.textContent = 'Recovery codes updated.';
@@ -8258,7 +8282,7 @@ def setup_page(request: Request):
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  enabled: authEnabledEl.checked,
+                  enabled: true,
                   username: trimmedUsername,
                   password: (authPasswordEl.value || authPasswordConfirmEl?.value) ? authPasswordEl.value : '',
                   password_confirm: (authPasswordEl.value || authPasswordConfirmEl?.value) ? (authPasswordConfirmEl?.value || '') : '',
@@ -8287,8 +8311,7 @@ def setup_page(request: Request):
               if (authPasswordConfirmEl) authPasswordConfirmEl.value = '';
               if (body?.has_password !== undefined) authHasPassword = !!body.has_password;
               if (guestPasswordEl) guestPasswordEl.value = '';
-              const persistedEnabled = !!body?.enabled;
-              authEnabledEl.checked = persistedEnabled;
+              authEnabledEl.checked = true;
               authUsernameEl.value = (body?.username || trimmedUsername || authUsernameEl.value || '').trim();
               if (guestEnabledEl) guestEnabledEl.checked = !!body?.guest_enabled;
               if (guestUsernameEl) guestUsernameEl.value = body?.guest_username || guestUsernameEl.value;
@@ -8304,9 +8327,9 @@ def setup_page(request: Request):
                 if (body?.pending_2fa && (body?.qr_png_url || body?.otpauth_url)) {
                   pending2faToken = body?.verify_token || '';
                   const qr = body?.qr_png_url || `/auth/qr.png?u=${encodeURIComponent(body.otpauth_url)}`;
-                  parts.push(`<div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${qr}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>`);
+                  parts.push(`<div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${escapeSetupHtml(qr)}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>`);
                   if (Array.isArray(body?.recovery_codes) && body.recovery_codes.length) {
-                    parts.push(`<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${body.recovery_codes.join('\\n')}</code></div>`);
+                    parts.push(`<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(body.recovery_codes.join('\\n'))}</code></div>`);
                   }
                   parts.push(`<div style="margin-top:8px;"><input id="verify2faCode" placeholder="2FA Code aus App" style="padding:8px 10px; border-radius:8px; width:220px;" /> <button id="verify2faBtn" style="margin-top:8px;">2FA verifizieren</button></div>`);
                   auth2faInfoEl.innerHTML = parts.join('');
@@ -8331,14 +8354,9 @@ def setup_page(request: Request):
                 return;
               }
 
-              if (persistedEnabled) {
-                if (authMsgEl) authMsgEl.textContent = 'Saved. Authentication enabled. Reloading...';
-                setTimeout(() => { window.top.location.href = '/app?page=setup'; }, 250);
-                return;
-              }
-
-              if (authMsgEl) authMsgEl.textContent = `Saved. Authentication ${persistedEnabled ? 'enabled' : 'disabled'}. Password ${body?.has_password ? 'set' : 'not set'}.`;
-              await loadGuestUsers();
+              if (authMsgEl) authMsgEl.textContent = 'Saved. Login required. Reloading...';
+              setTimeout(() => { window.top.location.href = '/app?page=setup'; }, 250);
+              return;
             } catch {
               if (authMsgEl) authMsgEl.textContent = 'Failed to save access settings.';
             }
@@ -8471,7 +8489,7 @@ def setup_page(request: Request):
               }));
 
               nav.innerHTML = enriched
-                .map(t => `<a class="navlink" href="/app?page=dashboard&tent=${t.id}">${t.navName}</a>`)
+                .map(t => `<a class="navlink" href="/app?page=dashboard&tent=${encodeURIComponent(String(t.id))}">${escapeSetupHtml(t.navName)}</a>`)
                 .join('');
             } catch (e) {
               nav.innerHTML = '';
@@ -9972,6 +9990,10 @@ def app_shell_page():
             return (Date.now() - ts) <= (2 * 60 * 1000);
           }
 
+          function escapeShellHtml(value){
+            return String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;')
+              .replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
+          }
           async function loadTentNav(){
             const nav = document.getElementById('tentNav');
             const lang = getLang();
@@ -9996,7 +10018,7 @@ def app_shell_page():
               nav.innerHTML = enriched.map(t => {
                 const online = getTentOnlineState(t.capturedAt);
                 const statusClass = online ? 'online' : 'offline';
-                return `<a class="navlink" href="/app?page=dashboard&tent=${t.id}">${t.name}<span class="status-pill ${statusClass}" title="${online ? onlineText : offlineText}" aria-label="${online ? onlineText : offlineText}"><span class="status-dot"></span></span></a>`;
+                return `<a class="navlink" href="/app?page=dashboard&tent=${encodeURIComponent(String(t.id))}">${escapeShellHtml(t.name)}<span class="status-pill ${statusClass}" title="${online ? onlineText : offlineText}" aria-label="${online ? onlineText : offlineText}"><span class="status-dot"></span></span></a>`;
               }).join('');
             } catch { nav.innerHTML=''; }
           }
@@ -13728,7 +13750,7 @@ def dashboard_page(request: Request):
                 ? `${onMatch ? `${tr('scheduleOn')} ${onMatch[1].trim()}` : ''}${(onMatch && offMatch) ? ' | ' : ''}${offMatch ? `${tr('scheduleOff')} ${offMatch[1].trim()}` : ''}`
                 : '';
               const scheduleRight = scheduleText
-                ? `<span class="small shelly-schedule">${scheduleText}</span>`
+                ? `<span class="small shelly-schedule">${escHtml(scheduleText)}</span>`
                 : '';
               const switchTs = shellyLastSwitches?.[dev.key] || null;
               const activityTs = shellyLastActivity?.[dev.key] || null;
@@ -13744,20 +13766,20 @@ def dashboard_page(request: Request):
               return `
                 <div class="card ${cardStateClass}" style="margin-bottom:0;">
                   <div class="card-head">
-                    <div class="label">${shellyIcon(dev.key)} ${shellyName(dev.key)}</div>
+                    <div class="label">${shellyIcon(dev.key)} ${escHtml(shellyName(dev.key))}</div>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
-                      <span class="small">${tr('lastChange')} ${formatShellyChangeTime(changeTs)}</span>
-                      <span class="status-badge ${dev.isOn ? 'status-on' : 'status-off'}">${state}</span>
+                      <span class="small">${escHtml(tr('lastChange'))} ${escHtml(formatShellyChangeTime(changeTs))}</span>
+                      <span class="status-badge ${dev.isOn ? 'status-on' : 'status-off'}">${escHtml(state)}</span>
                     </div>
                   </div>
                   <div class="value" style="font-size:1.1rem; display:flex; align-items:baseline; justify-content:space-between; gap:8px;"><span>${watt}</span>${scheduleRight}</div>
-                  <div class="small">${tr('lblIp')}: ${dev.ip}</div>
-                  <div class="small">${tr('lblGen')}: ${dev.gen}</div>
-                  <div class="small">${tr('lblEnergy')}: ${kwh}</div>
-                  <div class="small">${tr('lblCost')}: ${eur}</div>
+                  <div class="small">${escHtml(tr('lblIp'))}: ${escHtml(dev.ip)}</div>
+                  <div class="small">${escHtml(tr('lblGen'))}: ${escHtml(dev.gen)}</div>
+                  <div class="small">${escHtml(tr('lblEnergy'))}: ${escHtml(kwh)}</div>
+                  <div class="small">${escHtml(tr('lblCost'))}: ${escHtml(eur)}</div>
                   <div class="shelly-actions">
-                    ${canToggle ? `<button data-shelly-toggle="${dev.key}">${tr('toggle')}</button>` : '<span></span>'}
-                    ${url ? `<button data-open-shelly="${url}">${tr('openShelly')}</button>` : '<span></span>'}
+                    ${canToggle ? `<button data-shelly-toggle="${escHtml(dev.key)}">${tr('toggle')}</button>` : '<span></span>'}
+                    ${url ? `<button data-open-shelly="${escHtml(url)}">${tr('openShelly')}</button>` : '<span></span>'}
                   </div>
                 </div>
               `;

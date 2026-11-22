@@ -3,7 +3,7 @@ const source=fs.readFileSync(new URL('../api/app.py',import.meta.url),'utf8');
 function extract(name){const a=source.indexOf('function '+name+'(');assert.ok(a>=0);let i=source.indexOf('{',a)+1,d=1;while(d){d+=(source[i]==='{')-(source[i]==='}');i++;}return source.slice(a,i);}
 const container={innerHTML:'',querySelectorAll:()=>[]};
 const context=vm.createContext({document:{getElementById:()=>container},tr:k=>({on:'AN',off:'AUS'}[k]||k),shellyIcon:()=>'',shellyName:()=> 'Heizmatte',formatShellyChangeTime:()=>'-',shellyLastSwitches:{},shellyLastActivity:{},shellyLastActivityDirect:{},shellyMainDirectTs:null});
-vm.runInContext(['finiteNumber','normalizeShellyDeviceFromPayload','applyDirectShellyReading','renderShellyDevices'].map(extract).join('\n'),context);
+vm.runInContext(['finiteNumber','normalizeShellyDeviceFromPayload','applyDirectShellyReading','escHtml','renderShellyDevices'].map(extract).join('\n'),context);
 context.data={'settings.shelly.heatmat.ip':'192.0.2.1','settings.shelly.heatmat.gen':3,'cur.shelly.heatmat.isOn':true,'cur.shelly.heatmat.Watt':46.1,'cur.shelly.heatmat.Wh':40.7};
 context.state={isOn:true,meteringOnly:true,Watt:46.1,Wh:40.7};
 vm.runInContext("applyDirectShellyReading(data,'heatmat',state);renderShellyDevices(data)",context);
