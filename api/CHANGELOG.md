@@ -1,3 +1,9 @@
+## v0.411 — Fresh security confirmation and safe QR enrollment
+
+- Require server-side password (+ TOTP when applicable) confirmation for sensitive admin/auth/backup endpoints and protect modular routes with direct dependencies; expire proofs after five minutes or credential changes, lock out repeated failures.
+- Remove TOTP seed from QR query strings, bind an opaque pending QR token and enrollment verification to the initiating session, and hide active seeds from routine auth settings.
+- Add a bilingual modal that retries the exact request after confirmation, including the protected backup download. Guard sliding TTL refresh against reintroducing revoked sessions.
+
 ## v0.410 — PostgreSQL test isolation repair
 
 - Keep installed psycopg2 intact when collecting security tests so the PostgreSQL integration suite uses its real driver in GitHub Actions. Add a guard test. Application logic unchanged.

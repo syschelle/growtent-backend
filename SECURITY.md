@@ -1,4 +1,10 @@
-# Security — v0.410
+# Security — v0.411
+
+## v0.411 – Step-up protection
+
+All administrator operations continue to require an active authenticated session. Sensitive auth/account/2FA and configuration-backup routes additionally require proof of the same administrator's current password and, if enabled, a valid TOTP. Proofs are stored in the in-memory session only, are capped at 300 seconds, and are bound to password/2FA state. The middleware and modular route dependencies both enforce this requirement. A 428 status indicates a required confirmation; the browser never sends passwords or TOTP in query strings. Five failed confirmations lock that session for 15 minutes. A session revoked during a password/2FA update is not recreated by the sliding-expiry refresh at the end of the request.
+
+The TOTP QR endpoint accepts an opaque, short-lived enrollment token bound to the original admin session and builds the secret-bearing URI only on the server. Existing TOTP secrets are no longer returned in GET `/config/auth`. Pending enrollments expire after 10 minutes; completing setup requires the same session and a fresh step-up proof. Never expose the secret in URLs. This update does **not** encrypt secrets stored in PostgreSQL or config backups; those require a subsequent migration and key-management plan. HSTS/CSP and trusted-proxy login rate limiting also remain follow-ups.
 
 The v0.410 change repairs **test isolation only**, ensuring GitHub Actions uses the installed PostgreSQL driver for the real irrigation integration tests. No application security policy changed; the open hardening findings from v0.409 remain.
 

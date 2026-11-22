@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse
 
 import app as legacy
@@ -162,12 +162,12 @@ def api_history(
     return legacy.api_history_for_device(deviceId, hours=hours, limit=50, from_ts=from_ts, to_ts=to)
 
 
-@router.get('/config/backup/export')
+@router.get('/config/backup/export', dependencies=[Depends(legacy.require_recent_admin_confirmation)])
 def config_backup_export():
     return legacy.export_config_backup()
 
 
-@router.post('/config/backup/import')
+@router.post('/config/backup/import', dependencies=[Depends(legacy.require_recent_admin_confirmation)])
 def config_backup_import(payload: dict):
     return legacy.import_config_backup(payload)
 
@@ -178,24 +178,24 @@ def config_admins(request: Request):
     return legacy.get_admin_users_config(request)
 
 
-@router.post('/config/admins')
+@router.post('/config/admins', dependencies=[Depends(legacy.require_recent_admin_confirmation)])
 def config_admins_create(payload: legacy.AdminUserCreatePayload):
     return legacy.create_admin_user(payload)
 
 
-@router.put('/config/admins/{admin_id}')
+@router.put('/config/admins/{admin_id}', dependencies=[Depends(legacy.require_recent_admin_confirmation)])
 def config_admins_update(admin_id: int, payload: legacy.AdminUserUpdatePayload):
     return legacy.update_admin_user(admin_id, payload)
 
 
-@router.delete('/config/admins/{admin_id}')
+@router.delete('/config/admins/{admin_id}', dependencies=[Depends(legacy.require_recent_admin_confirmation)])
 def config_admins_delete(admin_id: int, request: Request):
     return legacy.delete_admin_user(admin_id, request)
 
 
-@router.post('/config/admins/{admin_id}/2fa')
-def config_admins_2fa(admin_id: int, payload: legacy.AdminTwoFAConfigPayload):
-    return legacy.set_admin_2fa_config(admin_id, payload)
+@router.post('/config/admins/{admin_id}/2fa', dependencies=[Depends(legacy.require_recent_admin_confirmation)])
+def config_admins_2fa(admin_id: int, payload: legacy.AdminTwoFAConfigPayload, request: Request):
+    return legacy.set_admin_2fa_config(admin_id, payload, request)
 
 
 @router.get('/config/guests')

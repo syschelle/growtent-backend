@@ -1,8 +1,15 @@
-# Testing — v0.410
+# Testing — v0.411
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
 The irrigation suite checks exact raw-byte request signing, response signature/status/path/nonce/time binding, unsigned/tampered rejection, stale revisions, durable application confirmation, preserved historical dates, firmware capability checks, manual identities across ambiguous timeouts, no legacy start fallback, idempotent event ingestion, commit-before-ACK ordering, stale offline state and delayed/aborted notifications. Existing application tests remain required.
+
+## v0.411 step-up and 2FA enrollment verification
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_step_up_security.py`: 13 tests for per-session password/TOTP proof, 428 guard, five-failure lockout, proof revocation after credential changes, guest denial, QR token ownership and production modular ASGI routing.
+- `PYTHONPATH=api:tests python tests/check_step_up_browser.py`: Chromium bilingual security confirmation including wrong password and retry, required TOTP, challenge replay and 320 px mobile layout. This runs in GitHub Actions browser job.
+- `PYTHONPATH=api:tests python tests/check_security_xss_browser.py`, `python tests/check_setup_layout_browser.py`, `python tests/check_preview_hdr_browser.py` and `python tests/check_camera_pot_markers_browser.py`: confirm no regressions in adjacent interfaces. Other Node and Python suites must also pass.
+- No live PostgreSQL, RTSP/go2rtc or Docker integration was available locally. CI provides an isolated PostgreSQL 17 service. An actual HTTPS Traefik deployment must verify session persistence, login and 2FA on the deployed hostname.
 
 The v0.410 CI regression test (`tests/test_security_hardening.py::test_security_suite_preserves_installed_postgresql_driver`) verifies that the security unit tests never replace an installed psycopg2 module with a stub. When psycopg2 is missing, that test skips and lightweight unit tests use a fake driver; this is *not* a substitute for the real PostgreSQL integration tests. Run the entire suite in one process to catch import-order interference.
 

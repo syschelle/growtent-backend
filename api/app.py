@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import csv
 import io
 import json
@@ -13,11 +14,11 @@ import math
 import logging
 from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import urlsplit
 
 import httpx
 import psycopg2
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -54,7 +55,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.410"
+APP_VERSION = "v0.411"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -63,6 +64,9 @@ SESSION_COOKIE_SECURE = (os.getenv("SESSION_COOKIE_SECURE", "true").strip().lowe
 LOGIN_RATE_LIMIT_ATTEMPTS = max(3, int(os.getenv("LOGIN_RATE_LIMIT_ATTEMPTS", "6")))
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "900")))
 TWOFA_MAX_ATTEMPTS = max(3, int(os.getenv("TWOFA_MAX_ATTEMPTS", "5")))
+STEP_UP_TTL_SECONDS = max(30, min(300, int(os.getenv("STEP_UP_TTL_SECONDS", "300"))))
+STEP_UP_MAX_ATTEMPTS = 5
+STEP_UP_LOCK_SECONDS = 900
 
 app = FastAPI(title="GrowTent Backend PoC")
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -240,6 +244,144 @@ def _revoke_admin_sessions(admin_id: int | None = None, username: str | None = N
     return removed
 
 
+
+def _get_session_admin(session: dict) -> dict | None:
+    """Fetch current credentials; a disabled/renamed admin must not step up."""
+    if not session or session.get("role") != "admin":
+        return None
+    username = str(session.get("username") or "").strip()
+    if not username:
+        return None
+    admin_id = session.get("admin_id")
+    if admin_id is not None:
+        admin = _get_admin_user_by_id(int(admin_id), include_disabled=False)
+    else:
+        admin = _get_admin_user_by_username(username, include_disabled=False)
+    if admin and str(admin.get("username") or "").casefold() == username.casefold():
+        return admin
+    # Pre-migration admin sessions can have no id; accept only the exact mirror
+    # identity, never another admin's credentials.
+    if admin_id is None:
+        cfg = load_auth_config()
+        if (str(cfg.get("username") or "").casefold() == username.casefold()
+                and cfg.get("password_hash")):
+            return {"id": None, "username": username, "password_hash": cfg["password_hash"],
+                    "enabled": True, "twofa_enabled": bool(cfg.get("twofa_enabled")),
+                    "totp_secret": cfg.get("totp_secret")}
+    return None
+
+
+def _step_up_fingerprint(admin: dict) -> str:
+    """Bind a short-lived confirmation to current password and 2FA state."""
+    binding = "\0".join([str(admin.get(k) or "") for k in (
+        "username", "password_hash", "twofa_enabled", "totp_secret")])
+    return hashlib.sha256(binding.encode("utf-8")).hexdigest()
+
+
+def _step_up_required_for(path: str, method: str) -> bool:
+    """Sensitive actions only; normal control routes must remain usable."""
+    method = method.upper()
+    if path in {"/config/auth", "/config/auth/2fa", "/config/auth/2fa/verify"}:
+        return method == "POST"
+    if path.startswith("/config/admins"):
+        return method in {"POST", "PUT", "PATCH", "DELETE"}
+    if path == "/config/backup/export":
+        return method == "GET"
+    if path == "/config/backup/import":
+        return method == "POST"
+    return False
+
+
+def require_recent_admin_confirmation(request: Request) -> None:
+    """Enforce password+TOTP step-up on the server for sensitive config routes."""
+    token = request.cookies.get("caop_session")
+    session = get_session(token)
+    if not session or session.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="administrator required")
+    try:
+        admin = _get_session_admin(session)
+    except Exception:
+        LOGGER.exception("Cannot check current administrator credentials")
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    if not admin:
+        raise HTTPException(status_code=401, detail="Administrator account no longer available")
+    if (float(session.get("step_up_until") or 0) <= time.time()
+            or not secrets.compare_digest(str(session.get("step_up_fingerprint") or ""),
+                                          _step_up_fingerprint(admin))):
+        session.pop("step_up_until", None)
+        session.pop("step_up_fingerprint", None)
+        raise HTTPException(status_code=428, detail="Fresh security confirmation required",
+                            headers={"Cache-Control": "no-store", "X-Step-Up-Required": "1"})
+
+
+class StepUpPayload(BaseModel):
+    password: str
+    code: str | None = None
+
+
+@app.post("/auth/step-up")
+def auth_step_up(payload: StepUpPayload, request: Request):
+    """Confirm the logged-in administrator's *current* password and TOTP."""
+    token = request.cookies.get("caop_session")
+    session = get_session(token)
+    if not session or session.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="administrator required")
+    if float(session.get("step_up_locked_until") or 0) > time.time():
+        raise HTTPException(status_code=429, detail="Too many confirmations; try later",
+                            headers={"Retry-After": str(STEP_UP_LOCK_SECONDS)})
+    try:
+        admin = _get_session_admin(session)
+    except Exception:
+        LOGGER.exception("Administrator credentials unavailable during security confirmation")
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    if not admin:
+        raise HTTPException(status_code=401, detail="Administrator account no longer available")
+    password = str(payload.password or "")
+    code = str(payload.code or "").strip()
+    valid_password = (0 < len(password) <= 1024 and
+                      _verify_secret(admin.get("password_hash"), password))
+    valid_totp = True
+    if admin.get("twofa_enabled"):
+        valid_totp = False
+        if code and len(code) <= 12 and admin.get("totp_secret"):
+            try:
+                valid_totp = bool(pyotp.TOTP(admin["totp_secret"]).verify(code, valid_window=1))
+            except Exception:
+                valid_totp = False
+    if not (valid_password and valid_totp):
+        failures = int(session.get("step_up_failures") or 0) + 1
+        session["step_up_failures"] = failures
+        session.pop("step_up_until", None)
+        session.pop("step_up_fingerprint", None)
+        if failures >= STEP_UP_MAX_ATTEMPTS:
+            session["step_up_locked_until"] = time.time() + STEP_UP_LOCK_SECONDS
+            raise HTTPException(status_code=429, detail="Too many confirmations; try later",
+                                headers={"Retry-After": str(STEP_UP_LOCK_SECONDS)})
+        raise HTTPException(status_code=401, detail="Invalid password or two-factor code")
+    session["step_up_failures"] = 0
+    session.pop("step_up_locked_until", None)
+    session["step_up_fingerprint"] = _step_up_fingerprint(admin)
+    session["step_up_until"] = min(time.time() + STEP_UP_TTL_SECONDS,
+                                    float(session.get("expires_at") or 0))
+    return JSONResponse({"ok": True, "valid_for_seconds": STEP_UP_TTL_SECONDS},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/auth/step-up/status")
+def auth_step_up_status(request: Request):
+    session = get_session(request.cookies.get("caop_session"))
+    if not session or session.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="administrator required")
+    try:
+        admin = _get_session_admin(session)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    if not admin:
+        raise HTTPException(status_code=401, detail="Administrator account no longer available")
+    return JSONResponse({"requires_totp": bool(admin.get("twofa_enabled"))},
+                        headers={"Cache-Control": "no-store"})
+
+
 def _clean_imported_secret_hash(value: object) -> str | None:
     """Accept only Argon2 hashes from imported backups; reject legacy/unknown formats."""
     if not value:
@@ -269,6 +411,10 @@ def _clean_imported_recovery_codes_json(value: object) -> str:
 
 def _refresh_session_if_needed(token: str | None, session: dict | None) -> int | None:
     if not token or not session:
+        return None
+    # An account/2FA/password change may have revoked the session while the
+    # request was running. Never reinsert a revoked token during TTL refresh.
+    if SESSIONS.get(token) is not session:
         return None
     if not bool(session.get("authenticated")) or bool(session.get("preauth")):
         return None
@@ -677,11 +823,27 @@ def save_ui_preferences(payload: UiPreferencesPayload, request: Request):
 
 
 @app.get("/auth/qr.png")
-def auth_qr_png(u: str):
-    img = qrcode.make(u)
+def auth_qr_png(token: str, request: Request):
+    """QR is derived from a pending server-side enrollment, not a secret URL."""
+    session_token = request.cookies.get("caop_session")
+    session = get_session(session_token)
+    if not session or session.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="administrator required")
+    pending = TWOFA_ENROLL.get(token)
+    if (not pending or pending.get("expires_at", 0) < time.time()
+            or not session_token or not secrets.compare_digest(
+                str(pending.get("owner_session") or ""), session_token)):
+        raise HTTPException(status_code=404, detail="Enrollment unavailable")
+    name = str(pending.get("username") or "")
+    secret = str(pending.get("secret") or "")
+    if not name or not secret:
+        raise HTTPException(status_code=404, detail="Enrollment unavailable")
+    uri = pyotp.TOTP(secret).provisioning_uri(name=name, issuer_name="CanopyOps")
+    img = qrcode.make(uri)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    return Response(content=buf.getvalue(), media_type="image/png")
+    return Response(content=buf.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 def get_conn():
@@ -1295,6 +1457,16 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "guest mode: access denied"})
         if request.method.upper() != "GET" and path != "/auth/logout":
             return JSONResponse(status_code=403, content={"detail": "guest mode: write actions disabled"})
+
+    if _step_up_required_for(path, request.method):
+        try:
+            require_recent_admin_confirmation(request)
+        except HTTPException as exc:
+            content = {"detail": exc.detail}
+            if exc.status_code == 428:
+                content["code"] = "step_up_required"
+            return JSONResponse(status_code=exc.status_code, content=content,
+                                headers={"Cache-Control": "no-store", **(exc.headers or {})})
 
     response = await call_next(request)
     refreshed_max_age = _refresh_session_if_needed(token, session)
@@ -3567,12 +3739,9 @@ def health():
 def get_auth_config():
     cfg = load_auth_config()
     username = cfg.get("username") or "admin"
-    secret = cfg.get("totp_secret") or ""
+    # Never reveal an active TOTP seed via config/auth or a URL.
     otpauth_url = None
     qr_png_url = None
-    if cfg.get("twofa_enabled") and username and secret:
-        otpauth_url = pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name="CanopyOps")
-        qr_png_url = f"/auth/qr.png?u={quote_plus(otpauth_url)}"
     return {
         "enabled": True,  # Mandatory-login policy, including legacy installations.
         "username": username,
@@ -3735,7 +3904,7 @@ class TwoFAConfigPayload(BaseModel):
 
 
 @app.post("/config/auth")
-def set_auth_config(payload: AuthConfigPayload):
+def set_auth_config(payload: AuthConfigPayload, request: Request):
     def as_bool(v):
         if isinstance(v, bool):
             return v
@@ -3887,7 +4056,6 @@ def set_auth_config(payload: AuthConfigPayload):
     # Start 2FA enrollment flow (QR + verify code), do NOT enable immediately.
     if enabled and want_twofa and not load_auth_config().get("twofa_enabled"):
         secret = pyotp.random_base32()
-        otpauth_url = pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name="CanopyOps")
         recovery_codes = [
             "-".join([secrets.token_hex(2), secrets.token_hex(2), secrets.token_hex(2)]).upper()
             for _ in range(10)
@@ -3896,6 +4064,8 @@ def set_auth_config(payload: AuthConfigPayload):
             {"hash": _hash_secret(c), "used": False}
             for c in recovery_codes
         ]
+        if not request.cookies.get("caop_session"):
+            raise HTTPException(status_code=403, detail="administrator session required for enrollment")
         token = secrets.token_urlsafe(24)
         primary_admin = _get_admin_user_by_username(username, include_disabled=True)
         TWOFA_ENROLL[token] = {
@@ -3904,6 +4074,7 @@ def set_auth_config(payload: AuthConfigPayload):
             "expires_at": time.time() + 600,
             "username": username,
             "admin_id": int(primary_admin["id"]) if primary_admin else None,
+            "owner_session": request.cookies.get("caop_session"),
         }
         cfg_after_auth_save = load_auth_config()
         return {
@@ -3914,8 +4085,8 @@ def set_auth_config(payload: AuthConfigPayload):
             "has_password": True,
             "pending_2fa": True,
             "verify_token": token,
-            "otpauth_url": otpauth_url,
-            "qr_png_url": f"/auth/qr.png?u={quote_plus(otpauth_url)}",
+            "otpauth_url": None,
+            "qr_png_url": f"/auth/qr.png?token={token}",
             "recovery_codes": recovery_codes,
             "pushover_device": cfg_after_auth_save.get("pushover_device") or "",
             "soil_moisture_alert_enabled": bool(cfg_after_auth_save.get("soil_moisture_alert_enabled", True)),
@@ -4091,7 +4262,7 @@ def delete_admin_user(admin_id: int, request: Request):
 
 
 @app.post("/config/admins/{admin_id}/2fa")
-def set_admin_2fa_config(admin_id: int, payload: AdminTwoFAConfigPayload):
+def set_admin_2fa_config(admin_id: int, payload: AdminTwoFAConfigPayload, request: Request):
     admin = _get_admin_user_by_id(admin_id)
     if not admin:
         raise HTTPException(status_code=404, detail="admin user not found")
@@ -4127,12 +4298,13 @@ def set_admin_2fa_config(admin_id: int, payload: AdminTwoFAConfigPayload):
         return {"ok": True, "twofa_enabled": True, "recovery_codes": []}
 
     secret = pyotp.random_base32()
-    otpauth_url = pyotp.TOTP(secret).provisioning_uri(name=admin["username"], issuer_name="CanopyOps")
     recovery_codes = [
         "-".join([secrets.token_hex(2), secrets.token_hex(2), secrets.token_hex(2)]).upper()
         for _ in range(10)
     ]
     recovery_payload = [{"hash": _hash_secret(code), "used": False} for code in recovery_codes]
+    if not request.cookies.get("caop_session"):
+        raise HTTPException(status_code=403, detail="administrator session required for enrollment")
     token = secrets.token_urlsafe(24)
     TWOFA_ENROLL[token] = {
         "secret": secret,
@@ -4140,14 +4312,15 @@ def set_admin_2fa_config(admin_id: int, payload: AdminTwoFAConfigPayload):
         "expires_at": time.time() + 600,
         "username": admin["username"],
         "admin_id": int(admin_id),
+        "owner_session": request.cookies.get("caop_session"),
     }
     return {
         "ok": True,
         "pending_2fa": True,
         "verify_token": token,
         "twofa_enabled": False,
-        "otpauth_url": otpauth_url,
-        "qr_png_url": f"/auth/qr.png?u={quote_plus(otpauth_url)}",
+        "otpauth_url": None,
+        "qr_png_url": f"/auth/qr.png?token={token}",
         "recovery_codes": recovery_codes,
         "username": admin["username"],
     }
@@ -4304,7 +4477,7 @@ def delete_guest_user(guest_id: int):
 
 
 @app.post("/config/auth/2fa")
-def set_2fa_config(payload: TwoFAConfigPayload):
+def set_2fa_config(payload: TwoFAConfigPayload, request: Request):
     """Backward-compatible primary-admin 2FA endpoint used by older setup UIs."""
     cfg = load_auth_config()
     if not cfg.get("enabled"):
@@ -4327,6 +4500,7 @@ def set_2fa_config(payload: TwoFAConfigPayload):
             enabled=bool(payload.enabled),
             regenerate_recovery_codes=bool(payload.regenerate_recovery_codes),
         ),
+        request,
     )
     return result
 
@@ -4620,11 +4794,17 @@ def poll_errors_page(request: Request):
 
 
 @app.post("/config/auth/2fa/verify")
-def verify_2fa_setup(payload: TwoFAVerifyPayload):
+def verify_2fa_setup(payload: TwoFAVerifyPayload, request: Request):
     pending = TWOFA_ENROLL.get(payload.token)
     if not pending or pending.get("expires_at", 0) < time.time():
         TWOFA_ENROLL.pop(payload.token, None)
         raise HTTPException(status_code=400, detail="2FA setup expired, please start again")
+    session_token = request.cookies.get("caop_session")
+    session = get_session(session_token)
+    if (not session or session.get("role") != "admin"
+            or not session_token or not secrets.compare_digest(
+                str(pending.get("owner_session") or ""), session_token)):
+        raise HTTPException(status_code=403, detail="administrator enrollment session required")
 
     secret = pending.get("secret") or ""
     code = (payload.code or "").strip()
@@ -6810,6 +6990,109 @@ def setup_page(request: Request):
           const langSel = document.getElementById('langSelect');
           const unitSel = document.getElementById('tempUnitSelect');
           const msg = document.getElementById('msg');
+
+          // Five-minute security confirmation for sensitive administrator actions.
+          // The backend enforces it independently; this dialog only makes the
+          // 428 challenge usable, without placing credentials in a URL or logs.
+          const nativeSetupFetch = window.fetch.bind(window);
+          let pendingSecurityConfirmation = null;
+          async function askSecurityConfirmation(){
+            if (pendingSecurityConfirmation) return pendingSecurityConfirmation;
+            const dialog = new Promise(async resolve => {
+              const de = (langSel?.value || localStorage.getItem('gt_lang') || 'de') === 'de';
+              const t = (d,e) => de ? d : e;
+              let needsTotp = false;
+              try {
+                const status = await nativeSetupFetch('/auth/step-up/status', {cache:'no-store'});
+                if (!status.ok) { resolve(false); return; }
+                const state = await status.json();
+                needsTotp = !!state.requires_totp;
+              } catch { resolve(false); return; }
+              const overlay = document.createElement('div');
+              overlay.id = 'securityStepUpModal';
+              overlay.style.cssText = 'position:fixed;inset:0;z-index:20000;display:flex;align-items:center;'+
+                'justify-content:center;background:rgba(2,6,23,.78);padding:16px;box-sizing:border-box;';
+              const panel = document.createElement('form');
+              panel.setAttribute('role','dialog');
+              panel.setAttribute('aria-modal','true');
+              panel.setAttribute('aria-label',t('Sicherheitsbestätigung','Security confirmation'));
+              panel.style.cssText = 'max-width:390px;width:100%;background:#16233a;color:#f8fafc;'+
+                'padding:22px;border:1px solid #475569;border-radius:12px;box-sizing:border-box;'+
+                'font:14px Arial,sans-serif;box-shadow:0 12px 35px #0009;';
+              const heading=document.createElement('h3');
+              heading.textContent=t('Sicherheitsbestätigung','Security confirmation');
+              heading.style.cssText='margin:0 0 10px;font-size:18px;';
+              panel.appendChild(heading);
+              const description=document.createElement('p');
+              description.textContent=t('Bitte bestätige deine Identität für diese Änderung (5 Minuten gültig).',
+                'Confirm your identity for this action (valid for 5 minutes).');
+              description.style.cssText='line-height:1.4;opacity:.85;';
+              panel.appendChild(description);
+              const makeField = (text, type, autocomplete) => {
+                const label=document.createElement('label');
+                label.style.cssText='display:block;margin:12px 0;';
+                const title=document.createElement('span');
+                title.textContent=text;
+                title.style.cssText='display:block;margin-bottom:6px;';
+                const field=document.createElement('input');
+                field.type=type;field.required=true;field.autocomplete=autocomplete;
+                field.style.cssText='width:100%;box-sizing:border-box;padding:9px;border-radius:6px;'+
+                  'border:1px solid #64748b;background:#0f172a;color:#f8fafc;';
+                label.appendChild(title);label.appendChild(field);panel.appendChild(label);
+                return field;
+              };
+              const password=makeField(t('Aktuelles Passwort','Current password'),'password','current-password');
+              password.maxLength=1024;
+              const code=needsTotp?makeField(t('2FA-Code','2FA code'),'text','one-time-code'):null;
+              if(code){code.inputMode='numeric';code.maxLength=12;}
+              const error=document.createElement('div');
+              error.setAttribute('role','alert');
+              error.style.cssText='color:#fca5a5;min-height:1.25em;margin:6px 0;';
+              panel.appendChild(error);
+              const actions=document.createElement('div');
+              actions.style.cssText='display:flex;gap:10px;justify-content:flex-end;';
+              const cancel=document.createElement('button');cancel.type='button';
+              cancel.textContent=t('Abbrechen','Cancel');
+              const confirm=document.createElement('button');confirm.type='submit';
+              confirm.textContent=t('Bestätigen','Confirm');
+              for(const button of [cancel,confirm]){
+                button.style.cssText='padding:9px 14px;min-height:36px;border-radius:6px;'+
+                  'border:1px solid #64748b;background:#334155;color:#fff;cursor:pointer;';
+              }
+              actions.appendChild(cancel);actions.appendChild(confirm);panel.appendChild(actions);
+              overlay.appendChild(panel);document.body.appendChild(overlay);
+              let finished=false;
+              const done=ok=>{if(finished)return;finished=true;document.removeEventListener('keydown',onKey);
+                overlay.remove();password.value='';if(code)code.value='';resolve(ok);};
+              const onKey=e=>{if(e.key==='Escape'){e.preventDefault();done(false);}};
+              document.addEventListener('keydown',onKey);
+              cancel.onclick=()=>done(false);
+              panel.addEventListener('submit',async e=>{
+                e.preventDefault();confirm.disabled=true;error.textContent='';
+                try {
+                  const response=await nativeSetupFetch('/auth/step-up',{
+                    method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',
+                    body:JSON.stringify({password:password.value,code:code?.value||null})
+                  });
+                  if(response.ok){done(true);return;}
+                  error.textContent=response.status===429
+                    ? t('Zu viele Fehlversuche – bitte später erneut versuchen.', 'Too many attempts – try again later.')
+                    : t('Passwort oder 2FA-Code ungültig.', 'Invalid password or 2FA code.');
+                } catch {error.textContent=t('Sicherheitsprüfung nicht erreichbar.','Security check unavailable.');}
+                finally {confirm.disabled=false;}
+              });
+              password.focus();
+            });
+            pendingSecurityConfirmation=dialog;
+            try {return await dialog;} finally {pendingSecurityConfirmation=null;}
+          }
+          window.fetch = async (...args) => {
+            const response=await nativeSetupFetch(...args);
+            if(response.status!==428 || response.headers.get('X-Step-Up-Required')!=='1') return response;
+            if(!(await askSecurityConfirmation())) return response;
+            // Reissue only the exact original request after backend confirmation.
+            return nativeSetupFetch(...args);
+          };
           const authEnabledEl = document.getElementById('authEnabled');
           const authUsernameEl = document.getElementById('authUsername');
           const authPasswordEl = document.getElementById('authPassword');
@@ -7685,8 +7968,26 @@ def setup_page(request: Request):
             msg.textContent = 'Saved.';
           });
 
-          document.getElementById('exportBackupBtn')?.addEventListener('click', () => {
-            window.location.href = '/config/backup/export';
+          document.getElementById('exportBackupBtn')?.addEventListener('click', async () => {
+            const output = document.getElementById('backupMsg');
+            try {
+              const res = await fetch('/config/backup/export', {cache:'no-store'});
+              if(!res.ok) {
+                if(output) output.textContent = (langSel?.value==='de' ? 'Backup-Export fehlgeschlagen: ' : 'Backup export failed: ')+res.status;
+                return;
+              }
+              const filename = /filename=([\\w.-]+)/i.exec(res.headers.get('content-disposition')||'')?.[1]
+                || 'canopyops-backup.json';
+              const blob = await res.blob();
+              const objectUrl = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = objectUrl;link.download = filename;
+              document.body.appendChild(link);link.click();link.remove();
+              setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
+              if(output)output.textContent = langSel?.value==='de'?'Backup heruntergeladen.':'Backup downloaded.';
+            } catch {
+              if(output)output.textContent=langSel?.value==='de'?'Backup-Export fehlgeschlagen.':'Backup export failed.';
+            }
           });
 
           document.getElementById('importBackupBtn')?.addEventListener('click', async () => {
@@ -7747,7 +8048,7 @@ def setup_page(request: Request):
             }
             if (!infoEl) return;
             const token = body.verify_token || '';
-            const qr = body.qr_png_url || `/auth/qr.png?u=${encodeURIComponent(body.otpauth_url || '')}`;
+            const qr = body.qr_png_url || '';
             const recovery = Array.isArray(body.recovery_codes) ? body.recovery_codes : [];
             infoEl.innerHTML = `
               <div style="margin-bottom:8px;"><strong>2FA – ${escapeSetupHtml(body?.username || '')}</strong></div>
@@ -8056,7 +8357,7 @@ def setup_page(request: Request):
                 const parts = [];
                 if (body?.pending_2fa && (body?.qr_png_url || body?.otpauth_url)) {
                   pending2faToken = body?.verify_token || '';
-                  const qr = body?.qr_png_url || `/auth/qr.png?u=${encodeURIComponent(body.otpauth_url)}`;
+                  const qr = body?.qr_png_url || '';
                   parts.push(`<div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${escapeSetupHtml(qr)}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>`);
                   if (Array.isArray(body?.recovery_codes) && body.recovery_codes.length) {
                     parts.push(`<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(body.recovery_codes.join('\\n'))}</code></div>`);
@@ -8365,7 +8666,7 @@ def setup_page(request: Request):
                 const parts = [];
                 if (body?.pending_2fa && (body?.qr_png_url || body?.otpauth_url)) {
                   pending2faToken = body?.verify_token || '';
-                  const qr = body?.qr_png_url || `/auth/qr.png?u=${encodeURIComponent(body.otpauth_url)}`;
+                  const qr = body?.qr_png_url || '';
                   parts.push(`<div style="margin-bottom:8px;"><strong>2FA QR Code</strong><br><img src="${escapeSetupHtml(qr)}" alt="2FA QR" style="width:180px;height:180px;border-radius:8px;border:1px solid rgba(148,163,184,.3);"/></div>`);
                   if (Array.isArray(body?.recovery_codes) && body.recovery_codes.length) {
                     parts.push(`<div><strong>Recovery Codes</strong><br><code style="white-space:pre-wrap;word-break:break-word;">${escapeSetupHtml(body.recovery_codes.join('\\n'))}</code></div>`);

@@ -1,3 +1,11 @@
+## v0.411 — Administrator step-up authentication and session-bound 2FA QR
+
+- Enforce recent current-password verification plus TOTP when enabled on administrator/password/2FA management, recovery-code rotation and configuration backup import/export. Confirmations are session-bound, valid for up to five minutes, and limited to five failed attempts with a 15-minute lockout.
+- Add a DE/EN security confirmation modal in Setup, including challenge/retry support for backup downloads; server checks apply to both legacy middleware and modular routers.
+- Replace QR URLs containing TOTP secrets with session-bound, short-lived enrollment tokens; stop exposing an active TOTP URI in `/config/auth` and bind final verification to the initiating admin session.
+- Prevent TTL refresh from resurrecting admin sessions revoked during password or 2FA changes.
+- Keep logged-in guest access, cameras, VPD, watering, devices and JSON/ZIP analysis exports unchanged. Add Python/ASGI and Chromium tests.
+
 ## v0.410 — Fix PostgreSQL test driver shadowing in GitHub Actions
 
 - Prevent security unit-test stubs from overriding the installed psycopg2 driver during full-suite pytest collection. Fixes seven PostgreSQL integration setup errors seen after v0.409.

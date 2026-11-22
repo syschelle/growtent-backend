@@ -454,7 +454,7 @@ def test_authenticated_admin_and_guest_still_can_read_dashboard(monkeypatch):
 def test_disabling_auth_via_api_is_rejected_before_database_access(monkeypatch):
     monkeypatch.setattr(app, 'get_conn', lambda: (_ for _ in ()).throw(AssertionError('DB must not be touched')))
     with pytest.raises(HTTPException) as exc:
-        app.set_auth_config(app.AuthConfigPayload(enabled=False))
+        app.set_auth_config(app.AuthConfigPayload(enabled=False), _request('/config/auth', 'POST'))
     assert exc.value.status_code == 400
     assert 'cannot be disabled' in exc.value.detail
 
