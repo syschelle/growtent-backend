@@ -61,7 +61,8 @@ def functions(db):
         "HTTPException":HTTPException,"Response":Response,"RETENTION_DAYS":30,"TEMP_MIN_C":-20,"TEMP_MAX_C":80,"VPD_MIN_KPA":0,"VPD_MAX_KPA":6,
         "_finite_sensor_number":finite_number,"_esp_control_vpd":esp_control_vpd,"_esp_raw_vpd":esp_raw_vpd,"_normalise_vpd_channels":normalise_vpd_channels,
         "SENSOR_INIT":{},"_get_last_payload":lambda _: {"sensors.smoothed.vpdKpa":9,"sensors.raw.vpdKpa":8,"sensors.smoothed.temperatureC":21.9,"sensors.smoothed.humidityPct":55.4},
-        "_normalise_pot_strains":lambda p:p or {},"_resolve_tent_id_by_device_id":lambda _:2,"load_auth_config":lambda:{"history_api_enabled":True},
+        "_normalise_pot_strains":lambda p:p or {},"get_session":lambda token:None,
+        "os":__import__("os"), "urlsplit":__import__("urllib.parse",fromlist=["urlsplit"]).urlsplit,"_resolve_tent_id_by_device_id":lambda _:2,"load_auth_config":lambda:{"history_api_enabled":True},
         "LOGGER":SimpleNamespace(info=lambda *a:None,warning=lambda *a:None,exception=lambda *a:None)}
     exec(compile(ast.Module(body=nodes,type_ignores=[]),"api/app.py","exec"),ns)
     return ns
@@ -104,7 +105,7 @@ def test_history_keeps_esp_values_and_explicit_gaps_even_when_raw_is_absent(filt
 
 def test_latest_and_both_history_exports_share_the_esp_channel():
     ts=datetime.now(timezone.utc);db=Database([(ts,sample(0.94)),(ts,sample(None))]);ns=functions(db)
-    latest=ns["latest_state"](2,SimpleNamespace(headers={"host":"backend.invalid"}))["latest"]
+    latest=ns["latest_state"](2,SimpleNamespace(headers={"host":"backend.invalid"},cookies={}))["latest"]
     assert latest["sensors.cur.vpdKpa"] is None and latest["sensors.smoothed.vpdKpa"] is None
     exported=json.loads(ns["export_history_csv"](2).body)
     api=ns["api_history_for_device"]("test-device",limit=50)

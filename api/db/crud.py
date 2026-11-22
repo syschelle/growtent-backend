@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from db.database import get_conn
 from services.air_sensor_service import normalize_air_sensor_host, validate_safe_sensor_host
 from services.grow_write_service import normalize_controller_url, validate_secret_hex
+from services.tent_urls import validate_source_url, validate_rtsp_url
 
 
 def _clean_optional_str(value):
@@ -108,7 +109,7 @@ def _soil_sensors_json(value, *, validate_hosts: bool = False) -> str:
     return json.dumps(_normalise_soil_sensor_hosts(value, validate_hosts=validate_hosts), ensure_ascii=False)
 
 
-def list_tents_raw():
+def list_tents_raw(*, include_sensitive: bool = False):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -130,16 +131,16 @@ def list_tents_raw():
             {
                 "id": r[0],
                 "name": r[1],
-                "source_url": r[2],
-                "rtsp_url": r[3],
-                "shelly_main_user": r[4] or "",
+                "source_url": r[2] if include_sensitive else "",
+                "rtsp_url": r[3] if include_sensitive else None,
+                "shelly_main_user": (r[4] or "") if include_sensitive else "",
                 "has_shelly_main_password": bool(r[5]),
                 "irrigation_plan": json.loads(r[6] or "{}") if r[6] else {},
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                 "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
                 "soil_sensors": _normalise_soil_sensor_hosts(r[9] if len(r) > 9 else None),
                 "backend_write_enabled": bool(r[10]),
-                "backend_controller_url": r[11] or "",
+                "backend_controller_url": (r[11] or "") if include_sensitive else "",
                 "has_backend_hmac_secret": bool(r[12]),
                 "growlight_power_alert_enabled": bool(r[13]),
                 "growlight_power_drop_w": float(r[14] if r[14] is not None else 20.0),
@@ -151,8 +152,11 @@ def list_tents_raw():
 
 def create_tent_raw(payload: dict):
     name = _clean_required_str(payload.get("name"))
-    source_url = _clean_required_str(payload.get("source_url"))
-    rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    try:
+        source_url = validate_source_url(_clean_required_str(payload.get("source_url")), resolve=True)
+        rtsp_url = validate_rtsp_url(_clean_optional_str(payload.get("rtsp_url")), resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
     backend_write_enabled = bool(payload.get("backend_write_enabled", False))
@@ -230,8 +234,11 @@ def delete_tent_raw(tent_id: int):
 
 def update_tent_raw(tent_id: int, payload: dict):
     name = _clean_required_str(payload.get("name"))
-    source_url = _clean_required_str(payload.get("source_url"))
-    rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    try:
+        source_url = validate_source_url(_clean_required_str(payload.get("source_url")), resolve=True)
+        rtsp_url = validate_rtsp_url(_clean_optional_str(payload.get("rtsp_url")), resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password_raw = _clean_optional_str(payload.get("shelly_main_password")) or ""
     shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""

@@ -27,6 +27,7 @@ from services.analysis_export import build_analysis_export, read_irrigation_even
 from services.analysis_archive import get_camera_jpeg, make_analysis_zip, _hdr_style_camera_jpeg, MAX_CAMERA_FETCH_BYTES
 from services.pot_markers import normalize_pot_positions
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
+from services.tent_urls import validate_source_url, validate_rtsp_url
 from services.vpd_channels import (
     finite_number as _finite_sensor_number,
     esp_control_vpd as _esp_control_vpd,
@@ -53,7 +54,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.408"
+APP_VERSION = "v0.409"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -447,6 +448,8 @@ def auth_login(payload: LoginPayload, request: Request):
         raise
     except Exception:
         pass
+    if len(payload.password) > 1024 or len(payload.username) > 150:
+        raise HTTPException(status_code=400, detail="login input is too long")
     cfg = load_auth_config()
     _check_login_rate_limit(payload.username, request)
 
@@ -964,8 +967,6 @@ def _require_install_token(request: Request, payload: InstallPayload | None = No
         raise HTTPException(status_code=503, detail="install API token is required but not configured")
     provided = (
         request.headers.get("x-install-token")
-        or request.query_params.get("install_token")
-        or ((payload.install_token or "") if payload else "")
     )
     if not provided or not secrets.compare_digest(str(provided), INSTALL_API_TOKEN):
         raise HTTPException(status_code=403, detail="valid install token is required")
@@ -994,8 +995,8 @@ def install_create_admin(payload: InstallPayload, request: Request):
         raise HTTPException(status_code=400, detail="admin username is too long")
     if not password:
         raise HTTPException(status_code=400, detail="admin password is required")
-    if len(password) < 8:
-        raise HTTPException(status_code=400, detail="admin password must be at least 8 characters")
+    if len(password) < 8 or len(password) > 1024:
+        raise HTTPException(status_code=400, detail="admin password must have 8–1024 characters")
     if password != password_confirm:
         raise HTTPException(status_code=400, detail="password confirmation does not match")
 
@@ -1108,7 +1109,7 @@ def install_page():
           const res = await fetch('/api/install', {{
             method:'POST',
             headers,
-            body:JSON.stringify({{username,password,password_confirm,install_token}})
+            body:JSON.stringify({{username,password,password_confirm}})
           }});
           const j = await res.json().catch(()=>({{}}));
           if(!res.ok){{m.className='err';m.textContent=j.detail || 'Installation failed.';b.disabled=false;return;}}
@@ -2193,10 +2194,12 @@ def register_rtsp_stream(tent_id: int, rtsp_url: str):
     if not rtsp_url:
         return
     try:
-        with httpx.Client(timeout=4.0) as client:
+        rtsp_url = validate_rtsp_url(rtsp_url, resolve=True)
+        with httpx.Client(timeout=4.0, follow_redirects=False) as client:
             client.put(f"{GO2RTC_BASE_URL}/api/streams", json={f"tent_{tent_id}": rtsp_url})
-    except Exception as e:
-        print(f"[go2rtc] register failed for tent #{tent_id}: {e}")
+    except Exception:
+        # Device URLs may contain RTSP credentials. Never log exception strings.
+        print(f"[go2rtc] register failed for tent #{tent_id}")
 
 
 def _refresh_main_shelly_in_payload(payload: dict, tent: dict):
@@ -2444,7 +2447,7 @@ def _get_shelly_schedule_for_key(tent_id: int, key: str = "light", force_refresh
     if not ip:
         try:
             with httpx.Client(timeout=5.0) as client:
-                r = client.get(tent["source_url"])
+                r = client.get(validate_source_url(tent["source_url"], resolve=True))
                 r.raise_for_status()
                 fresh = r.json() or {}
                 save_state(tent_id, fresh)
@@ -3310,7 +3313,7 @@ def poll_loop():
                         if tent.get("rtsp_url"):
                             register_rtsp_stream(tent["id"], tent["rtsp_url"])
 
-                        r = client.get(tent["source_url"])
+                        r = client.get(validate_source_url(tent["source_url"], resolve=True))
                         r.raise_for_status()
                         payload = r.json()
 
@@ -3998,8 +4001,8 @@ def create_admin_user(payload: AdminUserCreatePayload):
         raise HTTPException(status_code=400, detail="username required")
     if len(username) > 150:
         raise HTTPException(status_code=400, detail="username is too long")
-    if len(password) < 8:
-        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if len(password) < 8 or len(password) > 1024:
+        raise HTTPException(status_code=400, detail="password must have 8–1024 characters")
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -4039,8 +4042,8 @@ def update_admin_user(admin_id: int, payload: AdminUserUpdatePayload):
             raise HTTPException(status_code=400, detail="at least one active admin is required")
     password_hash = current["password_hash"]
     if payload.password is not None and str(payload.password) != "":
-        if len(str(payload.password)) < 8:
-            raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+        if not 8 <= len(str(payload.password)) <= 1024:
+            raise HTTPException(status_code=400, detail="password must have 8–1024 characters")
         password_hash = _hash_secret(str(payload.password))
     try:
         with get_conn() as conn:
@@ -4203,8 +4206,8 @@ def create_guest_user(payload: GuestUserCreatePayload):
     username = (payload.username or "").strip()
     if not username:
         raise HTTPException(status_code=400, detail="username required")
-    if not payload.password:
-        raise HTTPException(status_code=400, detail="password required")
+    if not 8 <= len(payload.password or "") <= 1024:
+        raise HTTPException(status_code=400, detail="guest password must have 8–1024 characters")
     exp = _parse_iso_datetime(payload.expires_at)
     if not exp:
         raise HTTPException(status_code=400, detail="expires_at must be ISO datetime")
@@ -4244,6 +4247,8 @@ def update_guest_user(guest_id: int, payload: GuestUserUpdatePayload):
                 raise HTTPException(status_code=400, detail="username required")
             pw_hash = row[2]
             if isinstance(payload.password, str) and payload.password != "":
+                if not 8 <= len(payload.password) <= 1024:
+                    raise HTTPException(status_code=400, detail="guest password must have 8–1024 characters")
                 pw_hash = _hash_secret(payload.password)
             exp = row[3]
             if payload.expires_at is not None:
@@ -4327,7 +4332,8 @@ def set_2fa_config(payload: TwoFAConfigPayload):
 
 
 @app.get("/tents")
-def list_tents():
+def list_tents(request: Request):
+    is_admin = (get_session(request.cookies.get("caop_session")) or {}).get("role") == "admin"
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json, created_at FROM tents ORDER BY id")
@@ -4336,9 +4342,9 @@ def list_tents():
                 {
                     "id": r[0],
                     "name": r[1],
-                    "source_url": r[2],
-                    "rtsp_url": r[3],
-                    "shelly_main_user": r[4] or "",
+                    "source_url": r[2] if is_admin else "",
+                    "rtsp_url": r[3] if is_admin else None,
+                    "shelly_main_user": (r[4] or "") if is_admin else "",
                     "has_shelly_main_password": bool(r[5]),
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
@@ -4374,9 +4380,13 @@ def download_strains_csv():
 @app.post("/strains/import.csv")
 async def import_strains_csv(request: Request):
     require_admin(request)
-    raw = await request.body()
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > STRAINS_CSV_IMPORT_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="strain CSV exceeds upload size limit")
     try:
-        strains = _parse_strains_csv_bytes(raw)
+        strains = _parse_strains_csv_bytes(bytes(raw))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result = _upsert_strains_db(strains)
@@ -4823,6 +4833,15 @@ def import_config_backup(payload: dict):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Validate untrusted backup URLs BEFORE deleting the current configuration.
+    try:
+        for tent in tents:
+            if isinstance(tent, dict):
+                validate_source_url(tent.get("source_url"), resolve=True)
+                validate_rtsp_url(tent.get("rtsp_url"), resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Unsafe tent URL in backup: {exc}") from exc
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM tents")
@@ -5002,7 +5021,15 @@ def create_tent(payload: TentPayload):
     payload = payload.model_dump(exclude_unset=True)
     name = _clean_required_str(payload.get("name"))
     source_url = _clean_required_str(payload.get("source_url"))
+    try:
+        source_url = validate_source_url(source_url, resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    try:
+        rtsp_url = validate_rtsp_url(rtsp_url, resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password = _clean_optional_str(payload.get("shelly_main_password"))
     pot_strains = _normalise_pot_strains(payload.get("pot_strains"))
@@ -5034,7 +5061,15 @@ def update_tent(tent_id: int, payload: TentPayload):
     payload = payload.model_dump(exclude_unset=True)
     name = _clean_required_str(payload.get("name"))
     source_url = _clean_required_str(payload.get("source_url"))
+    try:
+        source_url = validate_source_url(source_url, resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     rtsp_url = _clean_optional_str(payload.get("rtsp_url"))
+    try:
+        rtsp_url = validate_rtsp_url(rtsp_url, resolve=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     shelly_main_user = _clean_optional_str(payload.get("shelly_main_user"))
     shelly_main_password_raw = _clean_optional_str(payload.get("shelly_main_password")) or ""
     shelly_password_provided = "shelly_main_password" in payload and shelly_main_password_raw != ""
@@ -5227,24 +5262,24 @@ def latest_state(tent_id: int, request: Request):
             captured = row[2]
             payload = row[3]
 
-            host = request.headers.get("host", "localhost:8088")
-            go2rtc_host = f"http://{host.split(':')[0]}:1984"
-            # Force muted playback in UI/open-player links.
-            rtsp_video_only = None
-            if rtsp_url:
-                rtsp_video_only = f"{rtsp_url}#media=video"
-
-            player_url = (
-                f"{go2rtc_host}/stream.html?src={quote_plus(rtsp_video_only)}&muted=1&volume=0&audio=0&media=video&defaultMute=1"
-                if rtsp_video_only
-                else None
-            )
+            # Never infer an external camera URL from the untrusted Host header.
+            # An explicit external URL is optional and is admin-only; it must be
+            # protected separately if the go2rtc HTTP service is made public.
+            is_admin = (get_session(request.cookies.get("caop_session")) or {}).get("role") == "admin"
+            player_base = (os.getenv("GO2RTC_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+            if player_base and (urlsplit(player_base).scheme not in ("https",)
+                                or not urlsplit(player_base).hostname):
+                player_base = ""
+            webrtc_url = (f"{player_base}/api/webrtc?src=tent_{tent_id}"
+                          if is_admin and player_base else None)
+            player_url = (f"{player_base}/stream.html?src=tent_{tent_id}&muted=1&volume=0&audio=0&media=video&defaultMute=1"
+                          if is_admin and player_base else None)
             preview_url = f"/tents/{tent_id}/preview"
 
             return {
                 "tent_id": tent_id,
-                "rtsp_url": rtsp_url,
-                "webrtc_url": f"{go2rtc_host}/api/webrtc?src=tent_{tent_id}",
+                "rtsp_url": rtsp_url if is_admin else None,
+                "webrtc_url": webrtc_url,
                 "player_url": player_url,
                 "preview_url": preview_url,
                 "pot_strains": pot_strains,
@@ -5270,7 +5305,11 @@ def tent_preview(
             rtsp_url = row[0]
 
     # Prefer explicit RTSP source, fallback to named go2rtc stream.
-    src = f"{rtsp_url}#media=video" if rtsp_url else f"tent_{tent_id}"
+    try:
+        valid_rtsp_url = validate_rtsp_url(rtsp_url, resolve=True) if rtsp_url else None
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Camera source is not a safe RTSP URL")
+    src = f"{valid_rtsp_url}#media=video" if valid_rtsp_url else f"tent_{tent_id}"
     url = (
         f"{GO2RTC_BASE_URL}/api/frame.jpeg"
         f"?src={quote_plus(src)}&width={int(w)}&height={int(h)}&q={int(q)}"
@@ -5840,7 +5879,14 @@ def export_analysis_zip(tent_id: int, range_key: str = "24h"):
         json_filename = match.group(1)
     tent = get_tent_by_id(tent_id)
     # A configured RTSP source is tried first, otherwise go2rtc's named stream.
-    image = get_camera_jpeg(GO2RTC_BASE_URL, tent_id, tent.get('rtsp_url') if tent else None)
+    try:
+        camera_source = validate_rtsp_url(tent.get('rtsp_url'), resolve=True) if tent and tent.get('rtsp_url') else None
+    except ValueError:
+        camera_source = None
+        # A previously stored invalid source must not be sent to go2rtc.
+        image = None
+    else:
+        image = get_camera_jpeg(GO2RTC_BASE_URL, tent_id, camera_source)
     retrieved_at = datetime.now(timezone.utc) if image is not None else None
     content = make_analysis_zip(json_response.body, json_filename, image, retrieved_at)
     return Response(
@@ -5936,7 +5982,7 @@ def _extract_main_shelly_conn(tent_id: int):
     if not ip:
         try:
             with httpx.Client(timeout=5.0) as client:
-                r = client.get(tent["source_url"])
+                r = client.get(validate_source_url(tent["source_url"], resolve=True))
                 r.raise_for_status()
                 fresh = r.json() or {}
                 save_state(tent_id, fresh)
@@ -6073,36 +6119,29 @@ def proxy_post_to_tent_action(tent_id: int, path: str):
     if not tent:
         raise HTTPException(status_code=404, detail="tent not found")
 
-    controller_base = derive_controller_base_url(tent["source_url"])
+    try:
+        safe_source_url = validate_source_url(tent["source_url"], resolve=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid controller source URL")
+    controller_base = derive_controller_base_url(safe_source_url)
     target_url = f"{controller_base}{path}"
 
     try:
-        with httpx.Client(timeout=6.0, follow_redirects=True) as client:
+        with httpx.Client(timeout=6.0, follow_redirects=False) as client:
             resp = client.post(target_url)
-            try:
-                body = resp.json()
-            except Exception:
-                body = {"raw": resp.text}
-
-            # After a successful action, fetch fresh state directly from the controller
-            # and persist it immediately so dashboard status updates without poll delay.
+            # Re-check before refresh. Do not follow device redirects or
+            # echo untrusted device response bodies back to the browser.
             if resp.is_success:
                 try:
-                    fresh = client.get(tent["source_url"])
+                    fresh = client.get(validate_source_url(safe_source_url, resolve=True))
                     fresh.raise_for_status()
                     save_state(tent_id, fresh.json())
-                except Exception as sync_err:
-                    print(f"[action-sync] tent #{tent_id} state refresh failed: {sync_err}")
-
-            return {
-                "ok": resp.is_success,
-                "tent_id": tent_id,
-                "target_url": target_url,
-                "status_code": resp.status_code,
-                "response": body,
-            }
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"action request failed: {e}")
+                except Exception:
+                    print(f"[action-sync] tent #{tent_id} state refresh failed")
+            return {"ok": resp.is_success, "tent_id": tent_id,
+                    "status_code": resp.status_code}
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Controller action failed") from None
 
 
 @app.get("/tents/{tent_id}/shelly/main/direct")

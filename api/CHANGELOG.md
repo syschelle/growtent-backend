@@ -1,3 +1,9 @@
+## v0.409 — Device URL allowlists and guest confidentiality
+
+- Hide camera RTSP credentials on guest `/tents` and `/latest` views, avoid Host-header-driven go2rtc links, enforce RTSP(S) and private device HTTP(S) URL validation, and block unsafe existing/backup entries at the use site.
+- Disable redirect following and opaque response-body echo on controller actions; require admins directly on modular tent mutation routes.
+- Stream CSV uploads under limit and bound login/guest passwords; use only X-Install-Token header during bootstrap.
+
 ## v0.408 — Fail-closed authentication and safe dynamic markup
 
 - Deny protected requests with 503 instead of falling back to authentication disabled when auth configuration is unavailable, missing or invalid; harden direct administrator checks.

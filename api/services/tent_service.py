@@ -11,8 +11,8 @@ LOGGER = logging.getLogger("growtent.write")
 
 
 class TentService:
-    def list_tents(self):
-        return crud.list_tents_raw()
+    def list_tents(self, *, include_sensitive: bool = False):
+        return crud.list_tents_raw(include_sensitive=include_sensitive)
 
     def create_tent(self, payload: TentPayload):
         return crud.create_tent_raw(payload.model_dump(exclude_unset=True))

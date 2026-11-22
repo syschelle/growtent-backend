@@ -1,4 +1,4 @@
-# Testing — v0.408
+# Testing — v0.409
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -259,3 +259,10 @@ Run `PYTHONPATH=api:tests python -m pytest -q tests/test_analysis_export.py test
 - `PYTHONPATH=api:tests pytest -q --ignore=tests/test_irrigation_postgres.py` and all five `node tests/*.mjs` suites: full regression coverage outside the optional PostgreSQL test database.
 - `PYTHONPATH=api:tests python -m pytest -q --ignore=tests/test_db_integration.py --ignore=tests/test_irrigation_postgres.py`: regression run without PostgreSQL client/service; the mandatory-login tests cover 19 routes with legacy and current settings, HTML redirect, login/guest/admin distinctions, recovery-CLI denial, and bootstrap validation.
 - Do not treat browser mocks as actual deployed authorization/traffic/RTSP testing; PostgreSQL integration and container rebuild still need verification.
+
+## v0.409 security regression
+
+- `PYTHONPATH=api:tests pytest -q --ignore=tests/test_irrigation_postgres.py`: legacy FastAPI/auth/VPD/ZIP/ESP tests and new device URL security tests, without real services.
+- `PYTHONPATH=api:tests pytest -q tests/test_device_url_security.py`: verifies 25 guest confidentiality, scheme/IP/DNS restrictions, blocked dangerous go2rtc source registration, and safe upstream 302 handling.
+- `PYTHONPATH=api:tests python tests/check_security_xss_browser.py`, `python tests/check_setup_layout_browser.py`, `PYTHONPATH=api:tests python tests/check_camera_pot_markers_browser.py`, `PYTHONPATH=api:tests python tests/check_preview_hdr_browser.py`: existing browser regressions.
+- Network egress rules, go2rtc permissions, real LAN camera/ESP, PostgreSQL integration, and Traefik edge headers must be verified on a separate staging deployment. No live endpoints were contacted.

@@ -1,4 +1,4 @@
-# Security — v0.408
+# Security — v0.409
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 
@@ -224,3 +224,9 @@ The camera viewer places position-edit controls in a separate row outside the im
 **HTML/DOM boundary:** Never interpolate untrusted text or attribute values directly into `innerHTML`/template strings. Escape names, RTSP/controller URLs, Shelly IP addresses/schedule payloads, guest fields, dashboard navigation labels and 2FA QR/recovery values with the local contextual HTML escape helper. The only rich HTML in the affected templates is authored static markup. Use `textContent` when practical for future UI changes.
 
 **Residual risk:** These targeted fixes are not a penetration-test certificate. Run authenticated network checks, dependency audits, browser security-header/CSP review, CSRF/origin checks on all write routes and PostgreSQL integration tests before declaring a comprehensive security sign-off. Existing SameSite cookies, admin write checks and ESP HMAC do not replace those checks.
+
+## v0.409 device URL and guest data boundaries
+
+Guest read-only access must not include stored RTSP usernames/passwords, raw go2rtc external links, or backend HMAC configuration. Admins may still edit camera configuration. Controller HTTP(S) and RTSP(S) URLs are checked against scheme and private-address restrictions when configured and before outbound use, including backup restores, but DNS answers can change after validation: production egress firewalling is still required. Proxy requests must not follow redirects or echo upstream responses/target URLs. Write routes in the modular tent API require explicit admin sessions.
+
+This release is a targeted hardening pass, **not a comprehensive remediation**. Reauthentication, TOTP enrollment link handling and replay protection, encrypted backup/at-rest secrets, CSP/HSTS, abuse-resistant rate limiting, least privilege in Docker and exact dependency pins are still security follow-ups. Do not publish go2rtc ports directly. Prefer pinned image digests and restrict the API host network to authorized LAN devices.

@@ -474,7 +474,7 @@ GET  /api/install      available only before the first admin password exists
 POST /api/install      creates the initial admin account and enables authentication
 ```
 
-The install API is protected by `INSTALL_API_TOKEN` by default. The token must be provided in the install form or as the `X-Install-Token` header for `POST /api/install`.
+The install API is protected by `INSTALL_API_TOKEN` by default. The token must be provided as the `X-Install-Token` request header for `POST /api/install`. It is not accepted in URLs or request bodies.
 
 The install API can be disabled completely with the environment variable:
 

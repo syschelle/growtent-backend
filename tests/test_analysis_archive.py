@@ -113,7 +113,7 @@ def test_endpoint_reuses_json_export_and_preserves_old_handler():
         return JPEG
     ns={'export_analysis_json':fake_json, 'get_tent_by_id': lambda tid:{'rtsp_url':'rtsp://secret:pw@camera/stream'},
         'get_camera_jpeg':fake_camera,'make_analysis_zip':make_analysis_zip,'Response':Response,
-        're':__import__('re'),'datetime':datetime,'timezone':timezone,'GO2RTC_BASE_URL':'http://go2rtc:1984'}
+        're':__import__('re'),'datetime':datetime,'timezone':timezone,'GO2RTC_BASE_URL':'http://go2rtc:1984', 'validate_rtsp_url':lambda val, **kw:val}
     exec(compile(ast.Module(body=[func],type_ignores=[]),'api/app.py','exec'),ns)
     response=ns['export_analysis_zip'](2)
     assert response.media_type=='application/zip'

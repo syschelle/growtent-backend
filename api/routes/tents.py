@@ -17,21 +17,21 @@ def _admin_username(request: Request) -> str:
 
 
 @router.get('/tents')
-def list_tents(service: TentService = Depends(get_tent_service)):
-    return service.list_tents()
+def list_tents(request: Request, service: TentService = Depends(get_tent_service)):
+    return service.list_tents(include_sensitive=(legacy.get_session(request.cookies.get('caop_session')) or {}).get('role') == 'admin')
 
 
-@router.post('/tents')
+@router.post('/tents', dependencies=[Depends(_admin_username)])
 def create_tent(payload: TentPayload, service: TentService = Depends(get_tent_service)):
     return service.create_tent(payload)
 
 
-@router.put('/tents/{tent_id}')
+@router.put('/tents/{tent_id}', dependencies=[Depends(_admin_username)])
 def update_tent(tent_id: int, payload: TentPayload, service: TentService = Depends(get_tent_service)):
     return service.update_tent(tent_id, payload)
 
 
-@router.delete('/tents/{tent_id}')
+@router.delete('/tents/{tent_id}', dependencies=[Depends(_admin_username)])
 def delete_tent(tent_id: int, service: TentService = Depends(get_tent_service)):
     return service.delete_tent(tent_id)
 
@@ -42,7 +42,7 @@ def get_grow_profile(tent_id: int, request: Request, service: TentService = Depe
     return service.get_grow_profile(tent_id)
 
 
-@router.patch('/tents/{tent_id}/grow-profile')
+@router.patch('/tents/{tent_id}/grow-profile', dependencies=[Depends(_admin_username)])
 def update_grow_profile(tent_id: int, payload: GrowProfilePatch, request: Request, service: TentService = Depends(get_tent_service)):
     username = _admin_username(request)
     return service.update_grow_profile(tent_id, payload, username)
@@ -58,22 +58,22 @@ def download_strains_csv():
     return legacy.download_strains_csv()
 
 
-@router.post('/strains/import.csv')
+@router.post('/strains/import.csv', dependencies=[Depends(_admin_username)])
 async def import_strains_csv(request: Request):
     return await legacy.import_strains_csv(request)
 
 
-@router.post('/strains')
+@router.post('/strains', dependencies=[Depends(_admin_username)])
 def create_strain(payload: StrainPayload, request: Request):
     return legacy.create_strain(payload, request)
 
 
-@router.put('/strains/{strain_id}')
+@router.put('/strains/{strain_id}', dependencies=[Depends(_admin_username)])
 def update_strain(strain_id: int, payload: StrainPayload, request: Request):
     return legacy.update_strain(strain_id, payload, request)
 
 
-@router.delete('/strains/{strain_id}')
+@router.delete('/strains/{strain_id}', dependencies=[Depends(_admin_username)])
 def delete_strain(strain_id: int, request: Request):
     return legacy.delete_strain(strain_id, request)
 
@@ -83,7 +83,7 @@ def get_irrigation_plan(tent_id: int, service: TentService = Depends(get_tent_se
     return service.get_irrigation_plan(tent_id)
 
 
-@router.put('/tents/{tent_id}/irrigation-plan')
+@router.put('/tents/{tent_id}/irrigation-plan', dependencies=[Depends(_admin_username)])
 def update_irrigation_plan(tent_id: int, payload: IrrigationPlanPayload, service: TentService = Depends(get_tent_service)):
     return service.update_irrigation_plan(tent_id, payload)
 
@@ -104,7 +104,7 @@ def get_camera_positions(tent_id: int):
     return legacy.get_tent_camera_positions(tent_id)
 
 
-@router.put('/tents/{tent_id}/camera-positions')
+@router.put('/tents/{tent_id}/camera-positions', dependencies=[Depends(_admin_username)])
 def update_camera_positions(tent_id: int, payload: CameraPositionsPayload, request: Request):
     _admin_username(request)
     return legacy.put_tent_camera_positions(tent_id, payload, request)
@@ -142,31 +142,31 @@ def shelly_direct_all_state(tent_id: int, service: TentService = Depends(get_ten
     return service.shelly_direct_all(tent_id)
 
 
-@router.post('/tents/{tent_id}/actions/shelly/{device}/toggle')
+@router.post('/tents/{tent_id}/actions/shelly/{device}/toggle', dependencies=[Depends(_admin_username)])
 def toggle_shelly(tent_id: int, device: str, service: TentService = Depends(get_tent_service)):
     return service.toggle_shelly(tent_id, device)
 
 
-@router.post('/tents/{tent_id}/actions/shelly/reset-energy')
+@router.post('/tents/{tent_id}/actions/shelly/reset-energy', dependencies=[Depends(_admin_username)])
 def reset_shelly_energy(tent_id: int, service: TentService = Depends(get_tent_service)):
     return service.reset_shelly_energy(tent_id)
 
 
-@router.post('/tents/{tent_id}/actions/relay/{relay_idx}/toggle')
+@router.post('/tents/{tent_id}/actions/relay/{relay_idx}/toggle', dependencies=[Depends(_admin_username)])
 def toggle_relay(tent_id: int, relay_idx: int, service: TentService = Depends(get_tent_service)):
     return service.toggle_relay(tent_id, relay_idx)
 
 
-@router.post('/tents/{tent_id}/actions/startWatering')
+@router.post('/tents/{tent_id}/actions/startWatering', dependencies=[Depends(_admin_username)])
 def start_watering(tent_id: int, payload: ManualIrrigationPayload, service: TentService = Depends(get_tent_service)):
     return service.start_watering(tent_id,payload)
 
 
-@router.post('/tents/{tent_id}/actions/pump/{pump_idx}/trigger10s')
+@router.post('/tents/{tent_id}/actions/pump/{pump_idx}/trigger10s', dependencies=[Depends(_admin_username)])
 def trigger_pump(tent_id: int, pump_idx: int, service: TentService = Depends(get_tent_service)):
     return service.trigger_pump(tent_id, pump_idx)
 
 
-@router.post('/tents/{tent_id}/actions/pingTank')
+@router.post('/tents/{tent_id}/actions/pingTank', dependencies=[Depends(_admin_username)])
 def ping_tank(tent_id: int, service: TentService = Depends(get_tent_service)):
     return service.ping_tank(tent_id)

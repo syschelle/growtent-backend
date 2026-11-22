@@ -43,6 +43,7 @@ def route_under_test(handler):
              'Query': lambda value, **kw: value,
              'GO2RTC_BASE_URL': 'http://go2rtc:1984',
              'MAX_CAMERA_FETCH_BYTES': MAX_CAMERA_FETCH_BYTES,
+             'validate_rtsp_url': lambda value, **kwargs: value,
              '_hdr_style_camera_jpeg': _hdr_style_camera_jpeg}
     exec(compile(ast.Module(body=[method], type_ignores=[]), '<isolated preview>', 'exec'), scope)
     return scope['tent_preview']

@@ -1,3 +1,10 @@
+## v0.409 — Secure guest camera data and controller URL handling
+
+- Prevent guest API responses from exposing embedded RTSP camera credentials; stop deriving public go2rtc links from Host headers and avoid putting camera secrets into query strings.
+- Validate controller/RTSP URL schemes, unsafe destination IPs, and Docker-internal hostnames on writes/imports and at runtime. Stop forwarding redirects and untrusted raw response bodies from controller actions.
+- Add explicit admin permissions on tent write routes, bounded streaming CSV uploads, a header-only installer token and password length limits. No ESP/DB migration or camera processing change.
+- Add isolated security regression tests; document the still-open hardening work for future releases.
+
 ## v0.408 — Authentication fails closed; XSS-safe Setup and Shelly UI
 
 - Return 503 for protected requests if the authentication configuration cannot be read, its row is missing, or it is malformed. Remove the former anonymous read-only mode: every app request requires an authenticated session, including when legacy `enabled=false` remains stored. Protect `/health`, APIs, camera and exports; leave login/first install accessible. Reject disabling authentication in Setup and via the API.

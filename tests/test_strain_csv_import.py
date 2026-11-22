@@ -88,7 +88,7 @@ def test_name_header_is_required():
 
 def test_production_modular_router_exposes_csv_import_endpoint():
     routes = (Path(__file__).resolve().parents[1] / "api" / "routes" / "tents.py").read_text(encoding="utf-8")
-    assert "@router.post('/strains/import.csv')" in routes
+    assert "@router.post('/strains/import.csv', dependencies=[Depends(_admin_username)])" in routes
     assert "await legacy.import_strains_csv(request)" in routes
 
 

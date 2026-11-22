@@ -158,5 +158,5 @@ def test_backup_and_migration_are_referenced_by_source():
     assert 'payload["pot_positions"] = normalize_pot_positions' in source
     assert '@app.put("/tents/{tent_id}/camera-positions")' in source
     routes=(ROOT/'api/routes/tents.py').read_text()
-    assert "@router.put('/tents/{tent_id}/camera-positions')" in routes
+    assert "@router.put('/tents/{tent_id}/camera-positions', dependencies=[Depends(_admin_username)])" in routes
     assert '_admin_username(request)' in routes
