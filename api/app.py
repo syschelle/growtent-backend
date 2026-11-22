@@ -58,7 +58,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.414"
+APP_VERSION = "v0.415"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1483,6 +1483,8 @@ def require_admin(request: Request):
         raise HTTPException(status_code=403, detail="admin required")
 
 
+from services.security_headers import security_headers_middleware
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -1586,6 +1588,10 @@ async def auth_middleware(request: Request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+
+# Outer middleware covers early redirects/401/403/503 responses as well.
+app.middleware("http")(security_headers_middleware)
 
 
 def init_db():
@@ -4868,11 +4874,11 @@ def poll_errors_page(request: Request):
   </head>
   <body>
     <h1>Polling-Fehler (Live)</h1>
-    <div class="muted" id="scopeHint">Aktualisierung alle 5 Sekunden</div>
+    <div class="muted" id="scopeHint" data-tent-filter="__TENT_FILTER__">Aktualisierung alle 5 Sekunden</div>
     <div id="list"></div>
     <script>
-      const tentFilter = "__TENT_FILTER__";
       const scopeHint = document.getElementById('scopeHint');
+      const tentFilter = scopeHint?.dataset.tentFilter || '';
       if (scopeHint && tentFilter) scopeHint.textContent = `Nur Zelt #${tentFilter} · Aktualisierung alle 5 Sekunden`;
       function esc(v){ return String(v ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'); }
       async function tick(){
@@ -6906,7 +6912,7 @@ def setup_page(request: Request):
               <button type=\"button\" id=\"saveAuthBtn\">Save</button>
               <div id=\"authMsg\" style=\"margin-top:10px;\"></div>
               <!-- Hidden legacy compatibility fields: kept only so older save paths and rollback mirrors remain safe. -->
-              <form id=\"authForm\" onsubmit=\"return false;\" autocomplete=\"off\" style=\"display:none;\">
+              <form id=\"authForm\" autocomplete=\"off\" style=\"display:none;\">
                 <input id=\"authUsername\" name=\"admin-username\" autocomplete=\"username\" />
                 <input id=\"authPassword\" name=\"new-admin-password\" autocomplete=\"new-password\" type=\"password\" />
                 <input id=\"authPasswordConfirm\" name=\"new-admin-password-confirm\" autocomplete=\"new-password\" type=\"password\" />

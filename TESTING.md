@@ -1,8 +1,17 @@
-# Testing — v0.414
+# Testing — v0.415
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
 The irrigation suite checks exact raw-byte request signing, response signature/status/path/nonce/time binding, unsigned/tampered rejection, stale revisions, durable application confirmation, preserved historical dates, firmware capability checks, manual identities across ambiguous timeouts, no legacy start fallback, idempotent event ingestion, commit-before-ACK ordering, stale offline state and delayed/aborted notifications. Existing application tests remain required.
+
+## v0.415 – CSP, browser and container safeguards
+
+- `python scripts/generate_csp_hashes.py --check`: require the committed static CSP hash allowlist to match the audited source literals before testing/building. **Never hash rendered HTML** to expand the CSP allowlist.
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_csp_headers.py`: verify trusted inline scripts, per-parameter immutable Polling Errors JavaScript, no dynamic handler attributes, unauthorized inline scripts blocked, and headers also on JSON errors and redirects; optional HSTS gating.
+- `PYTHONPATH=api:tests python tests/check_csp_browser.py`: enforce the script policy in Chromium using a local CSP meta tag (frame-ancestors cannot be tested with meta); known page scripts must execute and an injected script plus onerror handler must be blocked. The HTTP header itself is verified separately in the Python suite.
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_csp_modular_v0415.py`: test the actual deployed FastAPI router with login, unauthorized API and authenticated shell responses.
+- Existing setup, XSS, step-up, Original/HDR, pot markers, GrowGuide, analysis export and five Node suites must still pass. PostgreSQL integration requires the isolated CI database.
+- Compose YAML parse check is local; **full image build and container runtime read-only mount testing require Docker**. Verify /data permissions, fullscreen preview, Shelly, ESP, login/2FA and production Traefik HTTPS/HSTS after deployment. The default container UID remains root for migration compatibility.
 
 ## v0.414 login and TOTP hardening
 

@@ -12,6 +12,8 @@ app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 # Keep legacy middleware behavior.
 app.middleware("http")(legacy.auth_middleware)
+# Outermost layer: security headers also cover early auth failures and redirects.
+app.middleware("http")(legacy.security_headers_middleware)
 
 # Keep legacy startup behavior (DB init + poller thread).
 @app.on_event("startup")

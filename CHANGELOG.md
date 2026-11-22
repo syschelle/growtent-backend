@@ -1,3 +1,10 @@
+## v0.415 — Browser CSP and compatible Docker hardening
+
+- Enforce a hash-allowlisted JavaScript CSP for trusted bundled scripts, rejecting other inline scripts/event handlers while preserving same-origin embedded UI, fullscreen preview, 2FA and GrowGuide. Move dynamic polling-filter data out of the inline JavaScript.
+- Add consistent security headers to login, API errors and authenticated pages. Make HSTS opt-in for verified HTTPS deployments (Traefik preferred; no fixed proxy architecture).
+- Drop API Linux capabilities, enable no-new-privileges, a read-only root filesystem and /tmp tmpfs. Preserve writable data mounts, existing UID, camera and database services for safe upgrades; document remaining mount/UID risks.
+- Add source-hash manifest validation and browser CSP regression tests in CI.
+
 ## v0.414 — Proxy-safe login rate limiting and one-use TOTP
 
 - Scope login failures to the pair of normalized username and client IP, not a global proxy IP or username; prevent collateral login lockouts behind Traefik.

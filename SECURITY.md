@@ -1,4 +1,10 @@
-# Security — v0.414
+# Security — v0.415
+
+## v0.415 – Browser CSP and container isolation
+
+The outermost FastAPI middleware adds an enforced Content-Security-Policy to successful, redirected and denied requests in both the modular and legacy entrypoints. Inline JavaScript is authorized only by SHA-256 hashes of **trusted in-repository source literals**, not from user-controlled response bodies; unknown inline scripts and event handler attributes are blocked. Same-origin frames, audio and camera preview data/blob image sources are supported. Inline CSS is still permitted for legacy UI compatibility, and this does not replace XSS-safe DOM handling. A trusted-script manifest must be regenerated and reviewed whenever an inline script changes. The Polling Errors page no longer interpolates tent query values into executable JavaScript.
+
+HSTS is opt-in (`GT_HSTS_MAX_AGE=0` by default) and should ordinarily be applied on a validated public HTTPS reverse proxy. No implicit X-Forwarded-For trust has been added. Docker Compose removes API Linux capabilities, sets no-new-privileges and read-only rootfs with a dedicated /tmp tmpfs; the existing /data mount stays writable. Root UID, full read-only project mount, go2rtc and PostgreSQL privilege profiles remain as explicit compatibility follow-ups. See `docs/security-deployment.md`.
 
 ## v0.414 – Proxy-aware login protection and TOTP replay prevention
 

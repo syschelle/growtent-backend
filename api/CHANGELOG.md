@@ -1,3 +1,10 @@
+## v0.415 — Enforced CSP, security headers, minimal container rights
+
+- Use a fixed SHA-256 allowlist of first-party inline JavaScript plus same-origin external script URLs. Block other inline scripts and handler attributes; preserve legacy inline CSS for now.
+- Move the Polling Errors tent selector to a safe data attribute, so its trusted JavaScript is identical across parameter values.
+- Apply headers to all API outcomes (including unauthenticated responses), optional HSTS, and a read-only, capability-free API rootfs with writable /tmp and persistent /data.
+- No ESP/Shelly/VPD/irrigation protocol, secret-encryption key, login rules or database migration changes.
+
 ## v0.414 — Trusted proxy login isolation and persistent TOTP replay guard
 
 - Rate limit credential failures per account + verified client address instead of globally by username and proxy IP; use an explicit trusted-proxy allowlist for X-Forwarded-For and disable automatic Uvicorn proxy header trust.

@@ -88,3 +88,14 @@ Before starting Docker Compose, create a `.env` file from `.env.example` and rep
 ## v0.414 reverse-proxy and login protection
 
 For HTTPS deployments behind Traefik, keep the API port private and set `GT_TRUSTED_PROXY_CIDRS` in `.env` **only** to the verified immediate proxy IP(s), such as an exact `/32` address. Never use a wildcard or the whole Docker network. The API processes `X-Forwarded-For` itself and ignores it when the immediate peer is untrusted; Uvicorn runs with `--no-proxy-headers`. The new TOTP replay table is created automatically during normal database startup. A 2FA code already used during login cannot be reused in a subsequent step-up dialog; use the next 30-second code.
+
+## v0.415 browser and container hardening
+
+The API now serves an enforced Content Security Policy for audited application
+scripts and headers on both successful and denied responses. `GT_HSTS_MAX_AGE=0`
+is the default; enable HSTS on a verified HTTPS-only Traefik router (or set a
+backend max-age) after checking the public hostname. API Compose adds a
+read-only root filesystem, /tmp tmpfs, capability dropping and no-new-privileges
+without changing existing `./data` owners or automatically switching UID.
+`GT_TRUSTED_PROXY_CIDRS` remains optional and must reflect the real immediate
+proxy hop, wherever the reverse proxy runs. See `docs/security-deployment.md`.

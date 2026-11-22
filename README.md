@@ -196,6 +196,16 @@ Existing deep links to `/app?page=grow-profile&tent=<id>` continue to work for a
 
 ## Network and security model
 
+**v0.415 browser/container security:** The API sends an enforced script-hash
+Content-Security-Policy, protects same-origin embedded dashboards, and adds
+security headers even on login/API errors. `GT_HSTS_MAX_AGE=0` leaves HSTS off
+by default; configure it on an HTTPS-only Traefik router after validation.
+Both Compose variants drop API Linux capabilities, enable no-new-privileges,
+and use a read-only API root filesystem plus writable `/tmp` and existing
+`./data`. Existing data ownership and root UID remain unchanged for safe
+upgrades; see [security deployment guidance](docs/security-deployment.md) for
+nonroot opt-in, known mount risk, CSP changes and post-deployment checks.
+
 By default, only the API/web UI should be reachable from outside Docker.
 
 | Component | Internal address | Published host port | Notes |

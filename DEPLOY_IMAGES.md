@@ -23,7 +23,9 @@ The following services stay internal to the Docker Compose network:
 
 The Compose files do not ship usable default database credentials. You must provide a deployment-specific `.env` file before starting the stack.
 
-**v0.414 proxy setup:** Uvicorn is started with `--no-proxy-headers`. The application accepts `X-Forwarded-For` for login throttling only when the **immediate source IP** belongs to `GT_TRUSTED_PROXY_CIDRS` in `.env`. Leave it empty unless you know the exact source IP/CIDR of your Traefik instance. Do not trust `0.0.0.0/0`, the whole Docker subnet, or arbitrary forwarded headers. This setting is optional for startup; without it, logins are limited per account and immediate TCP peer (which may be Traefik). Confirm real client distinction in your network before assuming per-client rate limiting. The API and go2rtc must still not be published directly to the Internet.
+**Proxy setup (v0.414+):** Uvicorn is started with `--no-proxy-headers`. The application accepts `X-Forwarded-For` for login throttling only when the **immediate source IP** belongs to `GT_TRUSTED_PROXY_CIDRS` in `.env`. Leave it empty unless you know the exact source IP/CIDR of your Traefik instance. Do not trust `0.0.0.0/0`, the whole Docker subnet, or arbitrary forwarded headers. This setting is optional for startup; without it, logins are limited per account and immediate TCP peer (which may be Traefik). Confirm real client distinction in your network before assuming per-client rate limiting. The API and go2rtc must still not be published directly to the Internet.
+
+**v0.415 browser and container hardening:** The API now sends an enforced script-hash CSP and other browser-security headers; HSTS is opt-in (`GT_HSTS_MAX_AGE=0` by default), since HTTP-only LAN deployments remain supported. For publicly HTTPS-only CanopyOps, set HSTS on the actual Traefik HTTPS router. API Compose adds capability dropping, `no-new-privileges`, read-only rootfs, and a writable /tmp tmpfs while preserving the bind-mounted `/data` and current user identity. After updating, use `docker compose ... config --quiet`, inspect the API logs for read-only filesystem problems, and test login/2FA, camera fullscreen/HDR and ESP/Shelly. See `docs/security-deployment.md` for details, remaining project-mount risk and an optional nonroot rollout.
 
 ## Required `.env` file
 
@@ -68,7 +70,7 @@ ghcr.io/syschelle/growtent-backend-api:latest
 For deterministic deployments, pin a version **once its GHCR image has been published**, for example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.414
+ghcr.io/syschelle/growtent-backend-api:v0.415
 ```
 
 go2rtc is pinned in the Compose files as an immutable reference instead of `latest`:
@@ -84,8 +86,8 @@ Override `GO2RTC_IMAGE` only deliberately for controlled upgrades.
 Use the current release image explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.414 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.414 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.415 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.415 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Or use the image configured in `.env` / Compose:
