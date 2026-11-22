@@ -1,3 +1,9 @@
+## v0.413 — At-rest secret vault and encrypted backup format
+
+- Seal and migrate sensitive PostgreSQL fields with Fernet using a deployment-only key; decrypt only at existing internal consumers.
+- Return encrypted, restorable configuration backups and accept encrypted or legacy backups on import under the existing step-up requirement.
+- Fail startup without a key; preserve camera previews, ESP/Shelly/HMAC operations, roles and 2FA.
+
 ## v0.412 — Camera preview HTTP 500 and Shelly light schedule HTTP 404 hotfix
 
 - Restore `quote_plus` from `urllib.parse` after v0.411 accidentally removed a required preview dependency.

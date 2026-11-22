@@ -353,11 +353,23 @@ POSTGRES_USER=<database-user>
 POSTGRES_PASSWORD=<strong-random-database-password>
 DATABASE_URL=postgresql://<database-user>:<url-encoded-database-password>@db:5432/<database-name>
 INSTALL_API_TOKEN=<strong-random-first-run-install-token>
+GT_DATA_ENCRYPTION_KEY=<unique-urlsafe-base64-32-byte-key>
 ```
 
 Use different secrets for each deployment. If the database password contains special characters, URL-encode it in `DATABASE_URL`.
 
-The application refuses to start with missing, placeholder, or known weak default database URLs.
+The application refuses to start with missing, placeholder, or known weak default database URLs. **From v0.413, the API also refuses startup without a valid `GT_DATA_ENCRYPTION_KEY`.** The key is required by both Compose variants.
+
+Generate the 32-byte Fernet key **once**, and store it separately from the database:
+
+```bash
+# On a host with Python and cryptography installed:
+python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+# Alternative using standard OpenSSL:
+openssl rand -base64 32 | tr '+/' '-_'
+```
+
+Put the generated string on a single `GT_DATA_ENCRYPTION_KEY=...` line in `.env`, then protect that file (`chmod 600 .env`). Keep the key in an independent offline secret vault or password manager. **Do not change the key after first boot**, even for restores: it is needed to read encrypted PostgreSQL fields and config backups. An existing installation migrates its plaintext TOTP, Pushover, Gromate, Shelly/HMAC and RTSP credentials automatically on its first v0.413 start. A wrong key prevents access. Before upgrading, retain a separate pre-migration DB backup for a possible rollback; the migrated database cannot be used with v0.412 without restoring the old snapshot.
 
 Generate example random values on Linux:
 
@@ -745,7 +757,9 @@ POST /config/backup/import
 
 The setup page also provides backup/import controls.
 
-Security note: configuration backup exports do not include plaintext Shelly passwords. They include `has_shelly_main_password` metadata only. After importing a configuration backup, re-enter Shelly device passwords in Setup if those credentials are required. Database-level backups created with `pg_dump` still contain the complete database content and should be protected accordingly.
+**v0.413 security:** Configuration backup exports are encrypted `.encrypted.json` files, not plain JSON. They contain the complete configuration, including RTSP camera URLs, Shelly passwords, HMAC secrets, administrators/2FA seeds and notification credentials **only inside authenticated ciphertext**. The encryption key is NOT embedded and is required on the target host before importing. The existing administrator password/TOTP step-up confirmation is required for export/import.
+
+Legacy plaintext JSON backups remain importable to help migrate older installations, but are highly sensitive and should be protected or securely destroyed once migrated. `pg_dump`/restic snapshots still require independent storage access controls: old snapshots can retain historical plaintext data and the encrypted database remains useless without its separately stored encryption key.
 
 ### Database backup with pg_dump
 

@@ -31,6 +31,8 @@ services:
       INSTALL_API_TOKEN: ${INSTALL_API_TOKEN:?Set INSTALL_API_TOKEN in .env for first-run bootstrap}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       PROJECT_DOWNLOAD_ENABLED: ${PROJECT_DOWNLOAD_ENABLED:-false}
+      # Mandatory in Docker: keep this key safe and OUTSIDE the database/backup.
+      GT_DATA_ENCRYPTION_KEY: ${GT_DATA_ENCRYPTION_KEY:?Set GT_DATA_ENCRYPTION_KEY in .env before deployment}
     volumes:
       - ./:/project:ro
       - ./data:/data

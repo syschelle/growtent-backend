@@ -84,4 +84,4 @@ The ZIP includes project files and this installation guide.
 
 ## Production secrets
 
-Before starting Docker Compose, create a `.env` file from `.env.example` and replace all placeholder values. The initial install page requires the `INSTALL_API_TOKEN` value by default.
+Before starting Docker Compose, create a `.env` file from `.env.example` and replace all placeholder values. The initial install page requires the `INSTALL_API_TOKEN` value by default. **v0.413 also requires `GT_DATA_ENCRYPTION_KEY`**; generate a Fernet key and keep it separately from DB/backups. Existing plaintext secrets migrate transactionally on first start. Retain a pre-upgrade DB backup and never lose/change the key (see `README.md`).

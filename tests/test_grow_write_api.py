@@ -379,5 +379,8 @@ def test_tent_payload_secret_is_write_only_by_contract_source_text():
     app_text = (root / "api" / "app.py").read_text(encoding="utf-8")
     assert '"has_backend_hmac_secret"' in crud_text
     assert '"_backend_hmac_secret"' in crud_text
-    assert '"backend_hmac_secret": None' in app_text
+    # v0.413+: A full backup is always Fernet-encrypted before leaving the API;
+    # the secret can therefore round-trip without becoming a plaintext export.
+    assert 'encrypt_backup(backup)' in app_text
+    assert '"backend_hmac_secret": open_secret(r[12])' in app_text
     assert "X-GrowTent-Signature" not in crud_text

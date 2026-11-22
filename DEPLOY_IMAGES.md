@@ -40,6 +40,8 @@ openssl rand -base64 36
 openssl rand -base64 48
 ```
 
+From v0.413, **also set `GT_DATA_ENCRYPTION_KEY` before upgrading**. It must be a unique Fernet key generated once (see `README.md`, **Environment and secrets**). An existing database will be migrated at API startup; keep a pre-migration database snapshot and an offline copy of the new key. Do not downgrade with encrypted rows.
+
 Required variables:
 
 ```text
@@ -48,6 +50,7 @@ POSTGRES_USER=...
 POSTGRES_PASSWORD=...
 DATABASE_URL=postgresql://<db-user>:<url-encoded-db-password>@db:5432/<db-name>
 INSTALL_API_TOKEN=<long-random-first-run-token>
+GT_DATA_ENCRYPTION_KEY=<fernet-key>
 ```
 
 Important: if the database password contains special characters, URL-encode it in `DATABASE_URL`.

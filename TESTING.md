@@ -1,8 +1,16 @@
-# Testing — v0.412
+# Testing — v0.413
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
 The irrigation suite checks exact raw-byte request signing, response signature/status/path/nonce/time binding, unsigned/tampered rejection, stale revisions, durable application confirmation, preserved historical dates, firmware capability checks, manual identities across ambiguous timeouts, no legacy start fallback, idempotent event ingestion, commit-before-ACK ordering, stale offline state and delayed/aborted notifications. Existing application tests remain required.
+
+## v0.413 encrypted secret storage and backup validation
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_secret_vault_v0413.py`: field-level encryption/decryption and key mismatch, confidential round-trip backup, actual encrypted export, legacy import guard, wrong-key preflight, HMAC retrieval and real modular camera preview with encrypted RTSP URL.
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_secret_vault_postgres_v0413.py`: runs only with `IRRIGATION_TEST_DATABASE_URL`; verifies transactional updates and idempotency against real PostgreSQL in an isolated schema (no production database).
+- Startup without `GT_DATA_ENCRYPTION_KEY` must fail; Docker Compose must refuse an unset key before launch. Verify runtime migration with a real **pre-upgrade test database snapshot** and the same key across restarts. Check 2FA login, Pushover, Shelly, HMAC/ESP, RTSP original/HDR and encrypted backup export/import on a test deployment.
+- Confirm the key is not in `git`, PostgreSQL dumps, config backup envelopes or access logs. Secure and separately back up the key. Wrong-key recovery requires the correct original key, never a silent fallback.
+- Full `pytest`, five Node test suites and DE/EN Chromium browser checks are required.
 
 ## v0.412 camera preview and Shelly schedule hotfix
 

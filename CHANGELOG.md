@@ -1,3 +1,9 @@
+## v0.413 — Encrypt stored secrets and configuration backup exports
+
+- Authenticated Fernet encryption for stored TOTP, Pushover, Gromate, Shelly/HMAC and RTSP credential values, with an idempotent PostgreSQL startup migration.
+- Encrypt entire configuration backups with the same deployment key; refuse plaintext export, retain legacy JSON import, and preserve device credentials for full restore.
+- Require `GT_DATA_ENCRYPTION_KEY` in Docker Compose and enforce it at API startup; add migration/restore guidance and regression tests.
+
 ## v0.412 — Restore camera previews and modular Shelly schedule route
 
 - Restore `quote_plus` import accidentally removed in the v0.411 2FA QR changes; fix HTTP 500 for both dashboard camera previews and fullscreen Original/HDR while preserving RTSP URL safety checks and mandatory authentication.

@@ -7,6 +7,7 @@ from db.database import get_conn
 from services.air_sensor_service import normalize_air_sensor_host, validate_safe_sensor_host
 from services.grow_write_service import normalize_controller_url, validate_secret_hex
 from services.tent_urls import validate_source_url, validate_rtsp_url
+from services.secret_vault import open_secret, seal_secret
 
 
 def _clean_optional_str(value):
@@ -132,7 +133,7 @@ def list_tents_raw(*, include_sensitive: bool = False):
                 "id": r[0],
                 "name": r[1],
                 "source_url": r[2] if include_sensitive else "",
-                "rtsp_url": r[3] if include_sensitive else None,
+                "rtsp_url": open_secret(r[3]) if include_sensitive else None,
                 "shelly_main_user": (r[4] or "") if include_sensitive else "",
                 "has_shelly_main_password": bool(r[5]),
                 "irrigation_plan": json.loads(r[6] or "{}") if r[6] else {},
@@ -190,7 +191,7 @@ def create_tent_raw(payload: dict):
                           pot_strains_json, soil_sensors_json, backend_write_enabled, backend_controller_url,
                           backend_hmac_secret IS NOT NULL, growlight_power_alert_enabled, growlight_power_drop_w, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, backend_write_enabled, backend_controller_url, backend_hmac_secret, growlight_power_alert_enabled, growlight_power_drop_w, pot_strains_json, soil_sensors_json),
+                (name, source_url, seal_secret(rtsp_url), shelly_main_user, seal_secret(shelly_main_password), backend_write_enabled, backend_controller_url, seal_secret(backend_hmac_secret), growlight_power_alert_enabled, growlight_power_drop_w, pot_strains_json, soil_sensors_json),
             )
             row = cur.fetchone()
             if not row:
@@ -200,7 +201,7 @@ def create_tent_raw(payload: dict):
         "id": row[0],
         "name": row[1],
         "source_url": row[2],
-        "rtsp_url": row[3],
+        "rtsp_url": open_secret(row[3]),
         "shelly_main_user": row[4] or "",
         "has_shelly_main_password": bool(row[5]),
         "pot_strains": _normalise_pot_strains(row[6]),
@@ -285,7 +286,7 @@ def update_tent_raw(tent_id: int, payload: dict):
             elif backend_secret_provided:
                 effective_secret = backend_hmac_secret
             else:
-                effective_secret = current[2] or None
+                effective_secret = open_secret(current[2]) or None
             if effective_enabled and (not effective_controller or not effective_secret):
                 raise HTTPException(status_code=400, detail="backend write API requires controller URL and HMAC secret")
 
@@ -318,11 +319,11 @@ def update_tent_raw(tent_id: int, payload: dict):
                           backend_hmac_secret IS NOT NULL, growlight_power_alert_enabled, growlight_power_drop_w, created_at
                 """,
                 (
-                    name, source_url, rtsp_url, shelly_main_user,
-                    shelly_password_clear, shelly_password_provided, shelly_main_password,
+                    name, source_url, seal_secret(rtsp_url), shelly_main_user,
+                    shelly_password_clear, shelly_password_provided, seal_secret(shelly_main_password),
                     backend_write_enabled_provided, backend_write_enabled,
                     backend_controller_url_provided, backend_controller_url,
-                    backend_secret_clear, backend_secret_provided, backend_hmac_secret,
+                    backend_secret_clear, backend_secret_provided, seal_secret(backend_hmac_secret),
                     growlight_power_alert_enabled_provided, growlight_power_alert_enabled,
                     growlight_power_drop_w_provided, growlight_power_drop_w,
                     pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id,
@@ -334,7 +335,7 @@ def update_tent_raw(tent_id: int, payload: dict):
         "id": row[0],
         "name": row[1],
         "source_url": row[2],
-        "rtsp_url": row[3],
+        "rtsp_url": open_secret(row[3]),
         "shelly_main_user": row[4] or "",
         "has_shelly_main_password": bool(row[5]),
         "pot_strains": _normalise_pot_strains(row[6]),
@@ -366,7 +367,7 @@ def get_tent_write_config_raw(tent_id: int) -> dict:
         "source_url": row[2] or "",
         "backend_write_enabled": bool(row[3]),
         "backend_controller_url": row[4] or "",
-        "_backend_hmac_secret": row[5] or "",
+        "_backend_hmac_secret": open_secret(row[5]) or "",
     }
 
 

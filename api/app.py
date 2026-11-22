@@ -29,6 +29,8 @@ from services.analysis_archive import get_camera_jpeg, make_analysis_zip, _hdr_s
 from services.pot_markers import normalize_pot_positions
 from services.air_sensor_service import AirSensorService, normalize_air_sensor_host, validate_safe_sensor_host
 from services.tent_urls import validate_source_url, validate_rtsp_url
+from services.secret_vault import (open_secret, seal_secret, require_key, encrypt_backup, decrypt_backup,
+                                  migrate_legacy_secrets, BACKUP_KIND)
 from services.vpd_channels import (
     finite_number as _finite_sensor_number,
     esp_control_vpd as _esp_control_vpd,
@@ -55,7 +57,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.412"
+APP_VERSION = "v0.413"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -940,16 +942,16 @@ def load_auth_config():
                 "username": row[1],
                 "password_hash": row[2],
                 "twofa_enabled": bool(row[3]) if row[3] is not None else False,
-                "totp_secret": row[4],
+                "totp_secret": open_secret(row[4]),
                 "recovery_codes_json": row[5] or "[]",
                 "guest_enabled": bool(row[6]) if row[6] is not None else False,
                 "guest_username": row[7],
                 "guest_password_hash": row[8],
                 "guest_expires_at": row[9].isoformat() if row[9] else None,
                 "pushover_device": row[10] or "",
-                "pushover_app_token": row[11] or "",
-                "pushover_user_key": row[12] or "",
-                "gromate_api_password": row[13] or "",
+                "pushover_app_token": open_secret(row[11]) or "",
+                "pushover_user_key": open_secret(row[12]) or "",
+                "gromate_api_password": open_secret(row[13]) or "",
                 "history_api_enabled": bool(row[14]) if row[14] is not None else True,
                 "air_sensor_enabled": bool(row[15]) if row[15] is not None else False,
                 "air_sensor_host": row[16],
@@ -967,7 +969,7 @@ def _admin_row_dict(row) -> dict | None:
         "password_hash": row[2],
         "enabled": bool(row[3]),
         "twofa_enabled": bool(row[4]),
-        "totp_secret": row[5],
+        "totp_secret": open_secret(row[5]),
         "recovery_codes_json": row[6] or "[]",
         "created_at": row[7].isoformat() if row[7] else None,
         "updated_at": row[8].isoformat() if row[8] else None,
@@ -1734,6 +1736,9 @@ def init_db():
                 """
             )
             _migrate_legacy_admin_if_needed(cur)
+            # Upgrade existing plaintext credentials in the SAME transaction.
+            # Missing or incorrect encryption keys cannot partially migrate data.
+            migrate_legacy_secrets(cur)
             # No default tent auto-insert on fresh installs.
 
 
@@ -2335,7 +2340,7 @@ def _stored_shelly_main_password(tent: dict | None) -> str:
     """Return the internal stored Shelly password without exposing the public API field name."""
     if not isinstance(tent, dict):
         return ""
-    return str(tent.get("_shelly_main_password") or tent.get("shelly_main_password") or "").strip()
+    return str(open_secret(tent.get("_shelly_main_password") or tent.get("shelly_main_password")) or "").strip()
 
 
 def list_tent_sources():
@@ -2348,9 +2353,9 @@ def list_tent_sources():
                     "id": r[0],
                     "name": r[1],
                     "source_url": r[2],
-                    "rtsp_url": r[3],
+                    "rtsp_url": open_secret(r[3]),
                     "shelly_main_user": r[4] or "",
-                    "_shelly_main_password": r[5] or "",
+                    "_shelly_main_password": open_secret(r[5]) or "",
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
                     "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
                     "pot_strains": _normalise_pot_strains(r[8] if len(r) > 8 else None),
@@ -3724,6 +3729,9 @@ def poll_loop():
 
 @app.on_event("startup")
 def startup_event():
+    # Fail closed if an operator starts the API without its off-database key.
+    # Never silently resume plaintext database writes after an upgrade.
+    require_key()
     init_db()
     _ensure_strains_db()
     t = threading.Thread(target=poll_loop, daemon=True)
@@ -3932,9 +3940,9 @@ def set_auth_config(payload: AuthConfigPayload, request: Request):
             current_guest_enabled = bool(row[3])
             current_guest_hash = row[5]
             current_pushover_device = (row[7] or "")
-            current_pushover_app_token = (row[8] or "")
-            current_pushover_user_key = (row[9] or "")
-            current_gromate_api_password = (row[10] or "")
+            current_pushover_app_token = (open_secret(row[8]) or "")
+            current_pushover_user_key = (open_secret(row[9]) or "")
+            current_gromate_api_password = (open_secret(row[10]) or "")
             current_history_api_enabled = bool(row[11]) if row[11] is not None else True
             current_soil_moisture_alert_enabled = bool(row[12]) if row[12] is not None else True
             want_twofa = is_twofa_enabled if payload.twofa_enabled is None else as_bool(payload.twofa_enabled)
@@ -3998,7 +4006,7 @@ def set_auth_config(payload: AuthConfigPayload, request: Request):
                               soil_moisture_alert_enabled=EXCLUDED.soil_moisture_alert_enabled,
                               updated_at=NOW()
                 """,
-                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, pushover_app_token or None, pushover_user_key or None, gromate_api_password or None, history_api_enabled, soil_moisture_alert_enabled),
+                (enabled, username or None, new_hash, guest_enabled, guest_username or None, guest_hash, guest_exp_ts, pushover_device or None, seal_secret(pushover_app_token or None), seal_secret(pushover_user_key or None), seal_secret(gromate_api_password or None), history_api_enabled, soil_moisture_alert_enabled),
             )
 
             # Keep the primary legacy admin editable through the existing Access card.
@@ -4517,7 +4525,7 @@ def list_tents(request: Request):
                     "id": r[0],
                     "name": r[1],
                     "source_url": r[2] if is_admin else "",
-                    "rtsp_url": r[3] if is_admin else None,
+                    "rtsp_url": open_secret(r[3]) if is_admin else None,
                     "shelly_main_user": (r[4] or "") if is_admin else "",
                     "has_shelly_main_password": bool(r[5]),
                     "irrigation_plan": json.loads(r[6] or '{}') if r[6] else {},
@@ -4821,7 +4829,7 @@ def verify_2fa_setup(payload: TwoFAVerifyPayload, request: Request):
                     SET twofa_enabled=TRUE, totp_secret=%s, recovery_codes_json=%s, updated_at=NOW()
                     WHERE id=%s
                     """,
-                    (secret, pending.get("recovery_json") or "[]", int(admin_id)),
+                    (seal_secret(secret), pending.get("recovery_json") or "[]", int(admin_id)),
                 )
                 if cur.rowcount == 0:
                     raise HTTPException(status_code=404, detail="admin user not found")
@@ -4829,7 +4837,7 @@ def verify_2fa_setup(payload: TwoFAVerifyPayload, request: Request):
             else:
                 cur.execute(
                     "UPDATE app_auth_config SET twofa_enabled=TRUE, totp_secret=%s, recovery_codes_json=%s, updated_at=NOW() WHERE id=1",
-                    (secret, pending.get("recovery_json") or "[]"),
+                    (seal_secret(secret), pending.get("recovery_json") or "[]"),
                 )
                 legacy_username = str(pending.get("username") or "").strip()
                 if legacy_username:
@@ -4839,7 +4847,7 @@ def verify_2fa_setup(payload: TwoFAVerifyPayload, request: Request):
                         SET twofa_enabled=TRUE, totp_secret=%s, recovery_codes_json=%s, updated_at=NOW()
                         WHERE LOWER(username)=LOWER(%s)
                         """,
-                        (secret, pending.get("recovery_json") or "[]", legacy_username),
+                        (seal_secret(secret), pending.get("recovery_json") or "[]", legacy_username),
                     )
 
     TWOFA_ENROLL.pop(payload.token, None)
@@ -4899,9 +4907,9 @@ def export_config_backup():
                 "id": r[0],
                 "name": r[1],
                 "source_url": r[2],
-                "rtsp_url": r[3],
+                "rtsp_url": open_secret(r[3]),
                 "shelly_main_user": r[4],
-                "shelly_main_password": None,
+                "shelly_main_password": open_secret(r[5]),
                 "has_shelly_main_password": bool(r[5]),
                 "irrigation_plan_json": r[6],
                 "irrigation_last_run_date": r[7].isoformat() if r[7] else None,
@@ -4909,7 +4917,7 @@ def export_config_backup():
                 "soil_sensors": _normalise_soil_sensor_hosts(r[9]),
                 "backend_write_enabled": bool(r[10]),
                 "backend_controller_url": r[11] or "",
-                "backend_hmac_secret": None,
+                "backend_hmac_secret": open_secret(r[12]),
                 "has_backend_hmac_secret": bool(r[12]),
                 "growlight_power_alert_enabled": bool(r[13]),
                 "growlight_power_drop_w": float(r[14] if r[14] is not None else 20.0),
@@ -4925,12 +4933,12 @@ def export_config_backup():
             "username": auth_row[1],
             "password_hash": auth_row[2],
             "twofa_enabled": bool(auth_row[3]),
-            "totp_secret": auth_row[4],
+            "totp_secret": open_secret(auth_row[4]),
             "recovery_codes_json": auth_row[5],
             "pushover_device": auth_row[6] or "",
-            "pushover_app_token": auth_row[7] or "",
-            "pushover_user_key": auth_row[8] or "",
-            "gromate_api_password": auth_row[9] or "",
+            "pushover_app_token": open_secret(auth_row[7]) or "",
+            "pushover_user_key": open_secret(auth_row[8]) or "",
+            "gromate_api_password": open_secret(auth_row[9]) or "",
             "history_api_enabled": bool(auth_row[10]) if auth_row[10] is not None else True,
             "air_sensor_enabled": bool(auth_row[11]) if auth_row[11] is not None else False,
             "air_sensor_host": auth_row[12] or None,
@@ -4945,7 +4953,7 @@ def export_config_backup():
             "password_hash": r[2],
             "enabled": bool(r[3]),
             "twofa_enabled": bool(r[4]),
-            "totp_secret": r[5],
+            "totp_secret": open_secret(r[5]),
             "recovery_codes_json": r[6] or "[]",
             "created_at": r[7].isoformat() if r[7] else None,
             "updated_at": r[8].isoformat() if r[8] else None,
@@ -4977,8 +4985,12 @@ def export_config_backup():
     }
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    content = json.dumps(backup, ensure_ascii=False, indent=2)
-    headers = {"Content-Disposition": f"attachment; filename=canopyops-backup-{ts}.json"}
+    try:
+        content = json.dumps(encrypt_backup(backup), ensure_ascii=False, indent=2)
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Backup encryption key is not configured")
+    headers = {"Content-Disposition": f"attachment; filename=canopyops-backup-{ts}.encrypted.json",
+               "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
     return Response(content=content, media_type="application/json", headers=headers)
 
 
@@ -4986,6 +4998,11 @@ def export_config_backup():
 def import_config_backup(payload: dict):
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="invalid payload")
+    if payload.get("kind") == BACKUP_KIND:
+        try:
+            payload = decrypt_backup(payload)
+        except (RuntimeError, ValueError):
+            raise HTTPException(status_code=400, detail="Backup decryption failed; check encryption key and file")
     if payload.get("kind") != "canopyops-config-backup":
         raise HTTPException(status_code=400, detail="invalid backup kind")
 
@@ -5042,16 +5059,16 @@ def import_config_backup(payload: dict):
                         int(t.get("id") or 0),
                         str(t.get("name") or "").strip(),
                         str(t.get("source_url") or "").strip(),
-                        (str(t.get("rtsp_url")).strip() if t.get("rtsp_url") else None),
+                        seal_secret(str(t.get("rtsp_url")).strip() if t.get("rtsp_url") else None),
                         (str(t.get("shelly_main_user")).strip() if t.get("shelly_main_user") else None),
-                        (str(t.get("shelly_main_password")).strip() if t.get("shelly_main_password") else None),
+                        seal_secret(str(t.get("shelly_main_password")).strip() if t.get("shelly_main_password") else None),
                         str(t.get("irrigation_plan_json") or '{"enabled":false,"every_n_days":1,"offset_after_light_on_min":0}'),
                         t.get("irrigation_last_run_date"),
                         _pot_strains_json(t.get("pot_strains") or t.get("pot_strains_json")),
                         _soil_sensors_json(t.get("soil_sensors") or t.get("soil_sensors_json"), validate_hosts=False),
                         bool(t.get("backend_write_enabled", False)) and bool(str(t.get("backend_hmac_secret") or "").strip()),
                         (str(t.get("backend_controller_url") or "").strip() or None),
-                        (str(t.get("backend_hmac_secret") or "").strip() or None),
+                        seal_secret(str(t.get("backend_hmac_secret") or "").strip() or None),
                         bool(t.get("growlight_power_alert_enabled", False)),
                         _normalise_growlight_power_drop_w(t.get("growlight_power_drop_w"), 20.0),
                         t.get("created_at"),
@@ -5084,12 +5101,12 @@ def import_config_backup(payload: dict):
                         (str(auth.get("username")).strip() if auth.get("username") else None),
                         _clean_imported_secret_hash(auth.get("password_hash")),
                         bool(auth.get("twofa_enabled", False)),
-                        (str(auth.get("totp_secret")) if auth.get("totp_secret") else None),
+                        seal_secret(str(auth.get("totp_secret")) if auth.get("totp_secret") else None),
                         _clean_imported_recovery_codes_json(auth.get("recovery_codes_json")),
                         (str(auth.get("pushover_device")).strip() if auth.get("pushover_device") else None),
-                        (str(auth.get("pushover_app_token")).strip() if auth.get("pushover_app_token") else None),
-                        (str(auth.get("pushover_user_key")).strip() if auth.get("pushover_user_key") else None),
-                        (str(auth.get("gromate_api_password")).strip() if auth.get("gromate_api_password") else None),
+                        seal_secret(str(auth.get("pushover_app_token")).strip() if auth.get("pushover_app_token") else None),
+                        seal_secret(str(auth.get("pushover_user_key")).strip() if auth.get("pushover_user_key") else None),
+                        seal_secret(str(auth.get("gromate_api_password")).strip() if auth.get("gromate_api_password") else None),
                         bool(auth.get("history_api_enabled", True)),
                         bool(auth.get("air_sensor_enabled", False)),
                         normalize_air_sensor_host(auth.get("air_sensor_host")),
@@ -5156,7 +5173,7 @@ def import_config_backup(payload: dict):
                             admin_hash,
                             bool(a.get("enabled", True)),
                             bool(a.get("twofa_enabled", False)),
-                            str(a.get("totp_secret")) if a.get("totp_secret") else None,
+                            seal_secret(str(a.get("totp_secret")) if a.get("totp_secret") else None),
                             _clean_imported_recovery_codes_json(a.get("recovery_codes_json")),
                             a.get("created_at"),
                             a.get("updated_at"),
@@ -5228,12 +5245,12 @@ def create_tent(payload: TentPayload):
                 ON CONFLICT (source_url) DO NOTHING
                 RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, soil_sensors_json),
+                (name, source_url, seal_secret(rtsp_url), shelly_main_user, seal_secret(shelly_main_password), pot_strains_json, soil_sensors_json),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=409, detail="tent with same source_url already exists")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": open_secret(row[3]), "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
 
 
 @app.put("/tents/{tent_id}")
@@ -5282,12 +5299,12 @@ def update_tent(tent_id: int, payload: TentPayload):
                 WHERE id=%s
                 RETURNING id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password IS NOT NULL, pot_strains_json, soil_sensors_json, created_at
                 """,
-                (name, source_url, rtsp_url, shelly_main_user, shelly_password_clear, shelly_password_provided, shelly_main_password, pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id),
+                (name, source_url, seal_secret(rtsp_url), shelly_main_user, shelly_password_clear, shelly_password_provided, seal_secret(shelly_main_password), pot_strains_provided, pot_strains_json, soil_sensors_provided, soil_sensors_json, tent_id),
             )
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": open_secret(row[3]), "shelly_main_user": row[4] or "", "has_shelly_main_password": bool(row[5]), "pot_strains": _normalise_pot_strains(row[6]), "soil_sensors": _normalise_soil_sensor_hosts(row[7]), "created_at": row[8].isoformat()}
 
 
 def _irrigation_call(method, *args):
@@ -5416,6 +5433,7 @@ def put_tent_camera_positions(tent_id: int, payload: CameraPositionsPayload, req
 
 @app.get("/tents/{tent_id}/latest")
 def latest_state(tent_id: int, request: Request):
+    from services.secret_vault import open_secret  # Standalone route test extraction.
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -5437,7 +5455,7 @@ def latest_state(tent_id: int, request: Request):
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
 
-            rtsp_url = row[0]
+            rtsp_url = open_secret(row[0])
             pot_strains = _normalise_pot_strains(row[1])
             captured = row[2]
             payload = row[3]
@@ -5476,13 +5494,14 @@ def tent_preview(
     q: int = Query(85, ge=30, le=100),
     hdr: bool = Query(False),
 ):
+    from services.secret_vault import open_secret  # Standalone route test extraction.
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT rtsp_url FROM tents WHERE id=%s", (tent_id,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="tent not found")
-            rtsp_url = row[0]
+            rtsp_url = open_secret(row[0])
 
     # Prefer explicit RTSP source, fallback to named go2rtc stream.
     try:
@@ -6079,13 +6098,14 @@ def export_analysis_zip(tent_id: int, range_key: str = "24h"):
     )
 
 def get_tent_by_id(tent_id: int):
+    from services.secret_vault import open_secret  # Standalone route test extraction.
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password, pot_strains_json, pot_positions_json FROM tents WHERE id=%s", (tent_id,))
             row = cur.fetchone()
             if not row:
                 return None
-            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": row[3], "shelly_main_user": row[4] or "", "_shelly_main_password": row[5] or "",
+            return {"id": row[0], "name": row[1], "source_url": row[2], "rtsp_url": open_secret(row[3]), "shelly_main_user": row[4] or "", "_shelly_main_password": open_secret(row[5]) or "",
                     "pot_strains": _normalise_pot_strains(row[6]), "pot_positions": normalize_pot_positions(row[7])}
 
 

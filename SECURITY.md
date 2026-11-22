@@ -1,4 +1,10 @@
-# Security — v0.412
+# Security — v0.413
+
+## v0.413 – Field-level encryption and encrypted configuration backups
+
+All production deployments require a unique external `GT_DATA_ENCRYPTION_KEY` (Fernet key) before the application starts. `app_auth_config` stores encrypted TOTP seeds and Pushover/Gromate credentials, `app_admin_users` stores encrypted TOTP seeds, and `tents` stores encrypted RTSP URLs and Shelly/HMAC device credentials. An idempotent PostgreSQL transaction migrates legacy values on startup and rejects wrong keys. Password hashes and recovery-code hashes remain Argon2; these are not reversible secrets. Treat encryption keys as highly sensitive and store them separately from the database and configuration backups. Existing historical database dumps/replicas may still contain pre-migration plaintext and require separate protection.
+
+Configuration export is now a Fernet-encrypted JSON envelope; the server does not offer plaintext backup downloads. The same key is needed to import the encrypted backup into another deployment. Legacy plaintext backup imports remain temporarily supported after fresh admin confirmation, so treat legacy files as sensitive. The API decrypts values in memory for authenticated administrator Setup responses, RTSP camera streaming and device action clients; encryption at rest does not replace TLS, role controls, process isolation or outbound access restrictions. **Do not downgrade** to v0.412 with a migrated database; restore a pre-migration DB snapshot if a rollback is unavoidable. Losing the encryption key means losing those encrypted values irreversibly.
 
 ## v0.412 – Preview and schedule availability hotfix
 
