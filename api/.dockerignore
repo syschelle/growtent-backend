@@ -1,0 +1,19 @@
+# Never send private deployment secrets to the Docker build context.
+.env
+.env.*
+**/.env
+**/.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.json
+**/secrets.json
+.git
+.gitignore
+__pycache__
+*.pyc
+.pytest_cache
+.venv
+node_modules
+*.log

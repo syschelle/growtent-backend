@@ -71,7 +71,7 @@ docker compose up -d --build
 
 Use:
 
-- `http://<server-ip>:8088/download/project.zip`
+- `http://<server-ip>:8088/download/project.zip` (disabled by default; requires a sanitized optional `/project` mount)
 
 The ZIP includes project files and this installation guide.
 

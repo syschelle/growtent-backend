@@ -66,12 +66,50 @@ ownership/ACLs, add an API service override `user: '10001:10001'` and verify
 write access to `/data`, camera/ESP endpoints, OTA and backups. Never blindly
 `chown -R` a production directory without identifying its existing owners.
 
-The historical `./:/project:ro` mount remains for the optional project download
-and changelog route. It is read-only but exposes the repo and possibly `.env`
-**inside the container**. `PROJECT_DOWNLOAD_ENABLED=false` remains the
-recommended default. The full-repo mount should be removed in a future
-separate compatibility-checked release after changing project download behavior;
-**do not claim this risk is closed in v0.415.**
+## v0.416: no repository mount by default
+
+Both Compose variants now mount only `./data:/data` into the API container.
+The `./:/project:ro` mount has been **removed**; it exposed the host checkout and
+potentially `.env` to processes inside the API container. The About/Changelog
+page uses `/app/CHANGELOG.md` baked into the Docker image and continues to
+work normally. **No project download is available by default**
+(`PROJECT_DOWNLOAD_ENABLED=false`). If an administrator deliberately enables
+project ZIP download, supply a dedicated *sanitized* read-only source checkout
+at `/project`, without `.env`, credentials, keys, `.git`, or runtime data. Never
+restore `./:/project:ro` directly. Without this optional mount, an enabled
+project download answers HTTP 503. Symlink files and directories are not
+followed during archive generation; filename filters provide additional
+protection but cannot substitute for sanitizing the mount source.
+
+```yaml
+# Optional, separate and reviewed deployment override; NOT in default Compose
+services:
+  api:
+    volumes:
+      - ./safe-project-export:/project:ro
+```
+
+Create `safe-project-export` from an audited copy, not a symlink or a bind to
+this deployment directory. Keep `PROJECT_DOWNLOAD_ENABLED=false` if project
+ZIP downloads are not required; GitHub releases are the preferred source of
+project archives.
+
+### Optional non-root API account
+
+`GT_API_RUN_AS=0:0` is the default to preserve previously created bind-mount
+ownership; the root filesystem is still read-only, Linux capabilities are
+removed and no-new-privileges is enabled. After confirming `/data` is writable
+by a dedicated UID:GID, configure `GT_API_RUN_AS=10001:10001` (or another
+appropriate dedicated identity) and recreate **only the API**. For example,
+check with `stat -c '%u:%g %a %n' data data/strains.csv` on the server and
+arrange a narrowly scoped ACL or ownership change after backing up `data/`.
+Do **not** blindly change ownership on the live database volumes or `/data`.
+The API image makes its bundled non-secret code readable to the selected user, and the Docker build context excludes `.env` and private keys via `api/.dockerignore`.
+A rootless test must include CSV writes/import, camera/HDR, 2FA, and exports.
+If permission errors arise, restore `GT_API_RUN_AS=0:0` and recreate the API;
+the v0.416 upgrade does not rewrite your existing data directory. A future
+non-root-by-default release should require a verified migration of this bind
+mount and a real Docker integration test first.
 
 `GT_TRUSTED_PROXY_CIDRS` stays optional and is **not** automatically populated.
 Use only actual trusted reverse-proxy hop addresses. This works with Traefik

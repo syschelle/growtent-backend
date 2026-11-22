@@ -89,7 +89,7 @@ This prevents direct LAN/Internet access to port 8088 unless you explicitly chan
 
 Session cookies use the `Secure` flag by default (`SESSION_COOKIE_SECURE=true`). Set `SESSION_COOKIE_SECURE=false` only for an intentional plain-HTTP local deployment; HTTPS is recommended.
 
-Project ZIP download is disabled by default (`PROJECT_DOWNLOAD_ENABLED=false`). If explicitly enabled, it is administrator-only and excludes `.env`, `.env.*`, private keys and similar secret material.
+Project ZIP download is disabled by default (`PROJECT_DOWNLOAD_ENABLED=false`). The full checkout is **no longer mounted into the API container**. If this optional admin-only download is enabled, supply a separate, reviewed, secret-free read-only `/project` mount (not the live repository or `.env`); otherwise the endpoint returns HTTP 503. See `docs/security-deployment.md`.
 
 **Login is mandatory for all application content.** Unauthenticated visitors see only the sign-in page (and, before first installation, the token-protected initial setup). Dashboard, cameras, JSON/ZIP exports, API responses, GrowGuide, and even `/health` require a valid login session. Guest accounts remain signed-in read-only users; administrative endpoints require an administrator. The former anonymous read-only mode has been removed and cannot be re-enabled in Setup or via the API.
 

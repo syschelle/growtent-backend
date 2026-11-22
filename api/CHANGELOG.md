@@ -1,3 +1,9 @@
+## v0.416 — Minimize API host filesystem exposure
+
+- Remove full repository mount from default Docker Compose; keep existing `/data` runtime binding and image-bundled changelog.
+- Fail closed for enabled project download without a reviewed source; skip symlinks and case-variant secret names.
+- Add opt-in numeric non-root runtime user setting without changing existing data ownership automatically.
+
 ## v0.415 — Enforced CSP, security headers, minimal container rights
 
 - Use a fixed SHA-256 allowlist of first-party inline JavaScript plus same-origin external script URLs. Block other inline scripts and handler attributes; preserve legacy inline CSS for now.

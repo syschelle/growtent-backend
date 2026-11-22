@@ -58,7 +58,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.415"
+APP_VERSION = "v0.416"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -9013,7 +9013,12 @@ def download_project_zip(request: Request):
     require_admin(request)
     if not PROJECT_DOWNLOAD_ENABLED:
         raise HTTPException(status_code=404, detail="project download disabled")
-    project_root = PROJECT_ROOT
+    project_root = os.path.realpath(PROJECT_ROOT)
+    # The standard Compose installation does not mount the host checkout.
+    # Never silently return an empty ZIP when downloads are explicitly enabled
+    # without a dedicated, reviewed project-data mount.
+    if not os.path.isdir(project_root):
+        raise HTTPException(status_code=503, detail="project download source not mounted")
     out_path = os.path.join(tempfile.gettempdir(), "growtent-backend-project.zip")
 
     skip_dirs = {".git", "__pycache__", ".pytest_cache", ".venv", "node_modules", ".idea", ".vscode"}
@@ -9021,13 +9026,19 @@ def download_project_zip(request: Request):
     skip_names = {".env", ".env.local", ".env.production", ".env.development", "secrets.json"}
 
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(project_root):
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for directory, dirs, files in os.walk(project_root, followlinks=False):
+            # A project ZIP is a source archive, never an export of private
+            # bind-mounted paths. Ignore symlinks and known local/secret dirs.
+            dirs[:] = [name for name in dirs
+                       if name.lower() not in skip_dirs
+                       and not os.path.islink(os.path.join(directory, name))]
             for name in files:
                 lowered = name.lower()
-                if name in skip_names or lowered.startswith(".env.") or any(lowered.endswith(sfx) for sfx in skip_suffixes):
+                if lowered in skip_names or lowered.startswith(".env.") or any(lowered.endswith(sfx) for sfx in skip_suffixes):
                     continue
-                full = os.path.join(root, name)
+                full = os.path.join(directory, name)
+                if os.path.islink(full) or not os.path.isfile(full):
+                    continue
                 rel = os.path.relpath(full, project_root)
                 zf.write(full, rel)
 

@@ -3,7 +3,7 @@
 
 - API host binding defaults to `127.0.0.1:8088`; override with `GT_API_BIND_ADDRESS` only when required.
 - Session cookies default to `Secure`; use HTTPS. For deliberate plain-HTTP local testing only, set `SESSION_COOKIE_SECURE=false`.
-- `PROJECT_DOWNLOAD_ENABLED=false` by default. Project downloads, when enabled, are administrator-only and never include `.env` or private key material.
+- `PROJECT_DOWNLOAD_ENABLED=false` by default. The image-based deployment does **not** bind-mount the host repository or `.env` into the API container. Enabling admin-only project downloads additionally requires a separate sanitized read-only `/project` mount; without one the endpoint returns 503. See `docs/security-deployment.md`.
 - Do not publish port 8088 directly to the Internet. Prefer an HTTPS reverse proxy and firewall rules.
 
 # Deploying GrowTent Backend with prebuilt images

@@ -1,3 +1,11 @@
+## v0.416 — Remove repository bind mount from default API containers
+
+- Remove `./:/project:ro` from both Compose variants. Changelog stays functional from the API image; the default project ZIP download remains disabled, so private host `.env` and repository files are no longer exposed through an unnecessary API mount.
+- Provide opt-in `GT_API_RUN_AS` for verified numeric non-root deployment, retaining default `0:0` until data-directory permissions are confirmed to avoid breaking legacy `./data` ownership.
+- Fail explicitly with HTTP 503 when project ZIP is enabled without a separate source mount. Exclude symlinks and case-variant secret names from optional source archives.
+- Exclude `.env` and private keys from the API Docker build context and ensure packaged application files are readable for the optional non-root runtime.
+- Preserve existing encrypted secrets, camera/HDR, go2rtc, database volumes, ESP/Shelly/VPD/irrigation and authentication behavior.
+
 ## v0.415 — Browser CSP and compatible Docker hardening
 
 - Enforce a hash-allowlisted JavaScript CSP for trusted bundled scripts, rejecting other inline scripts/event handlers while preserving same-origin embedded UI, fullscreen preview, 2FA and GrowGuide. Move dynamic polling-filter data out of the inline JavaScript.

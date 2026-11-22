@@ -1,4 +1,4 @@
-# Security — v0.415
+# Security — v0.416
 
 ## v0.415 – Browser CSP and container isolation
 
@@ -262,3 +262,9 @@ The camera viewer places position-edit controls in a separate row outside the im
 Guest read-only access must not include stored RTSP usernames/passwords, raw go2rtc external links, or backend HMAC configuration. Admins may still edit camera configuration. Controller HTTP(S) and RTSP(S) URLs are checked against scheme and private-address restrictions when configured and before outbound use, including backup restores, but DNS answers can change after validation: production egress firewalling is still required. Proxy requests must not follow redirects or echo upstream responses/target URLs. Write routes in the modular tent API require explicit admin sessions.
 
 This release is a targeted hardening pass, **not a comprehensive remediation**. Reauthentication, TOTP enrollment link handling and replay protection, encrypted backup/at-rest secrets, CSP/HSTS, abuse-resistant rate limiting, least privilege in Docker and exact dependency pins are still security follow-ups. Do not publish go2rtc ports directly. Prefer pinned image digests and restrict the API host network to authorized LAN devices.
+
+## v0.416: minimal runtime mounts and optional non-root API
+
+The standard API Docker Compose mounts only `./data:/data`, never the full host checkout or `.env`; application changelog is included in the image. The API still defaults to UID 0 with all Linux capabilities dropped, read-only root filesystem and `no-new-privileges`, to avoid changing permissions of existing host data. After confirming write access to `./data`, set `GT_API_RUN_AS=10001:10001` (or another dedicated UID:GID) for opt-in non-root execution. A deployment must inspect file permissions before enabling this mode; this release does **not** silently migrate filesystem ownership.
+
+The optional project ZIP feature is disabled by default and needs a separately provisioned secret-free read-only `/project` mount to work; an absent mount gives 503 rather than an empty archive. The ZIP writer skips symlinks, private-key extensions, and case-variant `.env` filenames. This does not turn the source archive route into a general-purpose backup: never mount arbitrary host paths as the ZIP source.

@@ -1,4 +1,4 @@
-# Testing — v0.415
+# Testing — v0.416
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -305,3 +305,12 @@ Run `PYTHONPATH=api:tests python -m pytest -q tests/test_analysis_export.py test
 - `PYTHONPATH=api:tests pytest -q tests/test_device_url_security.py`: verifies 25 guest confidentiality, scheme/IP/DNS restrictions, blocked dangerous go2rtc source registration, and safe upstream 302 handling.
 - `PYTHONPATH=api:tests python tests/check_security_xss_browser.py`, `python tests/check_setup_layout_browser.py`, `PYTHONPATH=api:tests python tests/check_camera_pot_markers_browser.py`, `PYTHONPATH=api:tests python tests/check_preview_hdr_browser.py`: existing browser regressions.
 - Network egress rules, go2rtc permissions, real LAN camera/ESP, PostgreSQL integration, and Traefik edge headers must be verified on a separate staging deployment. No live endpoints were contacted.
+
+## v0.416: API Docker filesystem hardening
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_docker_hardening_v0416.py` verifies both Compose variants omit the full repo bind mount, keep `/data`, retain the hardening flags and expose an optional non-root user without changing defaults.
+- The same tests check the image-bundled changelog fallback, enabled-project-download fail-closed behavior, symlink/secret filtering, and admin-only access.
+- `docker compose -f docker-compose.images.yml config --quiet` and `docker compose -f docker-compose.yml config --quiet` should be run on the real Docker host with existing `.env`; here only YAML parsing and source-level tests are available when Docker is absent.
+- Deployment smoke test: login and 2FA, camera/HDR/marked image, Shelly light schedule, backups, and writes to `./data`. Run `docker exec gt_api id` after explicit non-root opt-in and check filesystem ownership before changing `GT_API_RUN_AS`.
+
+**v0.416 full regression (local):** 481 passed, 10 skipped due to no isolated PostgreSQL setup, four existing FastAPI deprecation warnings. All five Node suites and Chromium CSP, XSS, step-up, setup, HDR, pot markers, analysis ZIP and GrowGuide checks passed. Docker image build/non-root runtime not executed locally.

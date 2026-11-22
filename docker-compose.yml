@@ -29,6 +29,9 @@ services:
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=128m
     pids_limit: 256
+    # Optional non-root mode after verifying ./data ACL/ownership on the host.
+    # Default 0:0 preserves compatibility with existing installations.
+    user: ${GT_API_RUN_AS:-0:0}
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
@@ -39,6 +42,8 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-10}
       RETENTION_DAYS: ${RETENTION_DAYS:-7}
       GO2RTC_BASE_URL: http://go2rtc:1984
+      # Project files are bundled in the API image. Full repository mounts
+      # (which may expose .env secrets) are intentionally NOT used by default.
       PROJECT_ROOT: /project
       STRAINS_CSV_PATH: /data/strains.csv
       INSTALL_API_ENABLED: ${INSTALL_API_ENABLED:-true}
@@ -50,8 +55,10 @@ services:
       PROJECT_DOWNLOAD_ENABLED: ${PROJECT_DOWNLOAD_ENABLED:-false}
       # Mandatory in Docker: keep this key safe and OUTSIDE the database/backup.
       GT_DATA_ENCRYPTION_KEY: ${GT_DATA_ENCRYPTION_KEY:?Set GT_DATA_ENCRYPTION_KEY in .env before deployment}
+    # The only host bind mount in the API is its dedicated runtime data.
+    # An optional project download requires a separately reviewed, secret-free
+    # checkout mounted at /project:ro (see docs/security-deployment.md).
     volumes:
-      - ./:/project:ro
       - ./data:/data
     depends_on:
       db:

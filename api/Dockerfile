@@ -6,6 +6,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+# Project ZIPs may contain mode-0600 files; make non-secret application code
+# readable for the optional numeric non-root runtime user.
+RUN chmod -R a+rX /app
 
 # Keep existing root-owned ./data mounts compatible on automatic upgrades.
 # Deployments with suitable /data ownership can set user: "10001:10001" in
