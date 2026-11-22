@@ -1,8 +1,10 @@
-# Testing — v0.409
+# Testing — v0.410
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
 The irrigation suite checks exact raw-byte request signing, response signature/status/path/nonce/time binding, unsigned/tampered rejection, stale revisions, durable application confirmation, preserved historical dates, firmware capability checks, manual identities across ambiguous timeouts, no legacy start fallback, idempotent event ingestion, commit-before-ACK ordering, stale offline state and delayed/aborted notifications. Existing application tests remain required.
+
+The v0.410 CI regression test (`tests/test_security_hardening.py::test_security_suite_preserves_installed_postgresql_driver`) verifies that the security unit tests never replace an installed psycopg2 module with a stub. When psycopg2 is missing, that test skips and lightweight unit tests use a fake driver; this is *not* a substitute for the real PostgreSQL integration tests. Run the entire suite in one process to catch import-order interference.
 
 Set `IRRIGATION_TEST_DATABASE_URL` to an isolated PostgreSQL test database for transaction tests. Each test creates and drops its own random schema. CI provides PostgreSQL 17 and runs these tests without skips. Coverage includes idempotent migrations, preserved legacy snapshots, atomic event/outbox commit and rollback, push retry state, cross-worker advisory locks, command persistence and expired/aborted reconciliation.
 

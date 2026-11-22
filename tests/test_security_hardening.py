@@ -19,8 +19,9 @@ class _DummyStaticFiles:
 
 fastapi.staticfiles.StaticFiles = _DummyStaticFiles
 
-# The project test environment does not install PostgreSQL client bindings because
-# these tests mock DB access. Provide the minimal import surface needed by app.py.
+# Lightweight local test environments may omit PostgreSQL bindings. Only in that
+# case provide the minimal import surface required for mocked security tests.
+# GitHub Actions installs the real driver for the PostgreSQL integration suite.
 if 'pyotp' not in sys.modules:
     pyotp_stub = types.ModuleType('pyotp')
     class _DummyTOTP:
@@ -42,7 +43,15 @@ if 'qrcode' not in sys.modules:
     qrcode_stub.make = lambda *a, **k: _DummyQr()
     sys.modules['qrcode'] = qrcode_stub
 
-if 'psycopg2' not in sys.modules:
+# Never shadow a real installed psycopg2 driver: PostgreSQL integration tests
+# are collected in the same pytest process and need the real connect() function.
+# A stub is only required for lightweight unit-test environments that genuinely
+# do not have psycopg2 installed (those environments skip the DB integration suite).
+try:
+    import psycopg2  # noqa: F401
+except ModuleNotFoundError as exc:
+    if exc.name != 'psycopg2':
+        raise
     psycopg2_stub = types.ModuleType('psycopg2')
     class _PsycopgError(Exception):
         pass
@@ -502,3 +511,15 @@ def test_recovery_cli_rejects_disable_auth(monkeypatch):
                               prompt_password=False, enable_auth=False, disable_auth=True, disable_2fa=False)
     with pytest.raises(SystemExit, match='mandatory and cannot be disabled'):
         manage_auth.cmd_set_admin(args)
+
+
+def test_security_suite_preserves_installed_postgresql_driver():
+    """Security imports must not replace the live driver used by irrigation tests."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        version('psycopg2-binary')
+    except PackageNotFoundError:
+        pytest.skip('psycopg2-binary is not installed in this lightweight test environment')
+    import psycopg2
+    assert hasattr(psycopg2, '__file__'), 'A test stub replaced the installed psycopg2 module'
+    assert callable(psycopg2.connect)

@@ -1,4 +1,6 @@
-# Security — v0.409
+# Security — v0.410
+
+The v0.410 change repairs **test isolation only**, ensuring GitHub Actions uses the installed PostgreSQL driver for the real irrigation integration tests. No application security policy changed; the open hardening findings from v0.409 remain.
 
 Irrigation configuration and manual full-cycle requests use the existing per-tent backend HMAC configuration. The client signs exact serialized bytes and verifies response HMAC, timestamp, request nonce, method/path and HTTP status before trusting success. No unsigned legacy fallback exists. HMAC authenticates and protects integrity; the HTTP LAN channel is not encrypted.
 

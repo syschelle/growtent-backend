@@ -1,3 +1,8 @@
+## v0.410 — Fix PostgreSQL test driver shadowing in GitHub Actions
+
+- Prevent security unit-test stubs from overriding the installed psycopg2 driver during full-suite pytest collection. Fixes seven PostgreSQL integration setup errors seen after v0.409.
+- Add a regression check for real driver preservation in CI; keep the fallback stub exclusively for unit-only environments without the driver. No production feature or security behavior changed.
+
 ## v0.409 — Secure guest camera data and controller URL handling
 
 - Prevent guest API responses from exposing embedded RTSP camera credentials; stop deriving public go2rtc links from Host headers and avoid putting camera secrets into query strings.
