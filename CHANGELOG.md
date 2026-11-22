@@ -1,3 +1,9 @@
+## v0.412 — Restore camera previews and modular Shelly schedule route
+
+- Restore `quote_plus` import accidentally removed in the v0.411 2FA QR changes; fix HTTP 500 for both dashboard camera previews and fullscreen Original/HDR while preserving RTSP URL safety checks and mandatory authentication.
+- Register the existing read-only Shelly light schedule GET endpoint in the production modular tent router to fix HTTP 404; no changes to schedule creation or Shelly control.
+- Add real FastAPI app/router regression tests covering previews, fullscreen HDR, auth blocking and light schedule so isolated stubs cannot hide missing imports/routes.
+
 ## v0.411 — Administrator step-up authentication and session-bound 2FA QR
 
 - Enforce recent current-password verification plus TOTP when enabled on administrator/password/2FA management, recovery-code rotation and configuration backup import/export. Confirmations are session-bound, valid for up to five minutes, and limited to five failed attempts with a 15-minute lockout.

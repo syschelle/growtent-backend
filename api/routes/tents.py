@@ -99,6 +99,12 @@ def latest_state(tent_id: int, request: Request, service: TentService = Depends(
     return service.latest(tent_id, request)
 
 
+@router.get('/tents/{tent_id}/shelly/light/schedule')
+def shelly_light_schedule(tent_id: int, refresh: bool = False):
+    """Expose the existing read-only schedule in the production modular API."""
+    return legacy.shelly_light_schedule(tent_id, refresh=refresh)
+
+
 @router.get('/tents/{tent_id}/camera-positions')
 def get_camera_positions(tent_id: int):
     return legacy.get_tent_camera_positions(tent_id)

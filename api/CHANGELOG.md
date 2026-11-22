@@ -1,3 +1,9 @@
+## v0.412 — Camera preview HTTP 500 and Shelly light schedule HTTP 404 hotfix
+
+- Restore `quote_plus` from `urllib.parse` after v0.411 accidentally removed a required preview dependency.
+- Forward the existing light schedule GET endpoint from the production modular API to the legacy implementation.
+- Add end-to-end modular ASGI tests; no device commands, database migrations, credential leaks or security fallback.
+
 ## v0.411 — Fresh security confirmation and safe QR enrollment
 
 - Require server-side password (+ TOTP when applicable) confirmation for sensitive admin/auth/backup endpoints and protect modular routes with direct dependencies; expire proofs after five minutes or credential changes, lock out repeated failures.

@@ -1,8 +1,14 @@
-# Testing — v0.411
+# Testing — v0.412
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
 The irrigation suite checks exact raw-byte request signing, response signature/status/path/nonce/time binding, unsigned/tampered rejection, stale revisions, durable application confirmation, preserved historical dates, firmware capability checks, manual identities across ambiguous timeouts, no legacy start fallback, idempotent event ingestion, commit-before-ACK ordering, stale offline state and delayed/aborted notifications. Existing application tests remain required.
+
+## v0.412 camera preview and Shelly schedule hotfix
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_camera_preview_modular_regression.py` calls the actual `main.app` modular router without a real camera, database or Shelly. It verifies normal JPEG and HDR responses at `/tents/3/preview`, a valid percent-encoded RTSP URL sent to go2rtc, authorization of anonymous callers (401), and `/tents/3/shelly/light/schedule?refresh=true` as an authenticated guest.
+- This integration test specifically catches an absent `quote_plus` global which the previous isolated AST preview unit tests masked with an injected fake symbol; and missing router registrations which otherwise surfaced as HTTP 404.
+- Run the entire pytest suite with a PostgreSQL test service in CI and the existing Node/Chromium suites; perform a real camera/Shelly smoke test after deployment.
 
 ## v0.411 step-up and 2FA enrollment verification
 

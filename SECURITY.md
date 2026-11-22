@@ -1,4 +1,8 @@
-# Security — v0.411
+# Security — v0.412
+
+## v0.412 – Preview and schedule availability hotfix
+
+This release restores a missing standard-library URL-encoding import in the authenticated camera preview path and adds the read-only light-schedule route to the modular production router. Existing login, admin step-up, guest read-only, source-URL validation and go2rtc isolation are unchanged. A router-level ASGI test guards both cases. No camera credentials are returned to guests and no additional write endpoint is added.
 
 ## v0.411 – Step-up protection
 
