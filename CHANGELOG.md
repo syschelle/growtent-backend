@@ -1,3 +1,11 @@
+## v0.414 — Proxy-safe login rate limiting and one-use TOTP
+
+- Scope login failures to the pair of normalized username and client IP, not a global proxy IP or username; prevent collateral login lockouts behind Traefik.
+- Disable Uvicorn's implicit proxy-header handling and accept `X-Forwarded-For` only from explicitly configured `GT_TRUSTED_PROXY_CIDRS`, resolving the nearest untrusted hop to reject spoofed prefixes.
+- Apply a dummy Argon2id password check for unknown accounts to reduce login timing differences.
+- Reject repeated TOTP time steps across login, security confirmation, and 2FA enrollment using an atomic PostgreSQL table (`app_totp_replay`) that survives restarts and cross-worker requests.
+- No camera, Shelly, irrigation, VPD or HMAC behavior changes; encrypted secret storage and step-up authentication remain in place.
+
 ## v0.413 — Encrypt stored secrets and configuration backup exports
 
 - Authenticated Fernet encryption for stored TOTP, Pushover, Gromate, Shelly/HMAC and RTSP credential values, with an idempotent PostgreSQL startup migration.

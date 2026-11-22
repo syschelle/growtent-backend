@@ -27,14 +27,13 @@ docker compose up -d --build
 
 ```bash
 docker compose ps
-curl http://localhost:8088/health
+# Anonymous HTTP health requests are blocked by mandatory login since v0.408.
+# Check container readiness and logs instead:
+docker compose ps
+docker logs --tail 50 gt_api
 ```
 
-Expected health response:
-
-```json
-{"ok": true}
-```
+Application content and the health API require an authenticated session. Do not treat an anonymous HTTP 401 as a container crash.
 
 ## 5) Open UI
 
@@ -85,3 +84,7 @@ The ZIP includes project files and this installation guide.
 ## Production secrets
 
 Before starting Docker Compose, create a `.env` file from `.env.example` and replace all placeholder values. The initial install page requires the `INSTALL_API_TOKEN` value by default. **v0.413 also requires `GT_DATA_ENCRYPTION_KEY`**; generate a Fernet key and keep it separately from DB/backups. Existing plaintext secrets migrate transactionally on first start. Retain a pre-upgrade DB backup and never lose/change the key (see `README.md`).
+
+## v0.414 reverse-proxy and login protection
+
+For HTTPS deployments behind Traefik, keep the API port private and set `GT_TRUSTED_PROXY_CIDRS` in `.env` **only** to the verified immediate proxy IP(s), such as an exact `/32` address. Never use a wildcard or the whole Docker network. The API processes `X-Forwarded-For` itself and ignores it when the immediate peer is untrusted; Uvicorn runs with `--no-proxy-headers`. The new TOTP replay table is created automatically during normal database startup. A 2FA code already used during login cannot be reused in a subsequent step-up dialog; use the next 30-second code.

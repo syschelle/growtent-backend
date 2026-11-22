@@ -23,6 +23,8 @@ The following services stay internal to the Docker Compose network:
 
 The Compose files do not ship usable default database credentials. You must provide a deployment-specific `.env` file before starting the stack.
 
+**v0.414 proxy setup:** Uvicorn is started with `--no-proxy-headers`. The application accepts `X-Forwarded-For` for login throttling only when the **immediate source IP** belongs to `GT_TRUSTED_PROXY_CIDRS` in `.env`. Leave it empty unless you know the exact source IP/CIDR of your Traefik instance. Do not trust `0.0.0.0/0`, the whole Docker subnet, or arbitrary forwarded headers. This setting is optional for startup; without it, logins are limited per account and immediate TCP peer (which may be Traefik). Confirm real client distinction in your network before assuming per-client rate limiting. The API and go2rtc must still not be published directly to the Internet.
+
 ## Required `.env` file
 
 Create a `.env` file from the template:
@@ -57,16 +59,16 @@ Important: if the database password contains special characters, URL-encode it i
 
 ## Image tags
 
-The image-based Compose file defaults to the moving latest API image:
+The image-based Compose file defaults to the moving `latest` API image:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.356
+ghcr.io/syschelle/growtent-backend-api:latest
 ```
 
-For deterministic deployments, pin a specific version with `GT_API_IMAGE`, for example:
+For deterministic deployments, pin a version **once its GHCR image has been published**, for example:
 
 ```text
-ghcr.io/syschelle/growtent-backend-api:v0.356
+ghcr.io/syschelle/growtent-backend-api:v0.414
 ```
 
 go2rtc is pinned in the Compose files as an immutable reference instead of `latest`:
@@ -82,8 +84,8 @@ Override `GO2RTC_IMAGE` only deliberately for controlled upgrades.
 Use the current release image explicitly:
 
 ```bash
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.356 docker compose -f docker-compose.images.yml pull
-GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.356 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.414 docker compose -f docker-compose.images.yml pull
+GT_API_IMAGE=ghcr.io/syschelle/growtent-backend-api:v0.414 docker compose -f docker-compose.images.yml up -d --force-recreate --remove-orphans
 ```
 
 Or use the image configured in `.env` / Compose:

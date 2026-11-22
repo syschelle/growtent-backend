@@ -22,20 +22,31 @@ fastapi.staticfiles.StaticFiles = _DummyStaticFiles
 # Lightweight local test environments may omit PostgreSQL bindings. Only in that
 # case provide the minimal import surface required for mocked security tests.
 # GitHub Actions installs the real driver for the PostgreSQL integration suite.
-if 'pyotp' not in sys.modules:
+try:
+    import pyotp  # noqa: F401 - prefer the installed package in CI
+except ModuleNotFoundError as exc:
+    if exc.name != 'pyotp':
+        raise
     pyotp_stub = types.ModuleType('pyotp')
     class _DummyTOTP:
+        interval = 30
         def __init__(self, *args, **kwargs):
             pass
         def verify(self, *args, **kwargs):
             return False
+        def at(self, *args, **kwargs):
+            return '111111'
         def provisioning_uri(self, *args, **kwargs):
             return 'otpauth://dummy'
     pyotp_stub.TOTP = _DummyTOTP
     pyotp_stub.random_base32 = lambda: 'DUMMY'
     sys.modules['pyotp'] = pyotp_stub
 
-if 'qrcode' not in sys.modules:
+try:
+    import qrcode  # noqa: F401 - prefer the installed package in CI
+except ModuleNotFoundError as exc:
+    if exc.name != 'qrcode':
+        raise
     qrcode_stub = types.ModuleType('qrcode')
     class _DummyQr:
         def save(self, buf, format=None):

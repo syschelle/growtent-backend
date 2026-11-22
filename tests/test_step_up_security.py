@@ -80,7 +80,7 @@ def test_step_up_proof_bound_to_admin_credentials(admin_session, monkeypatch):
 def test_step_up_totp_required_when_active(admin_session, monkeypatch):
     changed = {**ADMIN, 'twofa_enabled':True, 'totp_secret':'ABCDEF'}
     monkeypatch.setattr(app, '_get_admin_user_by_id', lambda *a, **k: changed)
-    monkeypatch.setattr(app, 'pyotp', SimpleNamespace(TOTP=lambda _:SimpleNamespace(verify=lambda c,valid_window=1: c=='456789')))
+    monkeypatch.setattr(app, '_consume_totp_code', lambda **kwargs: kwargs.get('code') == '456789')
     with pytest.raises(HTTPException) as exc:
         app.auth_step_up(app.StepUpPayload(password='good-password'), _admin_request('/auth/step-up','POST'))
     assert exc.value.status_code == 401

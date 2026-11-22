@@ -1,4 +1,12 @@
-# Security — v0.413
+# Security — v0.414
+
+## v0.414 – Proxy-aware login protection and TOTP replay prevention
+
+Login throttling now uses a pair of normalized account name and client address rather than global username and source-IP buckets. This prevents an attacker on a different client address from blocking unrelated accounts or the legitimate account through a shared proxy-IP bucket. If multiple users appear behind the same source address, account-specific lockout remains possible; use Traefik/CrowdSec request-level defenses as an additional layer. The counter is still process-local and resets on API restart; v0.414 does not claim persistent rate limiting.
+
+The API container uses Uvicorn `--no-proxy-headers` and only reads `X-Forwarded-For` from an immediate peer explicitly listed in `GT_TRUSTED_PROXY_CIDRS`. Configure **only exact known reverse-proxy IPs/CIDRs**, never `0.0.0.0/0` or your whole Docker network, and ensure Traefik sanitizes forwarded headers. If the allowlist is empty, forwarded headers are ignored and the TCP peer is used; with an internal proxy this cannot distinguish the real clients. Unknown-account login attempts run one dummy Argon2 check to reduce timing differences.
+
+TOTP login, administrator step-up and enrollment consume a matched time step in `app_totp_replay` using an atomic PostgreSQL conflict update. A matched code cannot be reused even after a restart or by another API worker; the seed fingerprint permits new TOTP secrets to start their own counter. When entering a step-up confirmation immediately after a 2FA login, wait for the next 30-second authenticator code. Recovery codes remain single-use as before. Losing PostgreSQL access causes TOTP validation to fail closed with HTTP 503. The replay table is security state and must not be disabled for login availability.
 
 ## v0.413 – Field-level encryption and encrypted configuration backups
 

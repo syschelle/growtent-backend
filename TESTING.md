@@ -1,8 +1,15 @@
-# Testing — v0.413
+# Testing — v0.414
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
 The irrigation suite checks exact raw-byte request signing, response signature/status/path/nonce/time binding, unsigned/tampered rejection, stale revisions, durable application confirmation, preserved historical dates, firmware capability checks, manual identities across ambiguous timeouts, no legacy start fallback, idempotent event ingestion, commit-before-ACK ordering, stale offline state and delayed/aborted notifications. Existing application tests remain required.
+
+## v0.414 login and TOTP hardening
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_login_totp_hardening_v0414.py`: reject untrusted/spoofed forwarding headers; trust explicitly configured proxy hops; isolate login lockouts to account/client pairs; verify dummy Argon2 path and TOTP time-window/replay behavior.
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_totp_replay_postgres_v0414.py`: on CI's isolated PostgreSQL instance, verify atomic replay rejection and persistence across connections. Requires `IRRIGATION_TEST_DATABASE_URL`; skipped otherwise.
+- Check normal username/password login, TOTP login, second-use rejection, step-up after waiting for the next code, recovery codes, DE/EN UI and no regression to the existing camera and device routes.
+- Deployment: confirm the *actual* Traefik source IP before setting `GT_TRUSTED_PROXY_CIDRS`; never trust all source addresses. Configure optional network edge rate limiting separately. The local in-memory credential limit is not shared across multiple API workers.
 
 ## v0.413 encrypted secret storage and backup validation
 

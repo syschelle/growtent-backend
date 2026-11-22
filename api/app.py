@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import ipaddress
 import csv
 import io
 import json
@@ -57,7 +58,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.413"
+APP_VERSION = "v0.414"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -65,6 +66,9 @@ PROJECT_DOWNLOAD_ENABLED = (os.getenv("PROJECT_DOWNLOAD_ENABLED", "false").strip
 SESSION_COOKIE_SECURE = (os.getenv("SESSION_COOKIE_SECURE", "true").strip().lower() in {"1", "true", "yes", "on"})
 LOGIN_RATE_LIMIT_ATTEMPTS = max(3, int(os.getenv("LOGIN_RATE_LIMIT_ATTEMPTS", "6")))
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = max(60, int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "900")))
+# Trust forwarding headers only from a manually allowlisted reverse-proxy address.
+# No default private-network wildcard: Docker peers are not automatically trusted.
+GT_TRUSTED_PROXY_CIDRS = (os.getenv("GT_TRUSTED_PROXY_CIDRS") or "").strip()
 TWOFA_MAX_ATTEMPTS = max(3, int(os.getenv("TWOFA_MAX_ATTEMPTS", "5")))
 STEP_UP_TTL_SECONDS = max(30, min(300, int(os.getenv("STEP_UP_TTL_SECONDS", "300"))))
 STEP_UP_MAX_ATTEMPTS = 5
@@ -149,6 +153,8 @@ SHELLY_SCHEDULE_CACHE_LOCK = threading.RLock()
 AIR_SENSOR_SERVICE = AirSensorService()
 
 PASSWORD_HASHER = PasswordHasher()
+# Keep unknown-account logins on the same expensive password-verification path.
+_DUMMY_LOGIN_PASSWORD_HASH = PASSWORD_HASHER.hash(secrets.token_urlsafe(32))
 
 
 def _hash_secret(value: str) -> str:
@@ -185,14 +191,96 @@ def _clear_session_cookie(response: Response) -> None:
     response.delete_cookie("caop_session", path="/", secure=SESSION_COOKIE_SECURE, samesite="lax")
 
 
+def _trusted_proxy_networks():
+    """Fail closed on malformed proxy configuration instead of trusting all headers."""
+    networks = []
+    for item in GT_TRUSTED_PROXY_CIDRS.split(','):
+        item = item.strip()
+        if item:
+            networks.append(ipaddress.ip_network(item, strict=False))
+    return tuple(networks)
+
+
+def _login_client_address(request: Request | None) -> str:
+    """Use XFF only when the immediate TCP peer is explicitly trusted.
+
+    Starting at the right (closest hop) avoids trusting a spoofed XFF prefix.
+    Uvicorn is run with --no-proxy-headers so its request.client is the real peer.
+    """
+    if request is None:
+        return 'unknown'
+    peer = str(getattr(getattr(request, 'client', None), 'host', '') or '').strip()
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return 'unknown'
+    networks = _trusted_proxy_networks()
+    if not any(peer_ip in network for network in networks):
+        return peer_ip.compressed
+    chain = str(request.headers.get('x-forwarded-for') or '')
+    if not chain or len(chain) > 1024:
+        return peer_ip.compressed
+    for hop in reversed(chain.split(',')):
+        try:
+            ip = ipaddress.ip_address(hop.strip())
+        except ValueError:
+            return peer_ip.compressed
+        if not any(ip in network for network in networks):
+            return ip.compressed
+    return peer_ip.compressed
+
+
 def _login_rate_keys(username: str, request: Request | None = None) -> list[str]:
-    keys = [f"user:{str(username or '').strip().casefold() or '_empty'}"]
-    if request is not None:
-        client = getattr(request, "client", None)
-        host = str(getattr(client, "host", "") or "").strip()
-        if host:
-            keys.append(f"ip:{host}")
-    return keys
+    """One pair-scoped limit; neither an IP nor a username can lock everyone out."""
+    identity = str(username or '').strip().casefold() or '_empty'
+    digest = hashlib.sha256(identity.encode('utf-8')).hexdigest()[:32]
+    return [f'login:{_login_client_address(request)}:{digest}']
+
+
+def _matching_totp_step(secret: str, code: str, now: float | None = None) -> int | None:
+    """Return the exact TOTP time step; accepting the same step twice is unsafe."""
+    code = str(code or '').strip()
+    if not re.fullmatch(r'[0-9]{6}', code) or not secret:
+        return None
+    totp = pyotp.TOTP(secret)
+    interval = int(totp.interval)
+    current = int(time.time() if now is None else now) // interval
+    # Same drift as the previous pyotp.verify(valid_window=1), but explicit.
+    for delta in (0, -1, 1):
+        counter = current + delta
+        if counter >= 0 and secrets.compare_digest(str(totp.at(counter * interval)), code):
+            return counter
+    return None
+
+
+def _record_totp_step(cur, *, account_key: str, secret: str, step: int) -> bool:
+    """Atomic, cross-worker replay guard; reset only when the TOTP secret rotates."""
+    fingerprint = hashlib.sha256(secret.encode('utf-8')).hexdigest()
+    cur.execute('''
+        INSERT INTO app_totp_replay(account_key, secret_fingerprint, last_step)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (account_key) DO UPDATE
+        SET secret_fingerprint=EXCLUDED.secret_fingerprint,
+            last_step=EXCLUDED.last_step, updated_at=NOW()
+        WHERE app_totp_replay.secret_fingerprint <> EXCLUDED.secret_fingerprint
+           OR app_totp_replay.last_step < EXCLUDED.last_step
+        RETURNING last_step
+    ''', (account_key, fingerprint, int(step)))
+    return cur.fetchone() is not None
+
+
+def _consume_totp_code(*, admin_id: int | None, username: str,
+                       secret: str, code: str) -> bool:
+    """One valid TOTP code per account/time step across workers and restarts."""
+    step = _matching_totp_step(secret, code)
+    if step is None:
+        return False
+    account_key = (f'admin:{int(admin_id)}' if admin_id is not None else
+                   f'legacy:{str(username).strip().casefold()}')
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            return _record_totp_step(cur, account_key=account_key,
+                                     secret=secret, step=step)
 
 
 def _prune_login_failures(now: float) -> None:
@@ -345,11 +433,14 @@ def auth_step_up(payload: StepUpPayload, request: Request):
     valid_totp = True
     if admin.get("twofa_enabled"):
         valid_totp = False
-        if code and len(code) <= 12 and admin.get("totp_secret"):
+        if valid_password and code and len(code) <= 12 and admin.get("totp_secret"):
             try:
-                valid_totp = bool(pyotp.TOTP(admin["totp_secret"]).verify(code, valid_window=1))
+                valid_totp = _consume_totp_code(admin_id=admin.get('id'),
+                    username=str(admin.get('username') or session.get('username') or ''),
+                    secret=admin['totp_secret'], code=code)
             except Exception:
-                valid_totp = False
+                LOGGER.exception('TOTP replay protection unavailable during step-up')
+                raise HTTPException(status_code=503, detail='Authentication service unavailable')
     if not (valid_password and valid_totp):
         failures = int(session.get("step_up_failures") or 0) + 1
         session["step_up_failures"] = failures
@@ -609,6 +700,11 @@ def auth_login(payload: LoginPayload, request: Request):
     guest_expires_at = cfg.get("guest_expires_at")
 
     known_admin = _get_admin_user_by_username(payload.username, include_disabled=True)
+    # Run a dummy Argon2 check when no real account hash was available. This
+    # reduces account-discovery timing differences without changing login errors.
+    has_known_password_hash = bool((known_admin and known_admin.get('enabled')) or
+                                   (known_admin is None and payload.username == admin_user and admin_hash) or
+                                   (payload.username == guest_user and guest_enabled and guest_hash))
     admin_account = known_admin if known_admin and known_admin.get("enabled") and _verify_secret(known_admin.get("password_hash"), payload.password) else None
     # Legacy fallback is only for an installation that has not been migrated yet.
     # A disabled multi-admin account must never authenticate through the mirror.
@@ -620,6 +716,8 @@ def auth_login(payload: LoginPayload, request: Request):
     is_guest_login = bool(legacy_guest_login or db_guest_login)
 
     if not is_admin_login and not is_guest_login:
+        if not has_known_password_hash:
+            _verify_secret(_DUMMY_LOGIN_PASSWORD_HASH, payload.password)
         _record_login_failure(payload.username, request)
         raise HTTPException(status_code=401, detail="invalid credentials")
 
@@ -681,9 +779,12 @@ def auth_login_2fa(payload: Login2FAPayload, request: Request):
     code_ok = False
     if payload.code:
         try:
-            code_ok = pyotp.TOTP(secret).verify(payload.code, valid_window=1)
+            code_ok = _consume_totp_code(admin_id=admin_id,
+                        username=str(s.get('username') or ''), secret=secret,
+                        code=payload.code)
         except Exception:
-            code_ok = False
+            LOGGER.exception('TOTP replay protection unavailable during login')
+            raise HTTPException(status_code=503, detail='Authentication service unavailable')
 
     if not code_ok and payload.recoveryCode:
         try:
@@ -1663,6 +1764,14 @@ def init_db():
                 """
             )
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_admin_users_username_lower ON app_admin_users(LOWER(username));")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_totp_replay (
+                    account_key TEXT PRIMARY KEY,
+                    secret_fingerprint TEXT NOT NULL,
+                    last_step BIGINT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS app_guest_users (
@@ -4816,7 +4925,8 @@ def verify_2fa_setup(payload: TwoFAVerifyPayload, request: Request):
 
     secret = pending.get("secret") or ""
     code = (payload.code or "").strip()
-    if not code or not pyotp.TOTP(secret).verify(code, valid_window=1):
+    used_step = _matching_totp_step(secret, code)
+    if used_step is None:
         raise HTTPException(status_code=400, detail="invalid 2FA code")
 
     admin_id = pending.get("admin_id")
@@ -4849,6 +4959,11 @@ def verify_2fa_setup(payload: TwoFAVerifyPayload, request: Request):
                         """,
                         (seal_secret(secret), pending.get("recovery_json") or "[]", legacy_username),
                     )
+            account_key = (f'admin:{int(admin_id)}' if admin_id is not None else
+                           f'legacy:{str(pending.get("username") or "").strip().casefold()}')
+            if not _record_totp_step(cur, account_key=account_key,
+                                     secret=secret, step=used_step):
+                raise HTTPException(status_code=400, detail='2FA code already used')
 
     TWOFA_ENROLL.pop(payload.token, None)
     if admin_id is not None:

@@ -1,3 +1,9 @@
+## v0.414 — Trusted proxy login isolation and persistent TOTP replay guard
+
+- Rate limit credential failures per account + verified client address instead of globally by username and proxy IP; use an explicit trusted-proxy allowlist for X-Forwarded-For and disable automatic Uvicorn proxy header trust.
+- Add dummy Argon2 verification for unknown accounts and consume TOTP time steps atomically in PostgreSQL on login, administrator step-up and initial 2FA enrollment.
+- No new API routes and no change to camera, devices, dashboards or existing encrypted backups.
+
 ## v0.413 — At-rest secret vault and encrypted backup format
 
 - Seal and migrate sensitive PostgreSQL fields with Fernet using a deployment-only key; decrypt only at existing internal consumers.
