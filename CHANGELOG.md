@@ -1,3 +1,15 @@
+## v0.418 — Optional drying VPD target (0.90 kPa)
+
+- Apply an editable 0.90 kPa default target on entering drying when per-tent backend VPD automation is explicitly enabled. Drying does not require a reported phase week, and further week changes in drying never cause redundant writes.
+- Keep all vegetative/flowering schedules, encrypted backups, existing v0.417 saved plans, signed HMAC target-only writes and 30-minute retry handling compatible. Saved legacy plans receive the drying default without a destructive migration.
+- Add a bilingual Drying target field in Setup and correctly identify drying in last-sync status. Phase changes always remain manual/ESP-side. For extended vegetative and flowering phases, cap both target lookup and durable write identity at the last configured phase week, preventing crossover and redundant future writes. Leave the informational VPD reference table, manual mode and device controllers unchanged.
+
+## v0.417 — Optional per-tent VPD weekly automation
+
+- Provide an opt-in server-side VPD schedule by live ESP grow phase and phase week, with editable weekly targets and an admin-only DE/EN Setup dialog.
+- Keep manual control by default; signed HMAC targetVPD writes only at the next weekly/phase transition, with durable PostgreSQL state and retry cooldown.
+- Preserve drying, history, GrowTent VPD reference table, camera/HDR, watering and Shelly behavior. Save each plan in encrypted backups.
+
 ## v0.416 — Remove repository bind mount from default API containers
 
 - Remove `./:/project:ro` from both Compose variants. Changelog stays functional from the API image; the default project ZIP download remains disabled, so private host `.env` and repository files are no longer exposed through an unnecessary API mount.

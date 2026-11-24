@@ -1,4 +1,12 @@
-# Testing — v0.416
+# Testing — v0.418
+
+## v0.418 — Drying VPD 0.90 kPa on phase entry
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_vpd_auto.py tests/test_vpd_auto_drying_v0418.py`: check enabled/disabled plans, legacy v0.417 plan migration, drying without week, per-tent 0.90 kPa target, no automatic phase switching, prolonged vegetative/flowering phases capped to their own final week without redundant writes, invalid input rejection and signed targetVPD-only writes.
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_vpd_auto_postgres.py`: verify durable one-time claims and isolation on an isolated PostgreSQL schema when `IRRIGATION_TEST_DATABASE_URL` is set.
+- `PYTHONPATH=api:tests python tests/check_vpd_auto_browser.py`: DE/EN and 320 px UI, drying target editing, persistence and tent switching.
+- `python scripts/generate_csp_hashes.py --check`: verify CSP hashes match the updated first-party Setup script.
+- Perform the full unit, JavaScript and browser regression suites, then live ESP/DB checks before enabling the automation on a production tent.
 
 Run `PYTHONPATH=api python -m pytest -q` after installing `api/requirements.txt` and pytest. Node.js is required for rendered-script checks. Tests use no real controllers or push recipients.
 
@@ -314,3 +322,11 @@ Run `PYTHONPATH=api:tests python -m pytest -q tests/test_analysis_export.py test
 - Deployment smoke test: login and 2FA, camera/HDR/marked image, Shelly light schedule, backups, and writes to `./data`. Run `docker exec gt_api id` after explicit non-root opt-in and check filesystem ownership before changing `GT_API_RUN_AS`.
 
 **v0.416 full regression (local):** 481 passed, 10 skipped due to no isolated PostgreSQL setup, four existing FastAPI deprecation warnings. All five Node suites and Chromium CSP, XSS, step-up, setup, HDR, pot markers, analysis ZIP and GrowGuide checks passed. Docker image build/non-root runtime not executed locally.
+
+## v0.417 optional VPD automation by phase/week
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_vpd_auto.py` exercises validation, defaults, unknown/drying phases, weekly progressions, independent plans, retries and HMAC-only targetVPD writes.
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_vpd_auto_postgres.py` runs on the isolated PostgreSQL schema using `IRRIGATION_TEST_DATABASE_URL` in GitHub Actions: durable claim/success state, two independent tents, next-week transitions and reconfiguration. This is skipped when no test DB is available.
+- `PYTHONPATH=api:tests python tests/check_vpd_auto_browser.py` checks real Chromium DE/EN, mobile at 320 px, editing, save/reopen and isolation between two tents without any real ESP requests.
+- `python scripts/generate_csp_hashes.py --check` and `python scripts/check_release_notes.py --tag v0.417` validate script allowlist and release files. Existing browser and Python/Node regression suites remain required.
+- No live ESP, HMAC network, PostgreSQL migration or Docker deployment has been exercised locally. Newly enabled plans should be reviewed for the actual plants before rollout.

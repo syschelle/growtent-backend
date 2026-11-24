@@ -58,7 +58,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.416"
+APP_VERSION = "v0.418"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -1629,6 +1629,17 @@ def init_db():
             create_tables(cur)
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_strains_json TEXT NOT NULL DEFAULT '{\"pot1\":\"\",\"pot2\":\"\",\"pot3\":\"\"}';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS pot_positions_json TEXT NOT NULL DEFAULT '{\"pot1\":null,\"pot2\":null,\"pot3\":null}';")
+            # Optional, per-tent VPD automation is OFF by default. The applied
+            # state stays separate to guarantee once-per-phase-week updates.
+            cur.execute("""ALTER TABLE tents ADD COLUMN IF NOT EXISTS vpd_auto_plan_json TEXT NOT NULL DEFAULT
+                '{"enabled":false,"vegetative":[0.6,0.7,0.9,1.0,1.1,1.15],"flowering":[1.0,1.1,1.25,1.3,1.35,1.4,1.4,1.35,1.3,1.3],"drying":0.9}'""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS tent_vpd_auto_state (
+                tent_id INTEGER PRIMARY KEY REFERENCES tents(id) ON DELETE CASCADE,
+                applied_phase INTEGER, applied_week INTEGER, applied_target DOUBLE PRECISION,
+                applied_at TIMESTAMPTZ,
+                attempt_phase INTEGER, attempt_week INTEGER, attempt_target DOUBLE PRECISION,
+                attempt_at TIMESTAMPTZ, last_status TEXT
+            )""")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS soil_sensors_json TEXT NOT NULL DEFAULT '[]';")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_write_enabled BOOLEAN NOT NULL DEFAULT FALSE;")
             cur.execute("ALTER TABLE tents ADD COLUMN IF NOT EXISTS backend_controller_url TEXT;")
@@ -3615,6 +3626,12 @@ def poll_loop():
 
                         save_state(tent["id"], payload)
                         try:
+                            from services.vpd_auto_store import reconcile as reconcile_vpd_auto
+                            reconcile_vpd_auto(int(tent["id"]), payload)
+                        except Exception:
+                            # Automation errors must never interrupt sensor polling or alerts.
+                            print(f"[vpd-auto] tent #{tent['id']} reconciliation unavailable")
+                        try:
                             from services.irrigation_service import IrrigationService
                             IrrigationService().sync(tent["id"])
                         except Exception:
@@ -4989,7 +5006,7 @@ def export_config_backup():
                 SELECT id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                        irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
                        backend_write_enabled, backend_controller_url, backend_hmac_secret,
-                       growlight_power_alert_enabled, growlight_power_drop_w, created_at, pot_positions_json
+                       growlight_power_alert_enabled, growlight_power_drop_w, created_at, pot_positions_json, vpd_auto_plan_json
                 FROM tents
                 ORDER BY id
                 """
@@ -5021,6 +5038,7 @@ def export_config_backup():
             cur.execute("SELECT enabled FROM flood_alert_config WHERE id=1")
             flood_alert_row = cur.fetchone()
 
+    from services.vpd_auto import normalize_plan as normalize_vpd_plan
     tents = []
     for r in tent_rows:
         tents.append(
@@ -5043,6 +5061,7 @@ def export_config_backup():
                 "growlight_power_alert_enabled": bool(r[13]),
                 "growlight_power_drop_w": float(r[14] if r[14] is not None else 20.0),
                 "pot_positions": normalize_pot_positions(r[16]),
+                "vpd_auto": normalize_vpd_plan(r[17]),
                 "created_at": r[15].isoformat() if r[15] else None,
             }
         )
@@ -5151,6 +5170,21 @@ def import_config_backup(payload: dict):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Validate all VPD plans before starting the destructive import.
+    from services.vpd_auto import normalize_plan as normalize_vpd_plan
+    try:
+        for tent in tents:
+            if isinstance(tent, dict):
+                plan = normalize_vpd_plan(tent.get("vpd_auto"))
+                if plan["enabled"] and not (
+                    tent.get("backend_write_enabled")
+                    and str(tent.get("backend_controller_url") or "").strip()
+                    and str(tent.get("backend_hmac_secret") or "").strip()
+                ):
+                    raise ValueError("Enabled VPD plan requires complete HMAC controller configuration")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid VPD automation plan in backup: {exc}") from exc
+
     # Validate untrusted backup URLs BEFORE deleting the current configuration.
     try:
         for tent in tents:
@@ -5173,8 +5207,8 @@ def import_config_backup(payload: dict):
                         id, name, source_url, rtsp_url, shelly_main_user, shelly_main_password,
                         irrigation_plan_json, irrigation_last_run_date, pot_strains_json, soil_sensors_json,
                         backend_write_enabled, backend_controller_url, backend_hmac_secret,
-                        growlight_power_alert_enabled, growlight_power_drop_w, created_at, pot_positions_json
-                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()),%s)
+                        growlight_power_alert_enabled, growlight_power_drop_w, created_at, pot_positions_json, vpd_auto_plan_json
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,COALESCE(%s::timestamptz, NOW()),%s,%s)
                     """,
                     (
                         int(t.get("id") or 0),
@@ -5194,6 +5228,7 @@ def import_config_backup(payload: dict):
                         _normalise_growlight_power_drop_w(t.get("growlight_power_drop_w"), 20.0),
                         t.get("created_at"),
                         json.dumps(normalize_pot_positions(t.get("pot_positions") or t.get("pot_positions_json")), ensure_ascii=False),
+                        json.dumps(normalize_vpd_plan(t.get("vpd_auto")), separators=(",", ":")),
                     ),
                 )
 
@@ -7078,6 +7113,26 @@ def setup_page(request: Request):
             </div>
 
             </section>
+            <div id=\"vpdAutoModal\" style=\"display:none;position:fixed;inset:0;background:rgba(2,6,23,.7);z-index:1100;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;\">
+              <div class=\"card\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"vpdAutoTitle\" style=\"width:min(660px,100%);max-height:90vh;overflow:auto;\">
+                <div style=\"display:flex;justify-content:space-between;align-items:center;gap:8px;\">
+                  <strong id=\"vpdAutoTitle\">VPD-Automatik</strong>
+                  <button id=\"vpdAutoCloseBtn\" type=\"button\" aria-label=\"Close\">✕</button>
+                </div>
+                <div id=\"vpdAutoTentLabel\" class=\"muted\" style=\"margin:8px 0;\"></div>
+                <label style=\"display:flex;align-items:center;gap:8px;margin-bottom:8px;\"><input type=\"checkbox\" id=\"vpdAutoEnabled\"/><span id=\"vpdAutoEnabledLabel\">Automatisch nach Growphase und Woche</span></label>
+                <div id=\"vpdAutoHint\" class=\"muted\" style=\"margin:8px 0 14px;\"></div>
+                <div style=\"display:grid;gap:14px;\">
+                  <div><strong id=\"vpdAutoVegTitle\">Vegetativ (kPa)</strong><div id=\"vpdAutoVegetative\" style=\"display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;\"></div><div style=\"display:flex;gap:6px;margin-top:6px;\"><button type=\"button\" data-vpd-add=\"vegetative\">+ Woche</button><button type=\"button\" data-vpd-remove=\"vegetative\">− Woche</button></div></div>
+                  <div><strong id=\"vpdAutoFlowerTitle\">Blüte (kPa)</strong><div id=\"vpdAutoFlowering\" style=\"display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;\"></div><div style=\"display:flex;gap:6px;margin-top:6px;\"><button type=\"button\" data-vpd-add=\"flowering\">+ Woche</button><button type=\"button\" data-vpd-remove=\"flowering\">− Woche</button></div></div>
+                  <div><label for=\"vpdAutoDrying\"><strong id=\"vpdAutoDryTitle\">Trocknung · Soll-VPD in kPa</strong></label><div style=\"margin-top:8px;\"><input id=\"vpdAutoDrying\" type=\"number\" min=\"0.50\" max=\"3.50\" step=\"0.01\" value=\"0.90\" required style=\"padding:6px;width:90px;max-width:100%;\" /></div></div>
+                </div>
+                <div id=\"vpdAutoLast\" class=\"muted\" style=\"margin:12px 0;\"></div>
+                <div style=\"display:flex;flex-wrap:wrap;gap:8px;\"><button type=\"button\" id=\"vpdAutoSaveBtn\">Speichern</button><button type=\"button\" id=\"vpdAutoCancelBtn\">Abbrechen</button></div>
+                <div id=\"vpdAutoMsg\" role=\"status\" style=\"margin-top:10px;\"></div>
+              </div>
+            </div>
+
             <div id=\"irPlanModal\" style=\"display:none; position:fixed; inset:0; background:rgba(2,6,23,.65); z-index:1000; align-items:center; justify-content:center; padding:16px;\">
               <div class=\"card\" style=\"max-width:520px; width:100%;\">
                 <div style=\"display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;\">
@@ -7333,6 +7388,7 @@ def setup_page(request: Request):
               recoveryTitle: 'Backup and Restore',
               saveRecovery: 'Save backup/restore',
               irrigationPlan: 'Irrigation plan',
+              vpdAuto: 'VPD automation',
               everyDays: 'Every N days',
               offsetAfterLight: 'Minutes after light on',
               lastWateringDate: 'Last watering date',
@@ -7452,6 +7508,7 @@ def setup_page(request: Request):
               recoveryTitle: 'Backup und Restore',
               saveRecovery: 'Backup/Restore speichern',
               irrigationPlan: 'Bewässerungsplan',
+              vpdAuto: 'VPD-Automatik',
               everyDays: 'Alle N Tage',
               offsetAfterLight: 'Minuten nach Licht an',
               lastWateringDate: 'Letztes Bewässerungsdatum',
@@ -7888,6 +7945,110 @@ def setup_page(request: Request):
             }
           }
 
+          // Per-tent optional VPD auto-plan; the browser only edits configuration.
+          // The backend alone observes live ESP phase/week and performs HMAC writes.
+          let vpdAutoTentId = null;
+          let vpdAutoValues = null;
+          function vpdAutoGerman(){return (langSel?.value || localStorage.getItem('gt_lang') || 'de') === 'de';}
+          function vpdAutoText(de,en){return vpdAutoGerman()?de:en;}
+          function renderVpdAutoWeeks(){
+            if(!vpdAutoValues)return;
+            for(const key of ['vegetative','flowering']){
+              const container=document.getElementById(key==='vegetative'?'vpdAutoVegetative':'vpdAutoFlowering');
+              container.replaceChildren();
+              vpdAutoValues[key].forEach((value,index)=>{
+                const label=document.createElement('label');
+                label.style.cssText='display:flex;flex-direction:column;gap:3px;font-size:.8rem;';
+                label.textContent=vpdAutoText('Woche ','Week ')+(index+1);
+                const input=document.createElement('input');
+                input.type='number';input.step='0.01';input.min='0.50';input.max='3.50';
+                input.required=true;input.value=Number(value).toFixed(2);
+                input.style.cssText='padding:6px;width:75px;max-width:100%;';
+                input.addEventListener('input',()=>{vpdAutoValues[key][index]=Number(input.value);});
+                label.appendChild(input);container.appendChild(label);
+              });
+            }
+          }
+          async function openVpdAutoModal(tent){
+            const dialog=document.getElementById('vpdAutoModal');
+            vpdAutoTentId=tent.id;vpdAutoValues=null;
+            document.getElementById('vpdAutoMsg').textContent='';
+            dialog.style.display='flex';
+            document.getElementById('vpdAutoTitle').textContent=vpdAutoText('VPD-Automatik','VPD automation');
+            document.getElementById('vpdAutoTentLabel').textContent=tent.name;
+            document.getElementById('vpdAutoEnabledLabel').textContent=vpdAutoText('Automatisch nach Phase und Woche','Automatically by phase and week');
+            document.getElementById('vpdAutoVegTitle').textContent=vpdAutoText('Vegetativ · Zielwerte in kPa','Vegetative · targets in kPa');
+            document.getElementById('vpdAutoFlowerTitle').textContent=vpdAutoText('Blüte · Zielwerte in kPa','Flowering · targets in kPa');
+            document.getElementById('vpdAutoDryTitle').textContent=vpdAutoText('Trocknung · Soll-VPD in kPa','Drying · target VPD in kPa');
+            document.getElementById('vpdAutoHint').textContent=vpdAutoText(
+              'Standardmäßig AUS. Der Phasenwechsel erfolgt ausschließlich am ESP/manuell – das Backend wechselt niemals die Growphase. Die Automatik setzt nur den Soll-VPD für die gemeldete Phase und Woche. Bei einer verlängerten Vegi- oder Blütephase bleibt ab der letzten konfigurierten Woche deren Sollwert konstant, ohne weitere wöchentliche Schreibbefehle oder vorzeitige Blütewerte. Trocknung: fester Sollwert (Standard 0,90 kPa) erst bei tatsächlich gemeldeter Trocknungsphase. Erfordert aktivierten HMAC-Backendzugriff.',
+              'OFF by default. Only the ESP/operator changes the grow phase; the backend never advances it. Automation updates only the VPD target for the reported phase/week. When vegetative or flowering growth lasts longer than the configured plan, its last target holds without further weekly writes or early flowering values. Drying: one fixed target (default 0.90 kPa) only when the ESP actually reports drying. Requires backend HMAC writes.');
+            document.getElementById('vpdAutoSaveBtn').textContent=vpdAutoText('Plan speichern','Save plan');
+            document.getElementById('vpdAutoCancelBtn').textContent=vpdAutoText('Abbrechen','Cancel');
+            dialog.querySelectorAll('[data-vpd-add]').forEach(b=>b.textContent=vpdAutoText('+ Woche','+ Week'));
+            dialog.querySelectorAll('[data-vpd-remove]').forEach(b=>b.textContent=vpdAutoText('− Woche','− Week'));
+            try{
+              const res=await fetch(`/tents/${tent.id}/vpd-auto`,{cache:'no-store'});
+              if(!res.ok)throw Error(`HTTP ${res.status}`);
+              const response=await res.json();
+              if(vpdAutoTentId!==tent.id)return;
+              vpdAutoValues={vegetative:[...response.plan.vegetative],flowering:[...response.plan.flowering]};
+              document.getElementById('vpdAutoDrying').value=Number(response.plan.drying ?? 0.90).toFixed(2);
+              document.getElementById('vpdAutoEnabled').checked=!!response.plan.enabled;
+              const last=response.lastApplied;
+              document.getElementById('vpdAutoLast').textContent=last
+                ?vpdAutoText('Letzter Abgleich: ','Last sync: ')+`${last.phase===3?vpdAutoText('Trocknung','Drying'):last.phase===1?vpdAutoText('Vegetativ','Vegetative'):vpdAutoText('Blüte','Flowering')}${last.phase===3?'':` · ${vpdAutoText('Woche','Week')} ${last.week}`} · ${Number(last.targetVPD).toFixed(2)} kPa (${response.lastStatus || '-'})`
+                :vpdAutoText('Noch kein automatischer Abgleich.','No automated sync yet.');
+              renderVpdAutoWeeks();
+            }catch{
+              document.getElementById('vpdAutoMsg').textContent=vpdAutoText('Plan konnte nicht geladen werden.','Unable to load plan.');
+            }
+          }
+          function closeVpdAutoModal(){
+            vpdAutoTentId=null;vpdAutoValues=null;
+            document.getElementById('vpdAutoModal').style.display='none';
+          }
+          document.getElementById('vpdAutoCloseBtn')?.addEventListener('click',closeVpdAutoModal);
+          document.getElementById('vpdAutoCancelBtn')?.addEventListener('click',closeVpdAutoModal);
+          document.querySelectorAll('[data-vpd-add]').forEach(button=>button.addEventListener('click',()=>{
+            const key=button.dataset.vpdAdd;if(!vpdAutoValues||vpdAutoValues[key].length>=20)return;
+            vpdAutoValues[key].push(vpdAutoValues[key].at(-1));renderVpdAutoWeeks();
+          }));
+          document.querySelectorAll('[data-vpd-remove]').forEach(button=>button.addEventListener('click',()=>{
+            const key=button.dataset.vpdRemove;if(!vpdAutoValues||vpdAutoValues[key].length<=1)return;
+            vpdAutoValues[key].pop();renderVpdAutoWeeks();
+          }));
+          document.getElementById('vpdAutoSaveBtn')?.addEventListener('click',async()=>{
+            if(!vpdAutoTentId||!vpdAutoValues)return;
+            const id=vpdAutoTentId,button=document.getElementById('vpdAutoSaveBtn');
+            const body={enabled:document.getElementById('vpdAutoEnabled').checked,
+              vegetative:[...vpdAutoValues.vegetative],flowering:[...vpdAutoValues.flowering],
+              drying:Number(document.getElementById('vpdAutoDrying').value)};
+            if([...body.vegetative,...body.flowering,body.drying].some(v=>!Number.isFinite(v)||v<.5||v>3.5||Math.round(v*100)/100!==v) || !document.getElementById('vpdAutoDrying').value.trim()){
+              document.getElementById('vpdAutoMsg').textContent=vpdAutoText('Bitte gültige Sollwerte zwischen 0,50 und 3,50 kPa mit maximal zwei Nachkommastellen eingeben.','Enter valid targets between 0.50 and 3.50 kPa (max two decimals).');
+              return;
+            }
+            button.disabled=true;
+            try{
+              const res=await fetch(`/tents/${id}/vpd-auto`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+              const response=await res.json().catch(()=>({}));
+              if(id!==vpdAutoTentId)return;
+              if(!res.ok){
+                document.getElementById('vpdAutoMsg').textContent=res.status===409
+                  ?vpdAutoText('Bitte zuerst im Zelt die Backend Write API mit Controller-Adresse und HMAC-Schlüssel aktivieren.','Enable Backend Write API with controller URL and HMAC key for this tent first.')
+                  :typeof response.detail==='string'?response.detail:vpdAutoText('Speichern fehlgeschlagen.','Save failed.');
+                return;
+              }
+              document.getElementById('vpdAutoMsg').textContent=body.enabled
+                ?vpdAutoText('Plan gespeichert. Übertragung beim nächsten gültigen ESP-Abgleich.','Saved. Sync at next valid ESP poll.')
+                :vpdAutoText('Plan gespeichert. Automatik ist ausgeschaltet.','Saved. Automation is OFF.');
+              document.getElementById('vpdAutoLast').textContent=body.enabled
+                ?vpdAutoText('Nächster Abgleich offen.','Awaiting next sync.')
+                :vpdAutoText('Automatik deaktiviert.','Automation disabled.');
+            }catch{document.getElementById('vpdAutoMsg').textContent=vpdAutoText('Netzwerkfehler.','Network error.');}
+            finally{button.disabled=false;}
+          });
+
           async function saveIrrigationPlan(){
             const msg = document.getElementById('irPlanMsg');
             const enabledEl = document.getElementById('irPlanEnabled');
@@ -7985,6 +8146,7 @@ def setup_page(request: Request):
                   <div class="setup-tent-actions">
                     <button data-edit-tent="${escapeSetupHtml(t.id)}">${escapeSetupHtml(tSetup('editTent'))}</button>
                     <button data-plan-tent="${escapeSetupHtml(t.id)}">${escapeSetupHtml(tSetup('irrigationPlan'))}</button>
+                    <button data-vpd-auto="${escapeSetupHtml(t.id)}">${escapeSetupHtml(tSetup('vpdAuto'))}</button>
                     <button data-delete-tent="${escapeSetupHtml(t.id)}" style="background:linear-gradient(180deg, rgba(239,68,68,.35), rgba(220,38,38,.28)); border-color:rgba(239,68,68,.45);">${escapeSetupHtml(tSetup('deleteTent'))}</button>
                   </div>
                   <details class="setup-tent-details"><summary>${escapeSetupHtml(tSetup('tentDetails'))}</summary>
@@ -8026,6 +8188,13 @@ def setup_page(request: Request):
                   document.getElementById('addTentBtn').textContent = tSetup('saveTent');
                   const editor = document.getElementById('tentEditor');
                   if (editor) { editor.open = true; editor.scrollIntoView({block:'start', behavior:'smooth'}); }
+                });
+              });
+              list.querySelectorAll('button[data-vpd-auto]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                  const id = Number(btn.getAttribute('data-vpd-auto'));
+                  const tent = tents.find(item => item.id === id);
+                  if (tent) openVpdAutoModal(tent);
                 });
               });
               list.querySelectorAll('button[data-plan-tent]').forEach(btn => {
@@ -11559,6 +11728,7 @@ def dashboard_page(request: Request):
               startWatering: 'Start watering',
               pingTank: 'Ping tank',
               irrigationPlan: 'Irrigation plan',
+              vpdAuto: 'VPD automation',
               everyDays: 'Every N days',
               offsetAfterLight: 'Minutes after light on',
               lastWateringDate: 'Last watering date',
@@ -11758,6 +11928,7 @@ def dashboard_page(request: Request):
               startWatering: 'Bewässerung starten',
               pingTank: 'Tank anpingen',
               irrigationPlan: 'Bewässerungsplan',
+              vpdAuto: 'VPD-Automatik',
               everyDays: 'Alle N Tage',
               offsetAfterLight: 'Minuten nach Licht an',
               lastWateringDate: 'Letztes Bewässerungsdatum',

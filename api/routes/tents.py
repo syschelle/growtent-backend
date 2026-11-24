@@ -36,6 +36,19 @@ def delete_tent(tent_id: int, service: TentService = Depends(get_tent_service)):
     return service.delete_tent(tent_id)
 
 
+@router.get('/tents/{tent_id}/vpd-auto')
+def get_vpd_auto(tent_id: int, request: Request):
+    _admin_username(request)
+    from services.vpd_auto_store import get_plan
+    return get_plan(tent_id)
+
+
+@router.put('/tents/{tent_id}/vpd-auto', dependencies=[Depends(_admin_username)])
+def put_vpd_auto(tent_id: int, payload: dict):
+    from services.vpd_auto_store import save_plan
+    return save_plan(tent_id, payload)
+
+
 @router.get('/tents/{tent_id}/grow-profile')
 def get_grow_profile(tent_id: int, request: Request, service: TentService = Depends(get_tent_service)):
     _admin_username(request)

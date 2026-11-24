@@ -1,4 +1,4 @@
-# Security — v0.416
+# Security — v0.418
 
 ## v0.415 – Browser CSP and container isolation
 
@@ -268,3 +268,15 @@ This release is a targeted hardening pass, **not a comprehensive remediation**. 
 The standard API Docker Compose mounts only `./data:/data`, never the full host checkout or `.env`; application changelog is included in the image. The API still defaults to UID 0 with all Linux capabilities dropped, read-only root filesystem and `no-new-privileges`, to avoid changing permissions of existing host data. After confirming write access to `./data`, set `GT_API_RUN_AS=10001:10001` (or another dedicated UID:GID) for opt-in non-root execution. A deployment must inspect file permissions before enabling this mode; this release does **not** silently migrate filesystem ownership.
 
 The optional project ZIP feature is disabled by default and needs a separately provisioned secret-free read-only `/project` mount to work; an absent mount gives 503 rather than an empty archive. The ZIP writer skips symlinks, private-key extensions, and case-variant `.env` filenames. This does not turn the source archive route into a general-purpose backup: never mount arbitrary host paths as the ZIP source.
+
+## v0.418 drying VPD safety
+
+Drying is a phase-scoped target (default 0.90 kPa), not a weekly growth target. The automation remains disabled until a given tent is enabled with a valid HMAC controller connection. Drying is triggered only from a valid current ESP phase value (3), even without a week, with a canonical internal week=1 to prevent repeated weekly writes. No changes are made to phase, irrigation or other ESP state. Extending a vegetative or flowering phase beyond its configured weeks does not switch phase or force another write of the final target; the ESP reports the phase and controls transitions. Existing plans without a drying field are normalized with a backwards-compatible default rather than discarded.
+
+## v0.417 optional VPD automation writes
+
+- Automation is **disabled by default per tent**. Only administrators can view or change schedules, and enabling requires a configured HMAC-protected controller write API.
+- Poller uses the live ESP phase/week (never tent database ID, stale archive data or a guessed calendar). Drying or missing/invalid phase/week cannot cause writes.
+- Only the `targetVPD` field is sent through the existing verified HMAC writer and audit log; no bypass of signature, nonce, permitted source IP or firmware validation.
+- PostgreSQL stores last attempt and last successful phase/week/target to avoid repeated and cross-worker writes. Conflicting attempts have a 30-minute retry cooldown. Manual overrides remain effective during the same completed phase/week.
+- All imported backup plans are validated before destructive restore. Encrypted configuration backups contain the per-tent schedules; secrets remain outside that configuration and are not exposed by these routes.

@@ -1,3 +1,15 @@
+## v0.418 — One-time drying target for optional VPD automation
+
+- A phase-wide, user-adjustable drying target defaults to 0.90 kPa, applied via existing HMAC targetVPD write when currentPhase is 3 and automation is enabled.
+- Ignore missing or changing drying-week values, preserving one-time phase claim tracking, cross-tent isolation, compatibility with old plans and no repeated override of manual edits.
+- Show the drying target and last sync in DE/EN Setup, explicitly stating phases never switch automatically. Extended vegetative/flowering weeks keep the last target in their own phase and cannot trigger repeated HMAC writes or crossover into flowering. Maintain static CSP manifest and regression tests.
+
+## v0.417 — Opt-in backend VPD control
+
+- Add per-tent VPD weekly plan storage, read/write routes with admin protection, and poller reconciliation using signed ESP grow-profile writes.
+- Isolate durable weekly claims per tent, prevent duplicate writes, ignore drying, and keep the automation disabled until explicitly configured and enabled.
+- Include plans in encrypted backup import/export and add regression/CI tests.
+
 ## v0.416 — Minimize API host filesystem exposure
 
 - Remove full repository mount from default Docker Compose; keep existing `/data` runtime binding and image-bundled changelog.

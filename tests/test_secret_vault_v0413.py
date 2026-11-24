@@ -192,7 +192,7 @@ def test_production_backup_export_is_ciphertext_not_cleartext(key, monkeypatch):
     row_tents = (3,'Tent Three','http://192.168.178.78/api/state',
                  vault.seal_secret(raw_camera),'admin',vault.seal_secret('shelly-secret'),
                  '{}', None, '{}', '[]', True, 'http://192.168.178.78',
-                 vault.seal_secret(raw_hmac), False, 20.0, None, '{}')
+                 vault.seal_secret(raw_hmac), False, 20.0, None, '{}', json.dumps({'enabled': False, 'vegetative': [0.6], 'flowering': [1.0]}))
     row_auth = (True,'sysadmin','$argon2id$hash',True,vault.seal_secret('JBSWY3DPEHPK3PXP'),
                 '[]','device',vault.seal_secret('pushover-token'),vault.seal_secret('pushover-user'),
                 vault.seal_secret('gromate-pass'),True,False,None,True,None)
