@@ -36,6 +36,13 @@ def delete_tent(tent_id: int, service: TentService = Depends(get_tent_service)):
     return service.delete_tent(tent_id)
 
 
+@router.get('/tents/{tent_id}/vpd-auto/status')
+def get_vpd_auto_status(tent_id: int):
+    """Read-only status for the authenticated dashboard (including guests)."""
+    from services.vpd_auto_store import get_badge_status
+    return get_badge_status(tent_id)
+
+
 @router.get('/tents/{tent_id}/vpd-auto')
 def get_vpd_auto(tent_id: int, request: Request):
     _admin_username(request)

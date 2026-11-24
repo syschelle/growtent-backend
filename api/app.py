@@ -58,7 +58,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.418"
+APP_VERSION = "v0.420"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -11062,6 +11062,13 @@ def dashboard_page(request: Request):
           #status .status-ok { color:#22c55e; font-weight:700; }
           #status .status-err { color:#ef4444; font-weight:700; }
           .target-dialog { box-sizing:border-box; width:min(280px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; margin:auto; padding:12px; border:1px solid var(--grid); border-radius:12px; background:var(--card); color:var(--text); }
+          /* Unframed, opt-in VPD automation label: color-only text, no pill background or border. */
+          #vpdAutoBadge:not([hidden]) { display:inline-flex;align-items:center;flex:none;line-height:1.25;
+            font-size:.70rem;font-weight:750;margin-left:3px;letter-spacing:.01em; }
+          #vpdAutoBadge[data-state="active"] { color:#86efac; }
+          #vpdAutoBadge[data-state="failed"] { color:#fdba74; }
+          :root[data-theme='light'] #vpdAutoBadge[data-state="active"] { color:#166534; }
+          :root[data-theme='light'] #vpdAutoBadge[data-state="failed"] { color:#9a3412; }
           .vpd-card-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; padding-top:6px; }
           .vpd-card-actions .target-adjust-action { margin-top:0; padding-top:0; }
           .vpd-card-actions .vpd-table-button { width:auto; min-height:26px; margin:0; padding:3px 8px; font-size:.76rem; }
@@ -11293,7 +11300,7 @@ def dashboard_page(request: Request):
           <div class=\"card\"><div class=\"card-head\"><div class=\"label\"><span>💧</span> <span id=\"lblHum\">Humidity</span> <span id=\"humMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span><span id=\"humAlphaLed\" class=\"alpha-led alpha-led-off\"></span></div><div class=\"small\" id=\"humLastChange\">Last change: -</div></div><div class=\"value\" id=\"hum\">-</div><div class=\"small\" id=\"humRaw\">Raw: -</div><!-- gauge removed --></div>
           <div class=\"card target-adjust-card\">
             <div class=\"card-head\">
-              <div class=\"label\"><span>🫧</span> <span id=\"lblVpd\">VPD</span> <span id=\"vpdMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span></div>
+              <div class=\"label\"><span>🫧</span> <span id=\"lblVpd\">VPD</span> <span id=\"vpdMeaningHint\" style=\"cursor:help; opacity:.9;\" aria-label=\"hint\" title=\"\">ℹ️</span><span id=\"vpdAutoBadge\" hidden aria-label=\"\" title=\"\">auto</span></div>
               <div class=\"small\" id=\"vpdLastChange\">Last change: -</div>
             </div>
             <div class=\"vpd-value-row\"><div class=\"value\" id=\"vpd\">-</div><span id=\"vpdRangeAssessment\" class=\"small\" role=\"status\"></span></div>
@@ -15639,9 +15646,39 @@ def dashboard_page(request: Request):
             }
           }
 
+          let vpdAutoBadgeRequest = 0;
+          async function loadVpdAutoBadge(){
+            const badge = document.getElementById('vpdAutoBadge');
+            if(!badge) return;
+            const requestedTentId = Number(currentTentId);
+            const requestId = ++vpdAutoBadgeRequest;
+            badge.hidden = true;
+            badge.removeAttribute('data-state');
+            badge.removeAttribute('title');
+            badge.removeAttribute('aria-label');
+            if(!Number.isInteger(requestedTentId) || requestedTentId <= 0) return;
+            try {
+              const response = await fetch(`/tents/${requestedTentId}/vpd-auto/status`,{cache:'no-store'});
+              if(!response.ok) return;
+              const state = await response.json();
+              if(requestId !== vpdAutoBadgeRequest || requestedTentId !== Number(currentTentId)) return;
+              if(state.tentId !== requestedTentId || state.enabled !== true) return;
+              const failed = state.lastSyncFailed === true;
+              badge.dataset.state = failed ? 'failed' : 'active';
+              badge.title = currentLang === 'de'
+                ? (failed ? 'Letzter VPD-Abgleich fehlgeschlagen' : 'VPD-Automatik aktiv')
+                : (failed ? 'Last VPD sync failed' : 'VPD automation enabled');
+              badge.setAttribute('aria-label',badge.title);
+              badge.hidden = false;
+            } catch {
+              // If the status cannot be verified, do not show a misleading badge.
+            }
+          }
+
           async function refresh(){
             try {
               await loadTentNav();
+              await loadVpdAutoBadge();
               await loadLatest();
               await loadHistory();
             } catch(e){

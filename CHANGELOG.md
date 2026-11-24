@@ -1,3 +1,15 @@
+## v0.420 — VPD automation status as colored text only
+
+- Remove the border, rounded pill background and padding from the `auto` label beside the VPD title.
+- Preserve green/orange status, DE/EN hover explanation, per-tent read-only polling and disabled-state hiding. No VPD or device behavior changes.
+
+## v0.419 — Compact VPD automation status badge
+
+- Add a small `auto` indicator beside the VPD heading, green when per-tent VPD automation is enabled and orange when the latest write attempt failed; hide it when disabled or status is unavailable.
+- Expose a read-only, authenticated `GET /tents/{tent_id}/vpd-auto/status` with only the boolean enabled/failure state (no plan values or secrets). Keep guest access read-only and the existing admin-only editor unchanged.
+- Update the badge on the existing 30-second dashboard refresh, guard against cross-tent stale responses and support DE/EN hover text and light/dark themes.
+- Leave targetVPD writes, phases, week plans, HMAC control, camera and ZIP exports unchanged.
+
 ## v0.418 — Optional drying VPD target (0.90 kPa)
 
 - Apply an editable 0.90 kPa default target on entering drying when per-tent backend VPD automation is explicitly enabled. Drying does not require a reported phase week, and further week changes in drying never cause redundant writes.

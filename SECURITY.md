@@ -1,4 +1,4 @@
-# Security — v0.418
+# Security — v0.420
 
 ## v0.415 – Browser CSP and container isolation
 
@@ -280,3 +280,7 @@ Drying is a phase-scoped target (default 0.90 kPa), not a weekly growth target. 
 - Only the `targetVPD` field is sent through the existing verified HMAC writer and audit log; no bypass of signature, nonce, permitted source IP or firmware validation.
 - PostgreSQL stores last attempt and last successful phase/week/target to avoid repeated and cross-worker writes. Conflicting attempts have a 30-minute retry cooldown. Manual overrides remain effective during the same completed phase/week.
 - All imported backup plans are validated before destructive restore. Encrypted configuration backups contain the per-tent schedules; secrets remain outside that configuration and are not exposed by these routes.
+
+## v0.419 — Read-only VPD automation status
+
+The dashboard uses an authenticated minimal status route (`/tents/{tent_id}/vpd-auto/status`) that returns only the enabled and last-sync-failure flags, never the full VPD plan, controller URL or HMAC credentials. The full plan remains administrator-only. A missing/unavailable status is not rendered as a successful automation. No new write actions or controller access were introduced.

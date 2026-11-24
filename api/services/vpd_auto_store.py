@@ -38,6 +38,33 @@ def get_plan(tent_id: int) -> dict:
         "lastStatus": state[5] if state else None}
 
 
+def get_badge_status(tent_id: int) -> dict:
+    """Minimal, authenticated read-only automation state for the dashboard.
+
+    A guest can see whether automation is enabled and whether its latest
+    attempt failed, but cannot read the editable plan or controller secrets.
+    The join and WHERE clause bind plan and status to the *same* tent.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT t.vpd_auto_plan_json, s.last_status
+                           FROM tents AS t
+                           LEFT JOIN tent_vpd_auto_state AS s ON s.tent_id = t.id
+                           WHERE t.id = %s""", (tent_id,))
+            row = cur.fetchone()
+    if row is None:
+        raise HTTPException(404, "tent not found")
+    plan = normalize_plan(row[0])
+    enabled = bool(plan["enabled"])
+    last_status = row[1] if enabled else None
+    # Only report a terminal failure as failed. Pending or no attempt yet
+    # means enabled, not failed; it does not imply successful synchronization.
+    failed = isinstance(last_status, str) and (
+        last_status.startswith("failed") or last_status.startswith("error")
+    )
+    return {"tentId": tent_id, "enabled": enabled, "lastSyncFailed": failed}
+
+
 def save_plan(tent_id: int, body: dict) -> dict:
     try:
         plan = normalize_plan(body)

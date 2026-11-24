@@ -1,3 +1,13 @@
+## v0.420 — Frameless VPD auto indicator
+
+- Render the dashboard `auto` status as color-only text rather than a bordered badge; preserve the existing status endpoint and its semantics.
+
+## v0.419 — VPD dashboard auto indicator
+
+- Show `auto` in green when automation is enabled, orange when `last_status` indicates a failed attempt, and nothing when disabled/unavailable.
+- Add an authenticated read-only, tent-scoped status GET that returns no plan values or credentials. The Dashboard refresh and tent-switch guards prevent stale or cross-tent status display.
+- No ESP write or scheduler behavior changes.
+
 ## v0.418 — One-time drying target for optional VPD automation
 
 - A phase-wide, user-adjustable drying target defaults to 0.90 kPa, applied via existing HMAC targetVPD write when currentPhase is 3 and automation is enabled.

@@ -219,3 +219,49 @@ def test_modular_router_allows_only_administrators(monkeypatch):
     plan['enabled']=True
     response=client.put('/tents/2/vpd-auto',json=plan)
     assert response.status_code==200 and writes==[(2,plan)]
+
+@pytest.mark.parametrize('plan,status,expected_enabled,expected_failed', [
+    (vpd_auto.default_plan(), None, False, False),
+    ({**vpd_auto.default_plan(), 'enabled': True}, None, True, False),
+    ({**vpd_auto.default_plan(), 'enabled': True}, 'applied', True, False),
+    ({**vpd_auto.default_plan(), 'enabled': True}, 'already_at_target', True, False),
+    ({**vpd_auto.default_plan(), 'enabled': True}, 'pending', True, False),
+    ({**vpd_auto.default_plan(), 'enabled': True}, 'failed_retry_later', True, True),
+    ({**vpd_auto.default_plan(), 'enabled': True}, 'error_timeout', True, True),
+    (vpd_auto.default_plan(), 'failed_retry_later', False, False),
+])
+def test_vpd_auto_badge_status_is_minimal_and_tent_scoped(monkeypatch, plan, status, expected_enabled, expected_failed):
+    seen = []
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def execute(self, sql, args): seen.append((sql, args))
+        def fetchone(self): return (json.dumps(plan), status)
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def cursor(self): return Cursor()
+    monkeypatch.setattr(store, 'get_conn', lambda: Connection())
+    result = store.get_badge_status(7)
+    assert result == {'tentId': 7, 'enabled': expected_enabled, 'lastSyncFailed': expected_failed}
+    assert len(seen) == 1
+    assert seen[0][1] == (7,)
+    assert 's.tent_id = t.id' in seen[0][0]
+    assert 'WHERE t.id = %s' in seen[0][0]
+    assert 'vegetative' not in result and 'flowering' not in result
+
+
+def test_vpd_auto_badge_missing_tent_is_not_replaced_by_other_tent(monkeypatch):
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def execute(self, *args): pass
+        def fetchone(self): return None
+    class Connection:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def cursor(self): return Cursor()
+    monkeypatch.setattr(store, 'get_conn', lambda: Connection())
+    with pytest.raises(HTTPException) as exc:
+        store.get_badge_status(123)
+    assert exc.value.status_code == 404

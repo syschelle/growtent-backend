@@ -1,4 +1,15 @@
-# Testing — v0.418
+# Testing — v0.420
+
+## v0.420 — Unframed VPD auto text
+
+- `PYTHONPATH=api:tests python tests/check_vpd_auto_badge_browser.py`: verify actual computed CSS has no border, background, padding, corner radius, or shadow while retaining green/orange/hidden states, DE/EN hover explanations, guest display, per-tent isolation and 320 px usability.
+- Run CSP hash verification, all Python/JavaScript suites and camera browser regressions; no production VPD control logic changed.
+
+## v0.419 — VPD status indicator in dashboard
+
+- `PYTHONPATH=api:tests python -m pytest -q tests/test_vpd_auto.py`: verify enabled/disabled/pending/success/failure states, no plan/secret exposure and correct SQL filter for selected tent.
+- `PYTHONPATH=api:tests python tests/check_vpd_auto_badge_browser.py`: Chromium DE/EN, status color, disabled/unknown state, guest display and 320 px responsiveness. The status request runs during the existing 30-second dashboard refresh; no write calls.
+- `python scripts/generate_csp_hashes.py --check`: check updated dashboard script hash. Run complete Python/JS/Browser suites, and validate the badge on the deployed API for a tent with VPD automation enabled (including a failed HMAC write).
 
 ## v0.418 — Drying VPD 0.90 kPa on phase entry
 
