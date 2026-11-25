@@ -1,4 +1,6 @@
-# Security — v0.420
+# Security — v0.421
+
+The v0.421 release changes only the dashboard's green `auto` text color to match the existing good VPD assessment in light and dark themes. Authentication, trusted proxies, HMAC writes, API permissions and CSP are unchanged.
 
 ## v0.415 – Browser CSP and container isolation
 

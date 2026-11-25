@@ -1,3 +1,8 @@
+## v0.421 — VPD auto indicator matches healthy VPD green
+
+- Match the plain-text `auto` status green exactly to the VPD assessment `good` color in both dark and light themes.
+- Preserve orange failure text, no-border styling, status logic, per-tent isolation and all VPD controller behavior.
+
 ## v0.420 — VPD automation status as colored text only
 
 - Remove the border, rounded pill background and padding from the `auto` label beside the VPD title.

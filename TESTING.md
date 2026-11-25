@@ -1,4 +1,9 @@
-# Testing — v0.420
+# Testing — v0.421
+
+## v0.421 — Matching VPD status color
+
+- `PYTHONPATH=api:tests python tests/check_vpd_auto_badge_browser.py`: compare the actual computed `auto` color to the `good` VPD range assessment in dark and light themes, with existing no-border, orange-error, hidden-state, tent-switching and mobile coverage.
+- No backend control, API or security changes. Run all existing Python/JavaScript/Chromium suites and CSP validation before deployment.
 
 ## v0.420 — Unframed VPD auto text
 

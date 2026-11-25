@@ -49,6 +49,14 @@ def check(browser):
     assert badge.get_attribute('title') == 'VPD-Automatik aktiv'
     assert badge.is_visible()
     green = badge.evaluate('e=>getComputedStyle(e).color')
+    # The active indicator must use the very same green as the good VPD assessment,
+    # in both dark and light themes (no subtly different green shades).
+    assessment = page.locator('#vpdRangeAssessment')
+    assessment.evaluate("e=>e.dataset.state='good'")
+    assert green == assessment.evaluate('e=>getComputedStyle(e).color')
+    page.evaluate("document.documentElement.dataset.theme='light'")
+    assert badge.evaluate('e=>getComputedStyle(e).color') == assessment.evaluate('e=>getComputedStyle(e).color')
+    page.evaluate("document.documentElement.dataset.theme='dark'")
     # The status must be plain colored text: no chip border, padding or background.
     def assert_plain_text():
         style = badge.evaluate('''e => {

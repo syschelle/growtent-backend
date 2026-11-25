@@ -1,3 +1,7 @@
+## v0.421 — Match green auto indicator to good VPD status
+
+- Use the same theme-dependent green for `auto` and the good VPD range assessment; keep error orange and all behavior unchanged.
+
 ## v0.420 — Frameless VPD auto indicator
 
 - Render the dashboard `auto` status as color-only text rather than a bordered badge; preserve the existing status endpoint and its semantics.

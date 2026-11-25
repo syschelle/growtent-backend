@@ -58,7 +58,7 @@ GO2RTC_BASE_URL = os.getenv("GO2RTC_BASE_URL", "http://go2rtc:1984")
 PROJECT_ROOT = os.getenv("PROJECT_ROOT", "/project")
 STRAINS_CSV_PATH = Path(os.getenv("STRAINS_CSV_PATH", "/data/strains.csv"))
 GROMATE_API_PASSWORD = os.getenv("GROMATE_API_PASSWORD", "")
-APP_VERSION = "v0.420"
+APP_VERSION = "v0.421"
 INSTALL_API_ENABLED = (os.getenv("INSTALL_API_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_REQUIRE_TOKEN = (os.getenv("INSTALL_API_REQUIRE_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"})
 INSTALL_API_TOKEN = (os.getenv("INSTALL_API_TOKEN") or "").strip()
@@ -11065,9 +11065,9 @@ def dashboard_page(request: Request):
           /* Unframed, opt-in VPD automation label: color-only text, no pill background or border. */
           #vpdAutoBadge:not([hidden]) { display:inline-flex;align-items:center;flex:none;line-height:1.25;
             font-size:.70rem;font-weight:750;margin-left:3px;letter-spacing:.01em; }
-          #vpdAutoBadge[data-state="active"] { color:#86efac; }
+          #vpdAutoBadge[data-state="active"] { color:#4ade80; }
           #vpdAutoBadge[data-state="failed"] { color:#fdba74; }
-          :root[data-theme='light'] #vpdAutoBadge[data-state="active"] { color:#166534; }
+          :root[data-theme='light'] #vpdAutoBadge[data-state="active"] { color:#15803d; }
           :root[data-theme='light'] #vpdAutoBadge[data-state="failed"] { color:#9a3412; }
           .vpd-card-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; padding-top:6px; }
           .vpd-card-actions .target-adjust-action { margin-top:0; padding-top:0; }
